@@ -1,0 +1,9 @@
+name: Technical docs check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  technical-docs:
+    uses: infracost/technical-docs/.github/workflows/technical-docs-check.yml@main

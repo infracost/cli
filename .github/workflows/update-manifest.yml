@@ -1,0 +1,121 @@
+name: update-manifest
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: "Plugin name (e.g. infracost-parser-plugin)"
+        required: true
+      version:
+        description: "Version tag (e.g. v0.1.0)"
+        required: true
+      latest:
+        description: "Set as latest version"
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      plugin:
+        description: "Plugin name (e.g. infracost-parser-plugin)"
+        required: true
+        type: string
+      version:
+        description: "Version tag (e.g. v0.1.0)"
+        required: true
+        type: string
+      latest:
+        description: "Set as latest version"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-manifest:
+    name: Update Manifest
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: infracost/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.INFRACOST_CI_APP_ID }}
+          private-key: ${{ secrets.INFRACOST_CI_APP_PRIVATE_KEY }}
+          owner: "infracost"
+          repositories: config
+          permission-contents: read
+
+      - uses: actions/setup-go@v6
+        with:
+          cache: false
+          go-version-file: go.mod
+
+      - run: |
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/infracost/".insteadOf "https://github.com/infracost/"
+          go build -o /tmp/update-manifest ./tools/update-manifest
+        env:
+          GOPRIVATE: github.com/infracost/config
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: published
+          clean: false
+
+      - run: /tmp/update-manifest
+        env:
+          UPDATE_MANIFEST_PLUGIN: ${{ inputs.plugin }}
+          UPDATE_MANIFEST_VERSION: ${{ inputs.version }}
+          UPDATE_MANIFEST_LATEST: ${{ inputs.latest }}
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - run: |
+          BRANCH="update-manifest/${{ inputs.plugin }}/${{ inputs.version }}"
+          MESSAGE="Update manifest for ${{ inputs.plugin }} ${{ inputs.version }}"
+          REPO="${{ github.repository }}"
+
+          PARENT_SHA=$(git rev-parse HEAD)
+          BASE_TREE=$(gh api "repos/$REPO/git/commits/$PARENT_SHA" --jq '.tree.sha')
+
+          # Upload the manifest blob
+          BLOB_SHA=$(gh api "repos/$REPO/git/blobs" \
+            --method POST \
+            -f "content=$(base64 -w 0 docs/manifest.json)" \
+            -f "encoding=base64" \
+            --jq '.sha')
+
+          # Create a tree with the updated manifest
+          TREE_SHA=$(jq -n \
+            --arg base_tree "$BASE_TREE" \
+            --arg blob_sha "$BLOB_SHA" \
+            '{"base_tree": $base_tree, "tree": [{"path": "docs/manifest.json", "mode": "100644", "type": "blob", "sha": $blob_sha}]}' | \
+            gh api "repos/$REPO/git/trees" --method POST --input - --jq '.sha')
+
+          # Create a signed commit via the API
+          COMMIT_SHA=$(gh api "repos/$REPO/git/commits" \
+            --method POST \
+            -f "message=$MESSAGE" \
+            -f "tree=$TREE_SHA" \
+            -f "parents[]=$PARENT_SHA" \
+            --jq '.sha')
+
+          # Create the branch ref pointing to the new commit
+          gh api "repos/$REPO/git/refs" \
+            --method POST \
+            -f "ref=refs/heads/$BRANCH" \
+            -f "sha=$COMMIT_SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - run: |
+          gh pr create \
+            --base published \
+            --head "update-manifest/${{ inputs.plugin }}/${{ inputs.version }}" \
+            --draft \
+            --title "Update manifest for ${{ inputs.plugin }} ${{ inputs.version }}" \
+            --body "Automated manifest update for \`${{ inputs.plugin }}\` version \`${{ inputs.version }}\`."
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

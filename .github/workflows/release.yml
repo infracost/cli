@@ -1,0 +1,152 @@
+name: release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to be released (e.g., 1.0.0)"
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ github.event.inputs.version }}"
+          else
+            RAW_VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "VERSION=${RAW_VERSION#v}" >> $GITHUB_OUTPUT
+
+  draft-release:
+    runs-on: ubuntu-24.04
+    needs: version
+    permissions:
+      contents: write
+    steps:
+      - name: Check for existing release
+        id: check-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ needs.version.outputs.version }}
+        run: |
+          if gh release view "$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create draft release
+        if: steps.check-release.outputs.EXISTS == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ needs.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --title "$VERSION" \
+            --draft
+
+      - name: Reset to draft
+        if: steps.check-release.outputs.EXISTS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ needs.version.outputs.version }}
+        run: |
+          gh release edit "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --draft
+
+  build-and-release:
+    runs-on: ${{ matrix.runner }}
+    needs: [version, draft-release]
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, runner: ubuntu-24.04 }
+          - { goos: linux, goarch: arm64, runner: ubuntu-24.04 }
+          - { goos: darwin, goarch: amd64, runner: macos-latest }
+          - { goos: darwin, goarch: arm64, runner: macos-latest }
+          - { goos: windows, goarch: amd64, runner: ubuntu-24.04 }
+          - { goos: windows, goarch: arm64, runner: ubuntu-24.04 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: infracost/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.INFRACOST_CI_APP_ID }}
+          private-key: ${{ secrets.INFRACOST_CI_APP_PRIVATE_KEY }}
+          owner: infracost
+          repositories: config
+          permission-contents: read
+
+      - run: |
+          git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Build
+        env:
+          GOPRIVATE: github.com/infracost/*
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          SUFFIX=""
+          if [ "$GOOS" = "windows" ]; then
+            SUFFIX=".exe"
+          fi
+          go build -ldflags "-X github.com/infracost/cli/version.Version=${VERSION}" -o "bin/infracost${SUFFIX}" main.go
+
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          ARCHIVE="infracost_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p dist
+          if [ "$GOOS" = "windows" ]; then
+            (cd bin && zip -r "../dist/${ARCHIVE}.zip" "infracost.exe")
+          else
+            tar -czf "dist/${ARCHIVE}.tar.gz" -C bin infracost
+          fi
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ needs.version.outputs.version }}
+        run: |
+          gh release upload "$VERSION" ./dist/* \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+  publish-release:
+    runs-on: ubuntu-24.04
+    needs: [version, build-and-release]
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: v${{ needs.version.outputs.version }}
+        run: |
+          gh release edit "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --draft=false
