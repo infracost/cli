@@ -72,6 +72,7 @@ func (c *Config) SaveCache(token *oauth2.Token) error {
 		_ = f.Close()
 	}()
 
+	//nolint:gosec // G117: Marshalling a token to JSON is not a security risk as the token is already stored in plaintext on disk.
 	if err := json.NewEncoder(f).Encode(token); err != nil {
 		return fmt.Errorf("failed to encode token cache: %w", err)
 	}
