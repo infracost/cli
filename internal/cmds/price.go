@@ -1,0 +1,99 @@
+package cmds
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/infracost/cli/internal/api"
+	"github.com/infracost/cli/internal/api/events"
+	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/logging"
+	"github.com/infracost/cli/internal/scanner"
+	"github.com/infracost/cli/internal/vcs"
+	"github.com/spf13/cobra"
+)
+
+func Price(cfg *config.Config) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "price",
+		Short: "Read IaC from stdin, scan it, and print the cost estimate",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			dir, err := os.MkdirTemp("", "infracost-price-*")
+			if err != nil {
+				return fmt.Errorf("failed to create temporary directory: %w", err)
+			}
+			defer func() { _ = os.RemoveAll(dir) }()
+
+			tmpFile := filepath.Join(dir, "main.tf")
+			f, err := os.Create(tmpFile) //nolint:gosec // path is constructed from our own temp dir
+			if err != nil {
+				return fmt.Errorf("failed to create temporary file: %w", err)
+			}
+
+			if _, err := io.Copy(f, cmd.InOrStdin()); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("failed to write stdin to temporary file: %w", err)
+			}
+
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("failed to close temporary file: %w", err)
+			}
+
+			source, err := cfg.Auth.Token(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("failed to log in: %w", err)
+			}
+
+			repositoryURL := vcs.GetRemoteURL(dir)
+			branchName := vcs.GetCurrentBranch(dir)
+
+			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
+			runParameters, err := client.RunParameters(cmd.Context(), repositoryURL, branchName)
+			if err != nil {
+				return fmt.Errorf("failed to retrieve run parameters: %w", err)
+			}
+			cfg.OrgID = runParameters.OrganizationID
+
+			events.RegisterMetadata("orgId", cfg.OrgID)
+			events.RegisterMetadata("repoId", repositoryURL)
+			events.RegisterMetadata("branchId", branchName)
+
+			scanner := scanner.NewScanner(cfg)
+			startTime := time.Now()
+			result, err := scanner.Scan(cmd.Context(), runParameters, dir, branchName, source)
+			if err != nil {
+				return fmt.Errorf("failed to scan target: %w", err)
+			}
+			runSeconds := time.Since(startTime).Seconds()
+
+			output := format.ToOutput(result)
+
+			eventsClient := cfg.Events.Client(api.Client(cmd.Context(), source, cfg.OrgID))
+
+			// Diff against the previous cached result from the same session to detect
+			// fixed policy violations.
+			if prev, err := cfg.Cache.Read(dir, true); err == nil && prev.SameSession(&cfg.Cache) {
+				output.TrackDiff(cmd.Context(), eventsClient, &prev.Data)
+			}
+
+			if err := cfg.Cache.Write(dir, &output); err != nil {
+				logging.Warn("failed to cache results: " + err.Error())
+			}
+
+			output.TrackRun(cmd.Context(), eventsClient, runSeconds, "json")
+
+			if err := output.ToJSON(os.Stdout); err != nil {
+				return fmt.Errorf("failed to write JSON output: %w", err)
+			}
+			fmt.Println()
+			return nil
+		},
+	}
+	cmd.Hidden = true
+	return cmd
+}
