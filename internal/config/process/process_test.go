@@ -44,10 +44,10 @@ func TestProcess_DepthFirstOrder(t *testing.T) {
 	}
 
 	c := &cfg{}
-	c.orderedProcessorCfg.order = &order
-	c.orderedProcessorCfg.name = "parent"
-	c.Inner.orderedProcessorCfg.order = &order
-	c.Inner.orderedProcessorCfg.name = "child"
+	c.order = &order
+	c.name = "parent"
+	c.Inner.order = &order
+	c.Inner.name = "child"
 
 	Process(c)
 
@@ -71,7 +71,7 @@ func (o *orderedProcessorCfg) Process() {
 	*o.order = append(*o.order, o.name)
 }
 
-func TestProcess_NoProcessor(t *testing.T) {
+func TestProcess_NoProcessor(*testing.T) {
 	type cfg struct {
 		Name string
 	}

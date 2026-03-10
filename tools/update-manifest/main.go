@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/go-github/v83/github"
-	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/config/process"
 	"github.com/infracost/cli/pkg/plugins"
 )
 
@@ -27,10 +27,11 @@ type Config struct {
 
 func main() {
 	var cfg Config
-	if diags := config.Process(&cfg, nil); diags.Critical().Len() > 0 {
+	if diags := process.PreProcess(&cfg, nil); diags.Critical().Len() > 0 {
 		_, _ = fmt.Fprintln(os.Stderr, diags)
 		os.Exit(1)
 	}
+	process.Process(&cfg)
 
 	switch {
 	case cfg.Plugin == "":

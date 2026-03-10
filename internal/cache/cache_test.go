@@ -51,7 +51,7 @@ func testOutput() format.Output {
 func testConfig(t *testing.T) *Config {
 	t.Helper()
 	c := &Config{Cache: filepath.Join(t.TempDir(), "cache")}
-	c.ApplyDefaults()
+	c.Process()
 	return c
 }
 
