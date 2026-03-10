@@ -111,7 +111,7 @@ jobs:
           if [ "$GOOS" = "windows" ]; then
             SUFFIX=".exe"
           fi
-          go build -ldflags "-X github.com/infracost/cli/version.Version=${VERSION}" -o "bin/infracost${SUFFIX}" main.go
+          go build -ldflags "-X github.com/infracost/cli/version.Version=${VERSION}" -o "bin/infracost-preview${SUFFIX}" main.go
 
       - name: Package
         env:
@@ -119,12 +119,12 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          ARCHIVE="infracost_${VERSION}_${GOOS}_${GOARCH}"
+          ARCHIVE="infracost-preview_${VERSION}_${GOOS}_${GOARCH}"
           mkdir -p dist
           if [ "$GOOS" = "windows" ]; then
-            (cd bin && zip -r "../dist/${ARCHIVE}.zip" "infracost.exe")
+            (cd bin && zip -r "../dist/${ARCHIVE}.zip" "infracost-preview.exe")
           else
-            tar -czf "dist/${ARCHIVE}.tar.gz" -C bin infracost
+            tar -czf "dist/${ARCHIVE}.tar.gz" -C bin infracost-preview
           fi
 
       - name: Upload
