@@ -122,8 +122,6 @@ Plugins auto-update by default. Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to 
 
 To update the CLI itself, you can use the `update` command. This will update the CLI binary by downloading the latest release from GitHub. Note that this does not update plugins, which are managed separately as described above.
 
-```bash
-
 #### Local Plugin Overrides
 
 If you are developing plugins locally, you can bypass the download mechanism entirely by pointing the CLI at your local
