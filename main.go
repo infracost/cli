@@ -63,6 +63,8 @@ func run() (exitCode int) {
 	cmd.AddCommand(cmds.Login(cfg))
 	cmd.AddCommand(cmds.Logout(cfg))
 	cmd.AddCommand(cmds.Price(cfg))
+	cmd.AddCommand(cmds.Update(cfg))
+	cmd.AddCommand(cmds.Version(cfg))
 
 	diags.Merge(process.PreProcess(cfg, cmd.PersistentFlags()))
 	if diags.Critical().Len() > 0 {

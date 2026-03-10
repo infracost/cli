@@ -116,10 +116,13 @@ variables:
 - `INFRACOST_CLI_PROVIDER_PLUGIN_AZURE_VERSION` — pin the Azure provider plugin version
 - `INFRACOST_CLI_PROVIDER_PLUGIN_GOOGLE_VERSION` — pin the Google provider plugin version
 
-#### Auto-Update
+#### Updates
 
-Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to disable automatic updates. When disabled, the CLI uses the latest cached
-version if one exists, and only downloads from the manifest if no cached version is found.
+Plugins auto-update by default. Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to disable automatic plugin updates. When disabled, the CLI uses the latest cached version if one exists, and only downloads from the manifest if no cached version is found.
+
+To update the CLI itself, you can use the `update` command. This will update the CLI binary by downloading the latest release from GitHub. Note that this does not update plugins, which are managed separately as described above.
+
+```bash
 
 #### Local Plugin Overrides
 
