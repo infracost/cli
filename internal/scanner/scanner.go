@@ -99,8 +99,8 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 	// TODO: eventually we should query which plugins are installed and avoid harcoding the list of default providers
 	plugins := map[provider.Provider]func(hclog.Level) (provider.ProviderServiceClient, func(), error){
 		provider.Provider_PROVIDER_AWS:     s.plugins.Providers.LoadAWS,
-		provider.Provider_PROVIDER_GOOGLE:  s.plugins.Providers.LoadGCP,
-		provider.Provider_PROVIDER_AZURERM: s.plugins.Providers.LoadAzure,
+		provider.Provider_PROVIDER_GOOGLE:  s.plugins.Providers.LoadGoogle,
+		provider.Provider_PROVIDER_AZURERM: s.plugins.Providers.LoadAzurerm,
 	}
 
 	var finOpsPolicies []FinOpsPolicy
@@ -427,7 +427,7 @@ func (s *DirectoryScanner) ScanProject(ctx context.Context, project *repoconfig.
 
 		switch rp {
 		case provider.Provider_PROVIDER_AWS:
-			rs, ps, err := s.config.plugins.Providers.Process(ctx, rp, input, s.config.plugins.Providers.LoadAWS, s.config.logging.ToHCLogLevel())
+			rs, ps, err := s.config.plugins.Providers.ProcessInput(ctx, rp, input, s.config.plugins.Providers.LoadAWS, s.config.logging.ToHCLogLevel())
 			if err != nil {
 				return nil, fmt.Errorf("failed to execute AWS provider: %w", err)
 			}
@@ -435,7 +435,7 @@ func (s *DirectoryScanner) ScanProject(ctx context.Context, project *repoconfig.
 			projectResult.Resources = append(projectResult.Resources, rs...)
 
 		case provider.Provider_PROVIDER_GOOGLE:
-			rs, ps, err := s.config.plugins.Providers.Process(ctx, rp, input, s.config.plugins.Providers.LoadGCP, s.config.logging.ToHCLogLevel())
+			rs, ps, err := s.config.plugins.Providers.ProcessInput(ctx, rp, input, s.config.plugins.Providers.LoadGoogle, s.config.logging.ToHCLogLevel())
 			if err != nil {
 				return nil, fmt.Errorf("failed to execute GCP provider: %w", err)
 			}
@@ -443,7 +443,7 @@ func (s *DirectoryScanner) ScanProject(ctx context.Context, project *repoconfig.
 			projectResult.Resources = append(projectResult.Resources, rs...)
 
 		case provider.Provider_PROVIDER_AZURERM:
-			rs, ps, err := s.config.plugins.Providers.Process(ctx, rp, input, s.config.plugins.Providers.LoadAzure, s.config.logging.ToHCLogLevel())
+			rs, ps, err := s.config.plugins.Providers.ProcessInput(ctx, rp, input, s.config.plugins.Providers.LoadAzurerm, s.config.logging.ToHCLogLevel())
 			if err != nil {
 				return nil, fmt.Errorf("failed to execute Azure provider: %w", err)
 			}

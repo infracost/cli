@@ -10,12 +10,20 @@ import (
 	"github.com/infracost/cli/internal/logging"
 )
 
-type Client struct {
+var (
+	_ Client = (*client)(nil)
+)
+
+type Client interface {
+	Push(ctx context.Context, event string, extra ...interface{})
+}
+
+type client struct {
 	client *http.Client
 	config *Config
 }
 
-func (c *Client) Push(ctx context.Context, event string, extra ...interface{}) {
+func (c *client) Push(ctx context.Context, event string, extra ...interface{}) {
 	if isTest, ok := metadata["isTest"].(bool); ok && isTest {
 		return
 	}

@@ -26,17 +26,20 @@ var (
 type Config struct {
 	Environment string `flagvalue:"environment"`
 	Endpoint    string `env:"INFRACOST_CLI_DASHBOARD_ENDPOINT" flag:"dashboard-endpoint;hidden" usage:"The endpoint for the Infracost dashboard"`
+
+	// Can override this in tests.
+	Client func(httpClient *http.Client) Client
 }
 
 func (c *Config) Process() {
 	if c.Endpoint == "" {
 		c.Endpoint = defaultValues[c.Environment]["endpoint"]
 	}
-}
 
-func (c *Config) Client(client *http.Client) *Client {
-	return &Client{
-		client: client,
-		config: c,
+	c.Client = func(httpClient *http.Client) Client {
+		return &client{
+			client: httpClient,
+			config: c,
+		}
 	}
 }
