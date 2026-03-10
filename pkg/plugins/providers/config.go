@@ -2,7 +2,12 @@ package providers
 
 import (
 	"github.com/hashicorp/go-hclog"
+	"github.com/infracost/cli/internal/config/process"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
+)
+
+var (
+	_ process.Processor = (*Config)(nil)
 )
 
 type Config struct {
@@ -13,16 +18,20 @@ type Config struct {
 	AWSVersion    string `env:"INFRACOST_CLI_PROVIDER_PLUGIN_AWS_VERSION"`
 	AzureVersion  string `env:"INFRACOST_CLI_PROVIDER_PLUGIN_AZURE_VERSION"`
 	GoogleVersion string `env:"INFRACOST_CLI_PROVIDER_PLUGIN_GOOGLE_VERSION"`
+
+	LoadAWS     func(level hclog.Level) (proto.ProviderServiceClient, func(), error)
+	LoadGoogle  func(level hclog.Level) (proto.ProviderServiceClient, func(), error)
+	LoadAzurerm func(level hclog.Level) (proto.ProviderServiceClient, func(), error)
 }
 
-func (c *Config) LoadAWS(level hclog.Level) (proto.ProviderServiceClient, func(), error) {
-	return Connect(c.AWS, level)
-}
-
-func (c *Config) LoadGCP(level hclog.Level) (proto.ProviderServiceClient, func(), error) {
-	return Connect(c.Google, level)
-}
-
-func (c *Config) LoadAzure(level hclog.Level) (proto.ProviderServiceClient, func(), error) {
-	return Connect(c.Azure, level)
+func (c *Config) Process() {
+	c.LoadAWS = func(level hclog.Level) (proto.ProviderServiceClient, func(), error) {
+		return Connect(c.AWS, level)
+	}
+	c.LoadGoogle = func(level hclog.Level) (proto.ProviderServiceClient, func(), error) {
+		return Connect(c.Google, level)
+	}
+	c.LoadAzurerm = func(level hclog.Level) (proto.ProviderServiceClient, func(), error) {
+		return Connect(c.Azure, level)
+	}
 }

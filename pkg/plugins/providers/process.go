@@ -10,7 +10,7 @@ import (
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
 )
 
-func (c *Config) Process(ctx context.Context, provider proto.Provider, input *proto.Input, fn func(hclog.Level) (proto.ProviderServiceClient, func(), error), level hclog.Level) ([]*proto.Resource, []*proto.FinopsPolicyResult, error) {
+func (c *Config) ProcessInput(ctx context.Context, provider proto.Provider, input *proto.Input, fn func(hclog.Level) (proto.ProviderServiceClient, func(), error), level hclog.Level) ([]*proto.Resource, []*proto.FinopsPolicyResult, error) {
 
 	var cache protocache.Cache[*proto.Output]
 

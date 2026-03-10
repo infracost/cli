@@ -11,11 +11,6 @@ import (
 	"github.com/infracost/cli/internal/api/dashboard/graphql"
 )
 
-type Client struct {
-	client *http.Client
-	config *Config
-}
-
 type RunParameters struct {
 	OrganizationID string `json:"organizationId"`
 	RepositoryName string `json:"repositoryName"`
@@ -26,7 +21,20 @@ type RunParameters struct {
 	FinopsPolicies    []json.RawMessage `json:"finopsPolicies"`
 }
 
-func (c *Client) RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error) {
+type Client interface {
+	RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error)
+}
+
+var (
+	_ Client = (*client)(nil)
+)
+
+type client struct {
+	client *http.Client
+	config *Config
+}
+
+func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error) {
 	const query = `query RunParameters($repoUrl: String, $branchName: String) {
   runParameters(repoUrl: $repoUrl, branchName: $branchName) {
     organizationId

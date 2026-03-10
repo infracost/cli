@@ -26,7 +26,7 @@ import (
 //     the --sync-usage-file flow which doesn't exist in v2.
 //   - remediationAttempts, remediationErrors, remediationOpportunities: not yet
 //     implemented.
-func (o *Output) TrackRun(ctx context.Context, client *events.Client, runSeconds float64, outputFormat string) {
+func (o *Output) TrackRun(ctx context.Context, client events.Client, runSeconds float64, outputFormat string) {
 	var totalResources int
 	var totalSupported int
 	var totalNoPrice int
@@ -108,7 +108,7 @@ func (o *Output) TrackRun(ctx context.Context, client *events.Client, runSeconds
 // TrackDiff compares this output against a previous output and fires a
 // "cloud-issue-fixed" event for every policy violation that was present in
 // other but is no longer present in this output. Projects are matched by name.
-func (o *Output) TrackDiff(ctx context.Context, client *events.Client, other *Output) {
+func (o *Output) TrackDiff(ctx context.Context, client events.Client, other *Output) {
 	if other == nil {
 		return
 	}
@@ -130,7 +130,7 @@ func (o *Output) TrackDiff(ctx context.Context, client *events.Client, other *Ou
 	}
 }
 
-func trackFinopsDiff(ctx context.Context, client *events.Client, p *ProjectOutput, other []FinopsOutput) {
+func trackFinopsDiff(ctx context.Context, client events.Client, p *ProjectOutput, other []FinopsOutput) {
 	// Build a set of currently failing (policySlug, resourceName) pairs.
 	current := make(map[string]map[string]struct{})
 	for _, r := range p.FinopsResults {
@@ -161,7 +161,7 @@ func trackFinopsDiff(ctx context.Context, client *events.Client, p *ProjectOutpu
 	}
 }
 
-func trackTaggingDiff(ctx context.Context, client *events.Client, p *ProjectOutput, other []TaggingOutput) {
+func trackTaggingDiff(ctx context.Context, client events.Client, p *ProjectOutput, other []TaggingOutput) {
 	// Build a set of currently failing (policyId, resourceAddress) pairs.
 	current := make(map[string]map[string]struct{})
 	for _, r := range p.TaggingResults {
