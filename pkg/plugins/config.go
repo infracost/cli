@@ -238,7 +238,7 @@ func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
 	// GitHub requires this header to download release assets as binary.
 	req.Header.Set("Accept", "application/octet-stream")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from plugin manifest
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
