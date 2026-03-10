@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -236,17 +235,10 @@ func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	if strings.Contains(rawURL, "github.com") {
-		if token := githubToken(); token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-			// GitHub requires this header to download release assets as binary.
-			req.Header.Set("Accept", "application/octet-stream")
-		}
-	}
+	// GitHub requires this header to download release assets as binary.
+	req.Header.Set("Accept", "application/octet-stream")
 
-	// TODO: Once plugin repos are public, remove the token logic above and
-	// replace with a plain http.Get(rawURL).
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G107: URL is from config/env, not user input
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from plugin manifest
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -375,22 +367,6 @@ func extractZipEntry(zf *zip.File, destPath string) error {
 	return out.Close()
 }
 
-// githubToken returns a GitHub token for authenticating release asset
-// downloads from private repositories. It checks GH_TOKEN, GITHUB_TOKEN,
-// then falls back to `gh auth token`. Returns empty string if unavailable.
-func githubToken() string {
-	if token := os.Getenv("GH_TOKEN"); token != "" {
-		return token
-	}
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		return token
-	}
-	out, err := exec.Command("gh", "auth", "token").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
 
 func defaultPluginCachePath() string {
 	dir, err := os.UserCacheDir()
