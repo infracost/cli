@@ -21,7 +21,6 @@ type RunParameters struct {
 	FinopsPolicies    []json.RawMessage `json:"finopsPolicies"`
 }
 
-// mockery:name=Client
 type Client interface {
 	RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error)
 }
