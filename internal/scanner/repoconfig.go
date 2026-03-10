@@ -42,7 +42,6 @@ func LoadOrGenerateRepositoryConfig(dir string, opts ...config.GenerationOption)
 	templatePath := filepath.Join(dir, repoConfigTemplateFilename)
 	opts = append(
 		opts,
-		config.WithCloudFormationSupport(),
 		config.WithEnvVars(env),
 		// TODO: add more options later
 	)
