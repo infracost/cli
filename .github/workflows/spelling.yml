@@ -1,0 +1,21 @@
+name: spelling
+
+on:
+  pull_request:
+
+jobs:
+  codespell:
+    name: Enforce US English
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install codespell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip
+          pip install codespell==2.4.1
+
+      - name: Run codespell
+        run: |
+          make spelling
