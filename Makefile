@@ -21,7 +21,7 @@ lint: lint_install ## Run linting operations
 	golangci-lint run ./...
 
 .PHONY: mockery_install
-mock_install: ## Install mockery
+mockery_install: ## Install mockery
 	go install github.com/vektra/mockery/v3@latest
 
 .PHONY: mocks
