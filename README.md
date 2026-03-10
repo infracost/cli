@@ -1,9 +1,11 @@
 # cli
 
-> :construction: **Work in progress**
+> [!WARNING]
 >
-> This repository is under active development. Things may change quickly, break, or disappear entirely.
-
+> This repository is in early alpha. Features may change and rough edges are expected.
+> [Open a discussion thread](https://github.com/infracost/infracost/discussions) to report bugs or
+> share feedback — it is genuinely appreciated.
+ 
 ## Prerequisites
 
 ### GitHub Access
