@@ -6,9 +6,6 @@ on:
     branches:
       - main
 
-env:
-  GOPRIVATE: github.com/infracost/*
-
 jobs:
   unit:
     name: Unit Tests
@@ -29,16 +26,5 @@ jobs:
           key: nonexistent
           restore-keys: |
             ${{ runner.os }}-go-${{ hashFiles('go.mod') }}-
-
-      - uses: infracost/create-github-app-token@v1
-        id: app-token
-        with:
-          app-id: ${{ secrets.INFRACOST_CI_APP_ID }}
-          private-key: ${{ secrets.INFRACOST_CI_APP_PRIVATE_KEY }}
-          owner: infracost
-          repositories: config
-
-      - run: |
-          git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/".insteadOf "https://github.com/"
 
       - run: make test
