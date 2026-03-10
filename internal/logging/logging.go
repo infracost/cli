@@ -5,16 +5,20 @@ import (
 	"strings"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/infracost/cli/internal/config/process"
 	"github.com/rs/zerolog"
 )
 
 var (
+	_ process.Processor = (*Config)(nil)
+
 	loggerConfigured bool
 	logger           zerolog.Logger
 )
 
 type Config struct {
 	WriteLevel string `env:"INFRACOST_CLI_LOG_LEVEL" default:"warn"`
+	JSON       bool   `env:"INFRACOST_CLI_LOG_JSON" flag:"json" default:"false"`
 }
 
 // ToHCLogLevel converts the WriteLevel to an hclog.Level for use in logging outputs from the
@@ -40,7 +44,7 @@ func (config *Config) ToHCLogLevel() hclog.Level {
 	}
 }
 
-func (config *Config) Configure(json bool) {
+func (config *Config) Process() {
 	if loggerConfigured {
 		return
 	}
@@ -52,7 +56,7 @@ func (config *Config) Configure(json bool) {
 	}
 
 	logger = zerolog.New(os.Stderr).Level(level).With().Timestamp().Logger()
-	if !json {
+	if !config.JSON {
 		logger = logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	}
 

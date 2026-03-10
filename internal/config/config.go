@@ -6,12 +6,15 @@ import (
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cache"
+	"github.com/infracost/cli/internal/config/process"
 	"github.com/infracost/cli/internal/logging"
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/pkg/environment"
 	"github.com/infracost/cli/pkg/plugins"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+)
+
+var (
+	_ process.Processor = (*Config)(nil)
 )
 
 // Config contains the configuration for the CLI.
@@ -51,18 +54,9 @@ type Config struct {
 	Cache cache.Config
 }
 
-func (config *Config) RegisterEventMetadata(cmd *cobra.Command) {
-	events.RegisterMetadata("command", cmd.Name())
-	events.RegisterMetadata("flags", func() []string {
-		var flags []string
-		cmd.Flags().Visit(func(flag *pflag.Flag) {
-			flags = append(flags, flag.Name)
-		})
-		return flags
-	}())
-	events.RegisterMetadata("session", config.Cache.SessionID)
+func (config *Config) Process() {
 	events.RegisterMetadata("cloudEnabled", os.Getenv("INFRACOST_ENABLE_CLOUD") == "true")
 	events.RegisterMetadata("dashboardEnabled", os.Getenv("INFRACOST_ENABLE_DASHBOARD") == "true")
-	events.RegisterMetadata("environment", string(config.Environment))
+	events.RegisterMetadata("environment", config.Environment.String())
 	events.RegisterMetadata("isDefaultPricingApiEndpoint", config.PricingEndpoint == "https://pricing.api.infracost.io")
 }

@@ -7,8 +7,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/infracost/cli/internal/api/events"
+	config "github.com/infracost/cli/internal/config/process"
 	"github.com/infracost/cli/internal/logging"
 	"github.com/shirou/gopsutil/process"
+)
+
+var (
+	_ config.Processor = (*Config)(nil)
 )
 
 type Config struct {
@@ -23,7 +29,7 @@ type Config struct {
 	SessionID string `env:"INFRACOST_SESSION_ID"`
 }
 
-func (c *Config) ApplyDefaults() {
+func (c *Config) Process() {
 	if len(c.Cache) == 0 {
 		c.Cache = defaultCachePath()
 	}
@@ -33,6 +39,7 @@ func (c *Config) ApplyDefaults() {
 	if c.SessionID == "" {
 		c.SessionID = getSessionID()
 	}
+	events.RegisterMetadata("session", c.SessionID)
 }
 
 func defaultCachePath() string {
