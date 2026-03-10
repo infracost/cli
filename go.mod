@@ -6,7 +6,6 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/MicahParks/keyfunc/v3 v3.7.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/google/go-cmp v0.7.0
 	github.com/google/go-github/v83 v83.0.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-hclog v1.6.3
@@ -52,6 +51,7 @@ require (
 	github.com/oklog/run v1.1.0 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/soongo/path-to-regexp v1.6.4 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
