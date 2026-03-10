@@ -8,13 +8,16 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/infracost/cli/internal/config/process"
 	"github.com/infracost/cli/internal/logging"
 	"github.com/infracost/cli/pkg/environment"
 	"golang.org/x/oauth2"
 )
 
 var (
-	defaultValues = map[environment.Environment]map[string]string{
+	_ process.Processor = (*Config)(nil)
+
+	defaultValues = map[string]map[string]string{
 		environment.Production: {
 			"client_id":     "uMF6vrdl42thCHGI6Os6UqMqr2Px412O",
 			"auth_endpoint": "login.infracost.io",
@@ -37,6 +40,8 @@ var (
 type Config struct {
 	InternalConfig
 	ExternalConfig
+
+	Environment string `flagvalue:"environment"`
 
 	source oauth2.TokenSource
 }
@@ -74,21 +79,17 @@ type ExternalConfig struct {
 	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Save access tokens to a file for convenience."`
 }
 
-// ApplyDefaults sets the default values for the config based on the environment.
-//
-// Since we don't know the environment until we've loaded the config, we can't set the defaults when the flags are
-// created and instead must do the final check here.
-func (c *Config) ApplyDefaults(env environment.Environment) {
+func (c *Config) Process() {
 	if c.ClientID == "" {
-		c.ClientID = defaultValues[env]["client_id"]
+		c.ClientID = defaultValues[c.Environment]["client_id"]
 	}
 
 	if c.AuthEndpoint == "" {
-		c.AuthEndpoint = defaultValues[env]["auth_endpoint"]
+		c.AuthEndpoint = defaultValues[c.Environment]["auth_endpoint"]
 	}
 
 	if c.Audience == "" {
-		c.Audience = defaultValues[env]["audience"]
+		c.Audience = defaultValues[c.Environment]["audience"]
 	}
 
 	if len(c.TokenCachePath) == 0 {

@@ -3,11 +3,14 @@ package dashboard
 import (
 	"net/http"
 
+	"github.com/infracost/cli/internal/config/process"
 	"github.com/infracost/cli/pkg/environment"
 )
 
 var (
-	defaultValues = map[environment.Environment]map[string]string{
+	_ process.Processor = (*Config)(nil)
+
+	defaultValues = map[string]map[string]string{
 		environment.Production: {
 			"endpoint": "https://dashboard.api.infracost.io",
 		},
@@ -21,18 +24,19 @@ var (
 )
 
 type Config struct {
-	Endpoint string `env:"INFRACOST_CLI_DASHBOARD_ENDPOINT" flag:"dashboard-endpoint;hidden" usage:"The endpoint for the Infracost dashboard"`
+	Environment string `flagvalue:"environment"`
+	Endpoint    string `env:"INFRACOST_CLI_DASHBOARD_ENDPOINT" flag:"dashboard-endpoint;hidden" usage:"The endpoint for the Infracost dashboard"`
+}
+
+func (c *Config) Process() {
+	if c.Endpoint == "" {
+		c.Endpoint = defaultValues[c.Environment]["endpoint"]
+	}
 }
 
 func (c *Config) Client(client *http.Client) *Client {
 	return &Client{
 		client: client,
 		config: c,
-	}
-}
-
-func (c *Config) ApplyDefaults(env environment.Environment) {
-	if c.Endpoint == "" {
-		c.Endpoint = defaultValues[env]["endpoint"]
 	}
 }

@@ -3,27 +3,33 @@ package environment
 import (
 	"fmt"
 
-	"github.com/spf13/pflag"
+	"github.com/infracost/cli/internal/config/process"
 )
 
 const (
-	Production  Environment = "prod"
-	Development Environment = "dev"
-	Local       Environment = "local"
+	Production  = "prod"
+	Development = "dev"
+	Local       = "local"
 )
 
-var _ pflag.Value = (*Environment)(nil)
+var _ process.SharedFlag = (*Environment)(nil)
 
-type Environment string
+type Environment struct {
+	value   string
+	targets []*string
+}
 
 func (e *Environment) String() string {
-	return fmt.Sprintf("environment(%s)", *e)
+	return e.value
 }
 
 func (e *Environment) Set(s string) error {
-	switch env := Environment(s); env {
+	switch env := s; env {
 	case Production, Development, Local:
-		*e = env
+		e.value = s
+		for _, target := range e.targets {
+			*target = s
+		}
 		return nil
 	default:
 		return fmt.Errorf("invalid environment: %s", s)
@@ -32,4 +38,8 @@ func (e *Environment) Set(s string) error {
 
 func (e *Environment) Type() string {
 	return "environment"
+}
+
+func (e *Environment) AddTarget(target *string) {
+	e.targets = append(e.targets, target)
 }

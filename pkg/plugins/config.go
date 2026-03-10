@@ -16,12 +16,17 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/infracost/cli/internal/config/process"
 	"github.com/infracost/cli/internal/logging"
 	"github.com/infracost/cli/pkg/plugins/parser"
 	"github.com/infracost/cli/pkg/plugins/providers"
 	providerconv "github.com/infracost/go-proto/pkg/providers"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
 	"golang.org/x/mod/semver"
+)
+
+var (
+	_ process.Processor = (*Config)(nil)
 )
 
 // maxPluginSize is the maximum allowed size for an extracted plugin binary (1 GB).
@@ -45,7 +50,7 @@ type Config struct {
 	manifest *Manifest
 }
 
-func (c *Config) ApplyDefaults() {
+func (c *Config) Process() {
 	if len(c.Cache) == 0 {
 		c.Cache = defaultPluginCachePath()
 	}

@@ -1,4 +1,4 @@
-package config
+package process
 
 import (
 	"fmt"
@@ -17,50 +17,32 @@ var (
 	valueType = reflect.TypeOf((*pflag.Value)(nil)).Elem()
 )
 
-// Process populates a struct's fields from environment variables and command-line flags.
-//
-// The target must be a pointer to a struct. Each field can be tagged with `env`, `flag`, `usage`,
-// and `default` to specify how the field should be populated.
-//
-// If no tag is specified, the field name is used as the basis for both the environment variable
-// (converted to SCREAMING_SNAKE_CASE) and the flag name (converted to kebab-case). This behavior
-// can be disabled by setting the `env` or `flag` tag to `-`.
-//
-// Example:
-//
-//	type MyConfig struct {
-//	  MyField string `env:"MY_FIELD" flag:"my-field;hidden" usage:"my field usage" default:"my-default"`
-//	}
-//
-// Flags can be marked as hidden by appending `;hidden` to the `flag` tag.
-//
-// Process supports nested structs, and basic types such as strings, integers, and booleans.
-// Additionally, any type implementing the pflag.Value interface is supported.
-func Process(target interface{}, flags *pflag.FlagSet) *diagnostic.Diagnostics {
+// PreProcess walks the target struct and hydrates fields based on struct tags.
+// Fields tagged with `env:"VAR"` are populated from environment variables,
+// `default:"val"` sets a fallback when no env var is found and the field is zero,
+// and `flag:"name"` registers a pflag on the provided FlagSet. Nested structs
+// are recursed into unless they implement pflag.Value, in which case they are
+// treated as leaf values. The target must be a pointer to a struct.
+func PreProcess(target interface{}, flags *pflag.FlagSet) *diagnostic.Diagnostics {
 	v := reflect.ValueOf(target)
 
 	if v.Kind() == reflect.Interface {
-		// we'll support interfaces, but we'll only allow one level of indirection
-		// basically, just allows people to pass in things that have been assigned to a interface{} or any type
-		// constraint
 		v = v.Elem()
 	}
 
 	if v.Kind() != reflect.Pointer {
-		// but, we must have a pointer to a struct at the next level
 		panic("target must be a pointer to a struct")
 	}
-	v = v.Elem() // unpack the pointer
+	v = v.Elem()
 
 	if v.Kind() != reflect.Struct {
-		// we must now actually have the struct we're going to be working on
 		panic("target must be a pointer to a struct")
 	}
 
-	return processStruct(v, flags)
+	return preprocess(v, flags)
 }
 
-func processStruct(v reflect.Value, flags *pflag.FlagSet) *diagnostic.Diagnostics {
+func preprocess(v reflect.Value, flags *pflag.FlagSet) *diagnostic.Diagnostics {
 	var diags *diagnostic.Diagnostics
 
 	t := v.Type()
@@ -74,31 +56,37 @@ func processStruct(v reflect.Value, flags *pflag.FlagSet) *diagnostic.Diagnostic
 
 		envName, hasEnvName := field.Tag.Lookup("env")
 		flagValue, hasFlagValue := field.Tag.Lookup("flag")
+		flagTargetName, hasFlagTarget := field.Tag.Lookup("flagvalue")
 		defaultValue, hasDefaultValue := field.Tag.Lookup("default")
 
 		hasEnvName = hasEnvName && envName != ""
 		hasFlagValue = hasFlagValue && flagValue != ""
+		hasFlagTarget = hasFlagTarget && flagTargetName != ""
 		hasDefaultValue = hasDefaultValue && defaultValue != ""
 
 		currentType, parentType := unpackType(fieldValue.Type(), fieldValue.Addr().Type())
 		isPflagValue := parentType.Implements(valueType)
 
 		if currentType.Kind() == reflect.Struct && !isPflagValue {
-			if hasEnvName || hasFlagValue || hasDefaultValue {
+			if hasEnvName || hasFlagValue || hasDefaultValue || hasFlagTarget {
 				// programmer error, so we panic
-				panic("nested structs cannot be tagged with env, flag or default, or they must implement pflag.Value")
+				panic("nested structs cannot be tagged with env, flag, flagvalue or default, or they must implement pflag.Value")
 			}
 
 			current, _ := unpackValue(fieldValue)
 
 			// Then we have a struct that needs to be processed recursively.
-			if err := processStruct(current, flags); err != nil {
+			if err := preprocess(current, flags); err != nil {
 				return err
 			}
 		}
 
-		if !hasEnvName && !hasFlagValue && !hasDefaultValue {
-			// if we have no env, flag or default value then we're not going to touch this field
+		if hasFlagTarget && (hasFlagValue || hasEnvName || hasDefaultValue) {
+			panic("flagvalue cannot be combined with flag, env, or default tags")
+		}
+
+		if !hasEnvName && !hasFlagValue && !hasFlagTarget && !hasDefaultValue {
+			// if we have no env, flag, flagvalue or default value then we're not going to touch this field
 			continue
 		}
 
@@ -142,11 +130,35 @@ func processStruct(v reflect.Value, flags *pflag.FlagSet) *diagnostic.Diagnostic
 			registerFlag(parent, flags, flagName, field.Tag.Get("usage"), hidden, isPflagValue)
 		}
 
+		if hasFlagTarget {
+			existing := flags.Lookup(flagTargetName)
+			if existing == nil {
+				panic(fmt.Sprintf("flagvalue %q references flag that has not been registered", flagTargetName))
+			}
+
+			sf, ok := existing.Value.(SharedFlag)
+			if !ok {
+				panic(fmt.Sprintf("flagvalue %q references flag that does not implement SharedFlag", flagTargetName))
+			}
+
+			if fieldValue.Kind() != reflect.String {
+				panic(fmt.Sprintf("flagvalue %q can only be used on string fields", flagTargetName))
+			}
+
+			target := fieldValue.Addr().Interface().(*string)
+			if existing.DefValue != "" {
+				*target = existing.DefValue
+			}
+			sf.AddTarget(target)
+		}
+
 	}
 
 	return diags
 }
 
+// setFieldValue sets a reflected field's value from a string. It handles
+// pflag.Value types, time.Duration, and primitive kinds (string, int, bool).
 func setFieldValue(v reflect.Value, s string, isPflagValue bool) error {
 	if isPflagValue {
 		pv := v.Addr().Interface().(pflag.Value)
@@ -242,31 +254,4 @@ func registerFlag(v reflect.Value, flags *pflag.FlagSet, name string, usage stri
 			panic(err) // panic as this should never happen
 		}
 	}
-}
-
-// unpackType will unwrap the type, iterating through pointers and interfaces until the real type has been discovered.
-// It returns the source type and the parent type to it.
-func unpackType(t reflect.Type, parent reflect.Type) (reflect.Type, reflect.Type) {
-	for t.Kind() == reflect.Pointer {
-		parent = t
-		t = t.Elem() // then unpack all the pointers to get the real core type
-	}
-	return t, parent
-}
-
-// unpackValue will unwrap the provided value, iterating through pointers until the real value has been discovered.
-// It returns the source value and the parent value to it.
-//
-// We'll initialize pointers as we go, but not the inner most pointer. Callers must check the returned parent value
-// for nil, before they try and set any values on the returned value.
-func unpackValue(value reflect.Value) (reflect.Value, reflect.Value) {
-	parent := value.Addr()
-	for value.Kind() == reflect.Pointer {
-		parent = value
-		if value.IsNil() {
-			value.Set(reflect.New(value.Type().Elem()))
-		}
-		value = value.Elem()
-	}
-	return value, parent
 }
