@@ -41,7 +41,7 @@ var (
 )
 
 type Scanner struct {
-	plugins         plugins.Config
+	plugins         *plugins.Config
 	logging         logging.Config
 	dashboard       dashboard.Config
 	currency        string
@@ -50,7 +50,7 @@ type Scanner struct {
 
 func NewScanner(config *config.Config) *Scanner {
 	return &Scanner{
-		plugins:         config.Plugins,
+		plugins:         &config.Plugins,
 		logging:         config.Logging,
 		dashboard:       config.Dashboard,
 		currency:        config.Currency,
