@@ -3,6 +3,7 @@ package logging
 import (
 	"os"
 	"strings"
+	"testing"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/config/process"
@@ -62,6 +63,20 @@ func (config *Config) Process() {
 
 	if err != nil {
 		Errorf("failed to parse log level (%q), defaulting to WARN", config.WriteLevel)
+	}
+}
+
+func (config *Config) ForTest(t *testing.T) {
+	t.Helper()
+	level, err := zerolog.ParseLevel(config.WriteLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writer := zerolog.NewTestWriter(t)
+	logger = zerolog.New(writer).Level(level).With().Timestamp().Logger()
+	if !config.JSON {
+		logger = logger.Output(zerolog.ConsoleWriter{Out: writer})
 	}
 }
 

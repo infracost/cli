@@ -24,7 +24,7 @@ type Config struct {
 	Environment environment.Environment `flag:"environment;hidden" usage:"The environment to use for authentication" default:"prod"`
 
 	// Currency is the currency to use for prices. Defaults to USD.
-	Currency string `env:"INFRACOST_CLI_CURRENCY" flag:"currency" usage:"The currency to use for prices" default:"USD"`
+	Currency string `env:"INFRACOST_CLI_CURRENCY" flag:"currency" usage:"The currency to use for prices" default:""`
 
 	// PricingEndpoint is the endpoint to use for prices. Defaults to https://pricing.api.infracost.io.
 	PricingEndpoint string `env:"INFRACOST_CLI_PRICING_ENDPOINT" flag:"pricing-endpoint;hidden" usage:"The pricing endpoint to use for prices" default:"https://pricing.api.infracost.io"`

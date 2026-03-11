@@ -185,8 +185,11 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		return nil, fmt.Errorf("repository configuration error: %w", err)
 	}
 	result.Config = repoConfig
-	if repoConfig.Currency == "" {
-		repoConfig.Currency = s.currency
+	if s.currency != "" {
+		result.Config.Currency = s.currency
+	}
+	if result.Config.Currency == "" {
+		result.Config.Currency = "USD"
 	}
 
 	// load the repo-level usage file if it exists, merging on top of the API defaults
