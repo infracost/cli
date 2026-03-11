@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
@@ -27,7 +28,7 @@ func Connect(path string, level hclog.Level) (proto.ProviderServiceClient, func(
 		return nil, nil, fmt.Errorf("error accessing plugin path: %w", err)
 	} else if stat.IsDir() {
 		return nil, nil, fmt.Errorf("plugin path is a directory")
-	} else if stat.Mode()&0111 == 0 {
+	} else if runtime.GOOS != "windows" && stat.Mode()&0111 == 0 {
 		return nil, nil, fmt.Errorf("plugin path is not executable")
 	}
 

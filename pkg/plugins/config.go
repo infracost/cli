@@ -107,14 +107,24 @@ func (c *Config) providerOverride(provider proto.Provider) (string, string) {
 	}
 }
 
+// pluginBinaryName returns the binary filename for the given plugin name,
+// appending .exe on Windows where executables require the extension.
+func pluginBinaryName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
 func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 	logging.Debugf("ensuring plugin %q is available", plugin)
 
 	platform := runtime.GOOS + "_" + runtime.GOARCH
+	binaryName := pluginBinaryName(plugin)
 
 	if len(wantVersion) > 0 {
 		// The user has requested a specific version.
-		want := filepath.Join(c.Cache, plugin, platform, wantVersion, plugin)
+		want := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
 		if _, err := os.Stat(want); err == nil {
 			return want, nil
 		}
@@ -123,7 +133,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 	// When auto-update is disabled and the user hasn't picked a specific version, use the latest cached version if
 	// available.
 	if len(wantVersion) == 0 && !c.AutoUpdate {
-		matches, _ := filepath.Glob(filepath.Join(c.Cache, plugin, platform, "*", plugin))
+		matches, _ := filepath.Glob(filepath.Join(c.Cache, plugin, platform, "*", binaryName))
 		if len(matches) > 0 {
 			sort.Slice(matches, func(i, j int) bool {
 				vi := "v" + filepath.Base(filepath.Dir(matches[i]))
@@ -162,7 +172,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 		return "", fmt.Errorf("plugin %q version %q has no artifact for %s", plugin, wantVersion, platform)
 	}
 
-	binaryPath := filepath.Join(c.Cache, plugin, platform, wantVersion, plugin)
+	binaryPath := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
 
 	if _, err := os.Stat(binaryPath); err == nil {
 		logging.Debugf("plugin %q already cached at %s", plugin, binaryPath)
@@ -188,7 +198,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 	case strings.HasSuffix(artifact.Name, ".tar.gz"):
 		err = unpackTarGz(archivePath, tmpBinary, plugin)
 	case strings.HasSuffix(artifact.Name, ".zip"):
-		err = unpackZip(archivePath, tmpBinary, plugin+".exe")
+		err = unpackZip(archivePath, tmpBinary, binaryName)
 	default:
 		err = fmt.Errorf("unsupported archive format for %s", artifact.Name)
 	}
