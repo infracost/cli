@@ -206,6 +206,7 @@ func (c *Config) ReadLatest() (*format.Output, error) {
 func readDataFile(cacheDir, key string) (*format.Output, error) {
 	path := filepath.Join(cacheDir, key+".json")
 
+	// nolint:gosec // G304: Cache path is derived internally.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read cache file: %w", err)

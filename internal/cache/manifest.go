@@ -45,6 +45,7 @@ func (c *Config) LoadManifest() (*Manifest, error) {
 		Sessions: make(map[string]string),
 	}
 
+	// nolint:gosec // G304: Cache path is derived internally.
 	f, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -74,6 +75,7 @@ func (c *Config) SaveManifest(m *Manifest) error {
 
 	path := filepath.Join(c.Cache, "manifest.json")
 
+	// nolint:gosec // G304: Cache path is derived internally.
 	f, err := os.Create(path)
 	if err != nil {
 		return err
