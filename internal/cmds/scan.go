@@ -76,10 +76,14 @@ func Scan(cfg *config.Config) *cobra.Command {
 
 			eventsClient := cfg.Events.Client(api.Client(cmd.Context(), source, cfg.OrgID))
 
-			// Diff against the previous cached result from the same session to detect
-			// fixed policy violations.
-			if prev, err := cfg.Cache.Read(absoluteDirectory, true); err == nil && prev.SameSession(&cfg.Cache) {
-				output.TrackDiff(cmd.Context(), eventsClient, &prev.Data)
+			// Diff against the previous cached result to detect fixed policy violations.
+			// When a session ID is configured, matching is by session ID only. Otherwise,
+			// matching is by path and TTL so that repeated runs in the same terminal are compared.
+			if prev, err := cfg.Cache.Read(absoluteDirectory, true); err != nil {
+				logging.Infof("could not load previous run data: %v", err)
+			} else {
+				logging.Infof("found previous run data in cache")
+				output.TrackDiff(cmd.Context(), eventsClient, prev)
 			}
 
 			if err := cfg.Cache.Write(absoluteDirectory, &output); err != nil {

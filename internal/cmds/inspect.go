@@ -7,6 +7,7 @@ import (
 
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/inspect"
 	"github.com/spf13/cobra"
 )
@@ -19,7 +20,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 		Use:   "inspect [path]",
 		Short: "Inspect cached analysis results with filtering and grouping",
 		RunE: func(_ *cobra.Command, args []string) error {
-			var data *cache.Entry
+			var data *format.Output
 			var err error
 
 			if file != "" {
@@ -46,7 +47,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 				}
 			}
 
-			return inspect.Run(os.Stdout, &data.Data, opts)
+			return inspect.Run(os.Stdout, data, opts)
 		},
 	}
 

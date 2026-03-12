@@ -63,14 +63,12 @@ func TestWriteThenRead(t *testing.T) {
 	err := c.Write(absPath, &data)
 	require.NoError(t, err)
 
-	entry, err := c.Read(absPath, false)
+	output, err := c.Read(absPath, false)
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, entry.Version)
-	assert.Equal(t, absPath, entry.SourcePath)
-	assert.Equal(t, "USD", entry.Data.Currency)
-	assert.Len(t, entry.Data.Projects, 1)
-	assert.Equal(t, "test-project", entry.Data.Projects[0].ProjectName)
+	assert.Equal(t, "USD", output.Currency)
+	assert.Len(t, output.Projects, 1)
+	assert.Equal(t, "test-project", output.Projects[0].ProjectName)
 }
 
 func TestReadExpired(t *testing.T) {
@@ -86,7 +84,7 @@ func TestReadExpired(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 	_, err = c.Read(absPath, false)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expired")
+	assert.Contains(t, err.Error(), "no cached results found")
 }
 
 func TestReadMissing(t *testing.T) {
@@ -109,9 +107,9 @@ func TestReadLatest(t *testing.T) {
 	err = c.Write("/second/project", &data)
 	require.NoError(t, err)
 
-	entry, err := c.ReadLatest()
+	output, err := c.ReadLatest()
 	require.NoError(t, err)
-	assert.Equal(t, "second-project", entry.Data.Projects[0].ProjectName)
+	assert.Equal(t, "second-project", output.Projects[0].ProjectName)
 }
 
 func TestReadStaleSourceFiles(t *testing.T) {
@@ -136,6 +134,25 @@ func TestReadStaleSourceFiles(t *testing.T) {
 	assert.Contains(t, err.Error(), "stale")
 }
 
+func TestReadAllowStale(t *testing.T) {
+	c := testConfig(t)
+	sourceDir := t.TempDir()
+	data := testOutput()
+
+	err := c.Write(sourceDir, &data)
+	require.NoError(t, err)
+
+	// Create a file in the source dir newer than the cache
+	time.Sleep(10 * time.Millisecond)
+	err = os.WriteFile(filepath.Join(sourceDir, "main.tf"), []byte("resource {}"), 0600)
+	require.NoError(t, err)
+
+	// allowStale=true should still return the data
+	output, err := c.Read(sourceDir, true)
+	require.NoError(t, err)
+	assert.Equal(t, "USD", output.Currency)
+}
+
 func TestReadSkipsHeavyDirs(t *testing.T) {
 	c := testConfig(t)
 	sourceDir := t.TempDir()
@@ -151,12 +168,12 @@ func TestReadSkipsHeavyDirs(t *testing.T) {
 	err = os.WriteFile(filepath.Join(tfDir, "plugin.bin"), []byte("binary"), 0600)
 	require.NoError(t, err)
 
-	entry, err := c.Read(sourceDir, false)
+	output, err := c.Read(sourceDir, false)
 	require.NoError(t, err)
-	assert.Equal(t, "USD", entry.Data.Currency)
+	assert.Equal(t, "USD", output.Currency)
 }
 
-func TestSameSessionFromSameProcess(t *testing.T) {
+func TestNoSessionFallsBackToPath(t *testing.T) {
 	c := testConfig(t)
 	data := testOutput()
 	absPath := t.TempDir()
@@ -164,14 +181,13 @@ func TestSameSessionFromSameProcess(t *testing.T) {
 	err := c.Write(absPath, &data)
 	require.NoError(t, err)
 
-	entry, err := c.Read(absPath, false)
+	output, err := c.Read(absPath, false)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, entry.SessionID)
-	assert.True(t, entry.SameSession(c), "entry written by same config should be same session")
+	assert.Equal(t, "USD", output.Currency)
 }
 
-func TestSameSessionWithExplicitID(t *testing.T) {
+func TestReadBySessionID(t *testing.T) {
 	c := testConfig(t)
 	c.SessionID = "test-session-123"
 	data := testOutput()
@@ -180,14 +196,14 @@ func TestSameSessionWithExplicitID(t *testing.T) {
 	err := c.Write(absPath, &data)
 	require.NoError(t, err)
 
-	entry, err := c.Read(absPath, false)
+	// Session overrides path — find it even with a different path.
+	output, err := c.Read("/completely/different/path", false)
 	require.NoError(t, err)
 
-	assert.Equal(t, "test-session-123", entry.SessionID)
-	assert.True(t, entry.SameSession(c))
+	assert.Equal(t, "USD", output.Currency)
 }
 
-func TestDifferentSession(t *testing.T) {
+func TestDifferentSessionFallsBackToPath(t *testing.T) {
 	c := testConfig(t)
 	c.SessionID = "session-A"
 	data := testOutput()
@@ -196,12 +212,99 @@ func TestDifferentSession(t *testing.T) {
 	err := c.Write(absPath, &data)
 	require.NoError(t, err)
 
+	// Reading with a different session ID still finds the entry via path+TTL fallback.
 	c.SessionID = "session-B"
-	entry, err := c.Read(absPath, false)
+	output, err := c.Read(absPath, false)
+	require.NoError(t, err)
+	assert.Equal(t, "USD", output.Currency)
+}
+
+func TestReadLatestWithSession(t *testing.T) {
+	c := testConfig(t)
+	c.SessionID = "my-session"
+	data := testOutput()
+
+	err := c.Write("/first/project", &data)
+	require.NoError(t, err)
+	time.Sleep(10 * time.Millisecond)
+
+	// Write a newer entry without the session.
+	c.SessionID = ""
+	data.Projects[0].ProjectName = "second-project"
+	err = c.Write("/second/project", &data)
 	require.NoError(t, err)
 
-	assert.Equal(t, "session-A", entry.SessionID)
-	assert.False(t, entry.SameSession(c), "different session IDs should not match")
+	// ReadLatest with the session should return the session's entry, not the newer one.
+	c.SessionID = "my-session"
+	output, err := c.ReadLatest()
+	require.NoError(t, err)
+	assert.Equal(t, "test-project", output.Projects[0].ProjectName)
+}
+
+func TestTermSessionReadBySessionID(t *testing.T) {
+	c := testConfig(t)
+	c.TermSessionID = "term-123"
+	data := testOutput()
+	absPath := t.TempDir()
+
+	err := c.Write(absPath, &data)
+	require.NoError(t, err)
+
+	// Terminal session matches, so Read should find it even with a different path.
+	output, err := c.Read("/completely/different/path", false)
+	require.NoError(t, err)
+	assert.Equal(t, "USD", output.Currency)
+}
+
+func TestTermSessionRespectsExpiry(t *testing.T) {
+	c := testConfig(t)
+	c.TermSessionID = "term-123"
+	c.TTL = time.Nanosecond
+	data := testOutput()
+
+	err := c.Write("/test/project", &data)
+	require.NoError(t, err)
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Terminal session should still respect TTL, unlike explicit sessions.
+	_, err = c.Read("/other/path", false)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no cached results found")
+}
+
+func TestTermSessionReadLatestRespectsExpiry(t *testing.T) {
+	c := testConfig(t)
+	c.TermSessionID = "term-123"
+	c.TTL = time.Nanosecond
+	data := testOutput()
+
+	err := c.Write("/test/project", &data)
+	require.NoError(t, err)
+
+	time.Sleep(2 * time.Millisecond)
+
+	// ReadLatest with terminal session should still respect TTL.
+	_, err = c.ReadLatest()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no cached results found")
+}
+
+func TestExplicitSessionIgnoresExpiry(t *testing.T) {
+	c := testConfig(t)
+	c.SessionID = "explicit-123"
+	c.TTL = time.Nanosecond
+	data := testOutput()
+
+	err := c.Write("/test/project", &data)
+	require.NoError(t, err)
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Explicit session should skip TTL.
+	output, err := c.Read("/other/path", false)
+	require.NoError(t, err)
+	assert.Equal(t, "USD", output.Currency)
 }
 
 func TestReadFile(t *testing.T) {

@@ -1,20 +1,12 @@
 package cache
 
 import (
-	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/infracost/cli/internal/api/events"
-	config "github.com/infracost/cli/internal/config/process"
 	"github.com/infracost/cli/internal/logging"
-	"github.com/shirou/gopsutil/process"
-)
-
-var (
-	_ config.Processor = (*Config)(nil)
 )
 
 type Config struct {
@@ -24,9 +16,22 @@ type Config struct {
 	// TTL is how long cached results remain valid.
 	TTL time.Duration `env:"INFRACOST_CLI_CACHE_TTL" default:"1h"`
 
-	// SessionID identifies the current session (terminal, editor, CI job).
-	// Falls back to the parent process ID if not set.
+	// SessionID is an explicit session ID set by the caller to group runs.
+	// When set, lookups by session skip TTL and staleness checks.
 	SessionID string `env:"INFRACOST_SESSION_ID"`
+
+	// TermSessionID is the terminal session ID, typically set by the terminal
+	// emulator (e.g. TERM_SESSION_ID). Used as a fallback session identifier
+	// when SessionID is not set. Lookups by terminal session still check TTL.
+	//
+	// Like explicit sessions, terminal session lookups ignore the path. This is
+	// important because some commands (e.g. price) use temporary directories, so
+	// the path changes every invocation and path+TTL alone cannot track iterative
+	// changes.
+	TermSessionID string `env:"TERM_SESSION_ID"`
+
+	// manifest is the in-memory manifest, lazily loaded on first access.
+	manifest *Manifest
 }
 
 func (c *Config) Process() {
@@ -36,10 +41,24 @@ func (c *Config) Process() {
 	if c.TTL == 0 {
 		c.TTL = time.Hour
 	}
-	if c.SessionID == "" {
-		c.SessionID = getSessionID()
+
+	if c.SessionID != "" {
+		logging.Infof("using explicit session id %s", c.SessionID)
+	} else if c.TermSessionID != "" {
+		logging.Infof("using terminal session id %s", c.TermSessionID)
 	}
-	events.RegisterMetadata("session", c.SessionID)
+	sid, _ := c.sessionID()
+	events.RegisterMetadata("session", sid)
+}
+
+// sessionID returns the effective session ID and whether it is an explicit
+// (trusted) session. Explicit sessions skip TTL and staleness checks.
+// Terminal sessions are used for matching but still respect TTL.
+func (c *Config) sessionID() (string, bool) {
+	if c.SessionID != "" {
+		return c.SessionID, true
+	}
+	return c.TermSessionID, false
 }
 
 func defaultCachePath() string {
@@ -56,23 +75,4 @@ func defaultCachePath() string {
 
 	logging.WithError(err).Msg("failed to load user home dir, falling back to current directory")
 	return filepath.Join(".infracost", "cache")
-}
-
-func getSessionID() string {
-	ppid := os.Getppid()
-	if ppid > math.MaxInt32 {
-		return fmt.Sprintf("%d", ppid)
-	}
-
-	process, err := process.NewProcess(int32(ppid)) //nolint:gosec // guarded by MaxInt32 check above
-	if err != nil {
-		return fmt.Sprintf("%d", ppid)
-	}
-
-	createTime, err := process.CreateTime()
-	if err != nil {
-		return fmt.Sprintf("%d", ppid)
-	}
-
-	return fmt.Sprintf("%d-%d", ppid, createTime)
 }

@@ -22,131 +22,213 @@ var skipDirs = map[string]bool{
 	".vscode":           true,
 }
 
-type Entry struct {
-	Version    int           `json:"version"`
-	CreatedAt  time.Time     `json:"created_at"`
-	SourcePath string        `json:"source_path"`
-	SessionID  string        `json:"session_id,omitempty"`
-	Data       format.Output `json:"data"`
-}
-
-// SameSession reports whether this entry was written by the same session as
-// the current process (same terminal, editor, or CI job).
-func (e *Entry) SameSession(c *Config) bool {
-	return e.SessionID != "" && e.SessionID == c.SessionID
-}
-
 // Key returns a cache key derived from the absolute path (first 16 hex chars of SHA256).
 func Key(absPath string) string {
 	h := sha256.Sum256([]byte(absPath))
 	return hex.EncodeToString(h[:])[:16]
 }
 
-// Write writes the output data to the cache for the given absolute path.
+// Write writes the output data to the cache for the given absolute path and
+// updates the manifest accordingly.
 func (c *Config) Write(absPath string, data *format.Output) error {
 	if err := os.MkdirAll(c.Cache, 0700); err != nil {
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	entry := Entry{
+	key := Key(absPath)
+
+	b, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal cache data: %w", err)
+	}
+
+	path := filepath.Join(c.Cache, key+".json")
+	if err := os.WriteFile(path, b, 0600); err != nil {
+		return fmt.Errorf("failed to write cache file: %w", err)
+	}
+
+	m, err := c.LoadManifest()
+	if err != nil {
+		return fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	sid, _ := c.sessionID()
+
+	m.Entries[key] = ManifestEntry{
 		Version:    1,
 		CreatedAt:  time.Now(),
 		SourcePath: absPath,
-		SessionID:  c.SessionID,
-		Data:       *data,
+		SessionID:  sid,
 	}
 
-	b, err := json.Marshal(entry)
-	if err != nil {
-		return fmt.Errorf("failed to marshal cache entry: %w", err)
+	if sid != "" {
+		m.Sessions[sid] = key
 	}
 
-	path := filepath.Join(c.Cache, Key(absPath)+".json")
-	if err := os.WriteFile(path, b, 0600); err != nil {
-		return fmt.Errorf("failed to write cache file: %w", err)
+	if err := c.SaveManifest(m); err != nil {
+		return fmt.Errorf("failed to save manifest: %w", err)
 	}
 
 	return nil
 }
 
-// Read reads a cached entry for the given absolute path, returning an error if missing or expired.
+// Read looks up a cached result for the given absolute path.
 //
-// allowChanged can be set to true to return the entry even if the files have changed (so the cache is stale). This is
-// useful for tracking changes in the results between runs, but should be set to false when inspecting results to make
-// sure results are up-to-date.
-func (c *Config) Read(absPath string, allowChanged bool) (*Entry, error) {
-	path := filepath.Join(c.Cache, Key(absPath)+".json")
-	return readEntryFile(path, c.TTL, allowChanged)
-}
-
-// ReadLatest reads the most recently modified cache entry, returning an error if missing or expired.
-func (c *Config) ReadLatest() (*Entry, error) {
-	entries, err := os.ReadDir(c.Cache)
+// If a session ID is configured, it checks both the session-based entry and
+// the path-based entry, returning whichever is most recent. The session-based
+// entry is not subject to TTL. The path-based entry must be within TTL.
+//
+// If no session ID is configured, only the path+TTL lookup is used.
+//
+// When allowStale is false, the entry is rejected if any source file has been
+// modified since the entry was created. Set allowStale to true when reading
+// for comparison rather than inspection.
+func (c *Config) Read(absPath string, allowStale bool) (*format.Output, error) {
+	m, err := c.LoadManifest()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("no cached results found")
-		}
-		return nil, fmt.Errorf("failed to read cache directory: %w", err)
+		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	var newest os.DirEntry
-	var newestTime time.Time
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if newest == nil || info.ModTime().After(newestTime) {
-			newest = e
-			newestTime = info.ModTime()
+	key := Key(absPath)
+
+	var pathEntry *ManifestEntry
+	if e, ok := m.Entries[key]; ok && c.TTL > 0 && time.Since(e.CreatedAt) <= c.TTL {
+		pathEntry = &e
+	}
+
+	sid, explicit := c.sessionID()
+
+	var sessionEntry *ManifestEntry
+	if sid != "" {
+		if sessionKey, ok := m.Sessions[sid]; ok {
+			if sessionKey == key && pathEntry != nil {
+				// Session and path point to the same entry; no need to compare.
+				if !allowStale && pathEntry.SourcePath != "" {
+					if changed := newerFile(pathEntry.SourcePath, pathEntry.CreatedAt); changed != "" {
+						return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
+					}
+				}
+				return readDataFile(c.Cache, key)
+			}
+			if e, ok := m.Entries[sessionKey]; ok {
+				// Explicit sessions skip TTL; terminal sessions still check it.
+				if explicit || (c.TTL > 0 && time.Since(e.CreatedAt) <= c.TTL) {
+					sessionEntry = &e
+				}
+			}
 		}
 	}
 
-	if newest == nil {
+	// Pick the best match.
+	var best *ManifestEntry
+	switch {
+	case pathEntry != nil && sessionEntry != nil:
+		if sessionEntry.CreatedAt.After(pathEntry.CreatedAt) {
+			best = sessionEntry
+		} else {
+			best = pathEntry
+		}
+	case sessionEntry != nil:
+		best = sessionEntry
+	case pathEntry != nil:
+		best = pathEntry
+	default:
 		return nil, fmt.Errorf("no cached results found")
 	}
 
-	return readEntryFile(filepath.Join(c.Cache, newest.Name()), c.TTL, false)
-}
-
-func readEntryFile(path string, ttl time.Duration, allowChanged bool) (*Entry, error) {
-	// nolint:gosec // G304: Cache path is derived internally.
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("no cached results found")
-		}
-		return nil, fmt.Errorf("failed to read cache file: %w", err)
-	}
-
-	var entry Entry
-	if err := json.Unmarshal(b, &entry); err != nil {
-		return nil, fmt.Errorf("failed to decode cache entry: %w", err)
-	}
-
-	if ttl > 0 && time.Since(entry.CreatedAt) > ttl {
-		return nil, fmt.Errorf("cached results expired")
-	}
-
-	if entry.SourcePath != "" && !allowChanged {
-		if changed := newerFile(entry.SourcePath, entry.CreatedAt); changed != "" {
+	if !allowStale && best.SourcePath != "" {
+		if changed := newerFile(best.SourcePath, best.CreatedAt); changed != "" {
 			return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
 		}
 	}
 
-	return &entry, nil
+	return readDataFile(c.Cache, Key(best.SourcePath))
 }
 
-// hasNewerFile walks the source directory and returns true as soon as it finds
-// any file modified after the given time. Skips known heavy directories.
+// ReadLatest returns the most recent cached result.
+//
+// If a session ID is configured, the session's entry is returned. Otherwise,
+// the entry with the most recent CreatedAt across the entire manifest is used.
+func (c *Config) ReadLatest() (*format.Output, error) {
+	m, err := c.LoadManifest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	if len(m.Entries) == 0 {
+		return nil, fmt.Errorf("no cached results found")
+	}
+
+	sid, explicit := c.sessionID()
+
+	if sid != "" {
+		if sessionKey, ok := m.Sessions[sid]; ok {
+			if e, ok := m.Entries[sessionKey]; ok {
+				if explicit {
+					// Explicit session — caller manages freshness.
+					return readDataFile(c.Cache, sessionKey)
+				}
+				// Terminal session — still check TTL.
+				if c.TTL <= 0 || time.Since(e.CreatedAt) <= c.TTL {
+					return readDataFile(c.Cache, sessionKey)
+				}
+			}
+		}
+	}
+
+	// No session match — find the most recent entry within TTL.
+	var newestKey string
+	var newestTime time.Time
+	for key, e := range m.Entries {
+		if c.TTL > 0 && time.Since(e.CreatedAt) > c.TTL {
+			continue
+		}
+		if newestKey == "" || e.CreatedAt.After(newestTime) {
+			newestKey = key
+			newestTime = e.CreatedAt
+		}
+	}
+
+	if newestKey == "" {
+		return nil, fmt.Errorf("no cached results found")
+	}
+
+	best := m.Entries[newestKey]
+	if best.SourcePath != "" {
+		if changed := newerFile(best.SourcePath, best.CreatedAt); changed != "" {
+			return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
+		}
+	}
+
+	return readDataFile(c.Cache, newestKey)
+}
+
+func readDataFile(cacheDir, key string) (*format.Output, error) {
+	path := filepath.Join(cacheDir, key+".json")
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cache file: %w", err)
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+
+	var output format.Output
+	if err := json.NewDecoder(f).Decode(&output); err != nil {
+		return nil, fmt.Errorf("failed to decode cache data: %w", err)
+	}
+
+	return &output, nil
+}
+
+// newerFile walks the source directory and returns the path of the first file
+// modified after the given time. Skips known heavy directories.
 func newerFile(root string, since time.Time) string {
 	var changed string
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // best-effort, skip errors
+			return nil
 		}
 		if d.IsDir() {
 			if skipDirs[d.Name()] {
@@ -182,3 +264,4 @@ func ReadFile(path string) (*format.Output, error) {
 
 	return &output, nil
 }
+
