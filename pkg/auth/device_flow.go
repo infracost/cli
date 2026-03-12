@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"golang.org/x/oauth2"
 )
 
 func (c *Config) DeviceFlow(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, error) {
+	caller, _ := events.GetMetadata[string]("caller")
+	
 	config := c.OAuth2Config()
 	verifier := oauth2.GenerateVerifier()
 
@@ -22,7 +25,7 @@ func (c *Config) DeviceFlow(ctx context.Context) (oauth2.TokenSource, *oauth2.To
 
 	browserCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	browser.WaitAndOpen(browserCtx, response.VerificationURIComplete)
+	browser.WaitAndOpen(browserCtx, response.VerificationURIComplete, len(caller) > 0)
 
 	token, err := config.DeviceAccessToken(ctx, response, oauth2.VerifierOption(verifier))
 	if err != nil {

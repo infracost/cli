@@ -24,8 +24,17 @@ func Open(url string) error {
 }
 
 // WaitAndOpen prints a message and waits for the user to press Enter before opening the specified URL.
-// It stops waiting and does not open the browser if the context is cancelled.
-func WaitAndOpen(ctx context.Context, url string) {
+// It stops waiting and does not open the browser if the context is canceled.
+func WaitAndOpen(ctx context.Context, url string, automatic bool) {
+	if automatic {
+		err := Open(url)
+		if err != nil {
+			fmt.Printf("Failed to open browser: %v\n", err)
+			fmt.Println("Please open the above URL manually.")
+		}
+		return
+	}
+
 	fmt.Printf("\nPress Enter to open the browser automatically...\n")
 
 	go func() {
