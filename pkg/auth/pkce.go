@@ -10,11 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"golang.org/x/oauth2"
 )
 
 func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, error) {
+	caller, _ := events.GetMetadata[string]("caller")
+
 	config := c.OAuth2Config()
 
 	verifier := oauth2.GenerateVerifier()
@@ -80,7 +83,7 @@ func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, e
 	fmt.Printf("Please go to the following URL to log in:\n%s\n", authURL)
 	browserCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	browser.WaitAndOpen(browserCtx, authURL)
+	browser.WaitAndOpen(browserCtx, authURL, len(caller) > 0)
 
 	wg.Wait() // wait for the server to finish
 

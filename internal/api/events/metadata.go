@@ -36,6 +36,18 @@ func RegisterMetadata(key string, value interface{}) {
 	metadata[key] = value
 }
 
+// GetMetadata retrieves the value for the specified metadata, and false if it doesn't
+// exist or the type is wrong.
+func GetMetadata[V any](key string) (V, bool) {
+	value, ok := metadata[key]
+	if !ok {
+		var v V
+		return v, false
+	}
+	v, ok := value.(V)
+	return v, ok
+}
+
 func stripVersion(v string) string {
 	parsed, err := semver.NewVersion(v)
 	if err != nil {
