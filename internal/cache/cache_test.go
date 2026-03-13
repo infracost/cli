@@ -55,7 +55,9 @@ func testConfig(t *testing.T) *Config {
 	return c
 }
 
-func TestWriteThenRead(t *testing.T) {
+// ForPath tests
+
+func TestForPath(t *testing.T) {
 	c := testConfig(t)
 	data := testOutput()
 	absPath := t.TempDir()
@@ -63,17 +65,15 @@ func TestWriteThenRead(t *testing.T) {
 	err := c.Write(absPath, &data)
 	require.NoError(t, err)
 
-	entry, err := c.Read(absPath, false)
+	output, err := c.ForPath(absPath)
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, entry.Version)
-	assert.Equal(t, absPath, entry.SourcePath)
-	assert.Equal(t, "USD", entry.Data.Currency)
-	assert.Len(t, entry.Data.Projects, 1)
-	assert.Equal(t, "test-project", entry.Data.Projects[0].ProjectName)
+	assert.Equal(t, "USD", output.Currency)
+	assert.Len(t, output.Projects, 1)
+	assert.Equal(t, "test-project", output.Projects[0].ProjectName)
 }
 
-func TestReadExpired(t *testing.T) {
+func TestForPathExpired(t *testing.T) {
 	c := testConfig(t)
 	c.TTL = time.Nanosecond
 	data := testOutput()
@@ -82,22 +82,76 @@ func TestReadExpired(t *testing.T) {
 	err := c.Write(absPath, &data)
 	require.NoError(t, err)
 
-	// Give it a moment to expire
 	time.Sleep(2 * time.Millisecond)
-	_, err = c.Read(absPath, false)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expired")
-}
-
-func TestReadMissing(t *testing.T) {
-	c := testConfig(t)
-
-	_, err := c.Read("/nonexistent/path", false)
+	_, err = c.ForPath(absPath)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no cached results found")
 }
 
-func TestReadLatest(t *testing.T) {
+func TestForPathMissing(t *testing.T) {
+	c := testConfig(t)
+
+	_, err := c.ForPath("/nonexistent/path")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no cached results found")
+}
+
+func TestForPathStaleSourceFiles(t *testing.T) {
+	c := testConfig(t)
+	sourceDir := t.TempDir()
+	data := testOutput()
+
+	err := c.Write(sourceDir, &data)
+	require.NoError(t, err)
+
+	_, err = c.ForPath(sourceDir)
+	require.NoError(t, err)
+
+	// Create a file in the source dir newer than the cache.
+	time.Sleep(10 * time.Millisecond)
+	err = os.WriteFile(filepath.Join(sourceDir, "main.tf"), []byte("resource {}"), 0600)
+	require.NoError(t, err)
+
+	_, err = c.ForPath(sourceDir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "stale")
+}
+
+func TestForPathSkipsHeavyDirs(t *testing.T) {
+	c := testConfig(t)
+	sourceDir := t.TempDir()
+	data := testOutput()
+
+	err := c.Write(sourceDir, &data)
+	require.NoError(t, err)
+
+	// Create a newer file inside .terraform — should be skipped.
+	time.Sleep(10 * time.Millisecond)
+	tfDir := filepath.Join(sourceDir, ".terraform")
+	require.NoError(t, os.MkdirAll(tfDir, 0700))
+	err = os.WriteFile(filepath.Join(tfDir, "plugin.bin"), []byte("binary"), 0600)
+	require.NoError(t, err)
+
+	output, err := c.ForPath(sourceDir)
+	require.NoError(t, err)
+	assert.Equal(t, "USD", output.Currency)
+}
+
+func TestForPathWrongPath(t *testing.T) {
+	c := testConfig(t)
+	data := testOutput()
+	absPath := t.TempDir()
+
+	err := c.Write(absPath, &data)
+	require.NoError(t, err)
+
+	_, err = c.ForPath("/completely/different/path")
+	assert.Error(t, err)
+}
+
+// Latest tests
+
+func TestLatest(t *testing.T) {
 	c := testConfig(t)
 	data := testOutput()
 
@@ -109,12 +163,35 @@ func TestReadLatest(t *testing.T) {
 	err = c.Write("/second/project", &data)
 	require.NoError(t, err)
 
-	entry, err := c.ReadLatest()
+	output, err := c.Latest(false)
 	require.NoError(t, err)
-	assert.Equal(t, "second-project", entry.Data.Projects[0].ProjectName)
+	assert.Equal(t, "second-project", output.Projects[0].ProjectName)
 }
 
-func TestReadStaleSourceFiles(t *testing.T) {
+func TestLatestExpired(t *testing.T) {
+	c := testConfig(t)
+	c.TTL = time.Nanosecond
+	data := testOutput()
+
+	err := c.Write("/test/project", &data)
+	require.NoError(t, err)
+
+	time.Sleep(2 * time.Millisecond)
+
+	_, err = c.Latest(false)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no cached results found")
+}
+
+func TestLatestEmpty(t *testing.T) {
+	c := testConfig(t)
+
+	_, err := c.Latest(false)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no cached results found")
+}
+
+func TestLatestStaleSourceFiles(t *testing.T) {
 	c := testConfig(t)
 	sourceDir := t.TempDir()
 	data := testOutput()
@@ -122,21 +199,23 @@ func TestReadStaleSourceFiles(t *testing.T) {
 	err := c.Write(sourceDir, &data)
 	require.NoError(t, err)
 
-	// Verify cache is valid before modification
-	_, err = c.Read(sourceDir, false)
-	require.NoError(t, err)
-
-	// Create a file in the source dir newer than the cache
+	// Create a file in the source dir newer than the cache.
 	time.Sleep(10 * time.Millisecond)
 	err = os.WriteFile(filepath.Join(sourceDir, "main.tf"), []byte("resource {}"), 0600)
 	require.NoError(t, err)
 
-	_, err = c.Read(sourceDir, false)
+	// Without allowStale, should be rejected.
+	_, err = c.Latest(false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "stale")
+
+	// With allowStale, should still return the data.
+	output, err := c.Latest(true)
+	require.NoError(t, err)
+	assert.Equal(t, "USD", output.Currency)
 }
 
-func TestReadSkipsHeavyDirs(t *testing.T) {
+func TestLatestDeletedSourceDir(t *testing.T) {
 	c := testConfig(t)
 	sourceDir := t.TempDir()
 	data := testOutput()
@@ -144,65 +223,17 @@ func TestReadSkipsHeavyDirs(t *testing.T) {
 	err := c.Write(sourceDir, &data)
 	require.NoError(t, err)
 
-	// Create a newer file inside .terraform — should be skipped
-	time.Sleep(10 * time.Millisecond)
-	tfDir := filepath.Join(sourceDir, ".terraform")
-	require.NoError(t, os.MkdirAll(tfDir, 0700))
-	err = os.WriteFile(filepath.Join(tfDir, "plugin.bin"), []byte("binary"), 0600)
-	require.NoError(t, err)
+	// Remove the source directory (simulates price command's temp dir cleanup).
+	require.NoError(t, os.RemoveAll(sourceDir))
 
-	entry, err := c.Read(sourceDir, false)
+	// Should still return the cached data since a missing directory is not
+	// considered stale.
+	output, err := c.Latest(false)
 	require.NoError(t, err)
-	assert.Equal(t, "USD", entry.Data.Currency)
+	assert.Equal(t, "USD", output.Currency)
 }
 
-func TestSameSessionFromSameProcess(t *testing.T) {
-	c := testConfig(t)
-	data := testOutput()
-	absPath := t.TempDir()
-
-	err := c.Write(absPath, &data)
-	require.NoError(t, err)
-
-	entry, err := c.Read(absPath, false)
-	require.NoError(t, err)
-
-	assert.NotEmpty(t, entry.SessionID)
-	assert.True(t, entry.SameSession(c), "entry written by same config should be same session")
-}
-
-func TestSameSessionWithExplicitID(t *testing.T) {
-	c := testConfig(t)
-	c.SessionID = "test-session-123"
-	data := testOutput()
-	absPath := t.TempDir()
-
-	err := c.Write(absPath, &data)
-	require.NoError(t, err)
-
-	entry, err := c.Read(absPath, false)
-	require.NoError(t, err)
-
-	assert.Equal(t, "test-session-123", entry.SessionID)
-	assert.True(t, entry.SameSession(c))
-}
-
-func TestDifferentSession(t *testing.T) {
-	c := testConfig(t)
-	c.SessionID = "session-A"
-	data := testOutput()
-	absPath := t.TempDir()
-
-	err := c.Write(absPath, &data)
-	require.NoError(t, err)
-
-	c.SessionID = "session-B"
-	entry, err := c.Read(absPath, false)
-	require.NoError(t, err)
-
-	assert.Equal(t, "session-A", entry.SessionID)
-	assert.False(t, entry.SameSession(c), "different session IDs should not match")
-}
+// ReadFile tests
 
 func TestReadFile(t *testing.T) {
 	data := testOutput()

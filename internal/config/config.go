@@ -35,6 +35,10 @@ type Config struct {
 	// ClaudePath is the path to the Claude CLI binary. Defaults to "claude" (looked up on PATH).
 	ClaudePath string `env:"INFRACOST_CLI_CLAUDE_PATH" flag:"claude-path;hidden" usage:"Path to the Claude CLI binary"`
 
+	// Logging contains the configuration for logging.
+	// keep logging above other structs, so it gets processed first and others can log in their process functions.
+	Logging logging.Config
+
 	// Dashboard contains the configuration for the dashboard API.
 	Dashboard dashboard.Config
 
@@ -43,9 +47,6 @@ type Config struct {
 
 	// Auth contains the configuration for authenticating with Infracost.
 	Auth auth.Config
-
-	// Logging contains the configuration for logging.
-	Logging logging.Config
 
 	// Plugins contains the configuration for plugins.
 	Plugins plugins.Config
