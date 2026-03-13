@@ -15,18 +15,18 @@ const (
 var _ process.SharedFlag = (*Environment)(nil)
 
 type Environment struct {
-	value   string
+	Value   string
 	targets []*string
 }
 
 func (e *Environment) String() string {
-	return e.value
+	return e.Value
 }
 
 func (e *Environment) Set(s string) error {
 	switch env := s; env {
 	case Production, Development, Local:
-		e.value = s
+		e.Value = s
 		for _, target := range e.targets {
 			*target = s
 		}
