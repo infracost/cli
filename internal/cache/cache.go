@@ -52,17 +52,10 @@ func (c *Config) Write(absPath string, data *format.Output) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	sid, _ := c.sessionID()
-
 	m.Entries[key] = ManifestEntry{
 		Version:    1,
 		CreatedAt:  time.Now(),
 		SourcePath: absPath,
-		SessionID:  sid,
-	}
-
-	if sid != "" {
-		m.Sessions[sid] = key
 	}
 
 	if err := c.SaveManifest(m); err != nil {
@@ -72,18 +65,11 @@ func (c *Config) Write(absPath string, data *format.Output) error {
 	return nil
 }
 
-// Read looks up a cached result for the given absolute path.
+// ForPath returns cached results for the given absolute path.
 //
-// If a session ID is configured, it checks both the session-based entry and
-// the path-based entry, returning whichever is most recent. The session-based
-// entry is not subject to TTL. The path-based entry must be within TTL.
-//
-// If no session ID is configured, only the path+TTL lookup is used.
-//
-// When allowStale is false, the entry is rejected if any source file has been
-// modified since the entry was created. Set allowStale to true when reading
-// for comparison rather than inspection.
-func (c *Config) Read(absPath string, allowStale bool) (*format.Output, error) {
+// The entry must be within TTL and the source files must not have been modified
+// since the entry was created.
+func (c *Config) ForPath(absPath string) (*format.Output, error) {
 	m, err := c.LoadManifest()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
@@ -91,92 +77,31 @@ func (c *Config) Read(absPath string, allowStale bool) (*format.Output, error) {
 
 	key := Key(absPath)
 
-	var pathEntry *ManifestEntry
-	if e, ok := m.Entries[key]; ok && c.TTL > 0 && time.Since(e.CreatedAt) <= c.TTL {
-		pathEntry = &e
-	}
-
-	sid, explicit := c.sessionID()
-
-	var sessionEntry *ManifestEntry
-	if sid != "" {
-		if sessionKey, ok := m.Sessions[sid]; ok {
-			if sessionKey == key && pathEntry != nil {
-				// Session and path point to the same entry; no need to compare.
-				if !allowStale && pathEntry.SourcePath != "" {
-					if changed := newerFile(pathEntry.SourcePath, pathEntry.CreatedAt); changed != "" {
-						return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
-					}
-				}
-				return readDataFile(c.Cache, key)
-			}
-			if e, ok := m.Entries[sessionKey]; ok {
-				// Explicit sessions skip TTL; terminal sessions still check it.
-				if explicit || (c.TTL > 0 && time.Since(e.CreatedAt) <= c.TTL) {
-					sessionEntry = &e
-				}
-			}
-		}
-	}
-
-	// Pick the best match.
-	var best *ManifestEntry
-	switch {
-	case pathEntry != nil && sessionEntry != nil:
-		if sessionEntry.CreatedAt.After(pathEntry.CreatedAt) {
-			best = sessionEntry
-		} else {
-			best = pathEntry
-		}
-	case sessionEntry != nil:
-		best = sessionEntry
-	case pathEntry != nil:
-		best = pathEntry
-	default:
+	e, ok := m.Entries[key]
+	if !ok || c.TTL <= 0 || time.Since(e.CreatedAt) > c.TTL {
 		return nil, fmt.Errorf("no cached results found")
 	}
 
-	if !allowStale && best.SourcePath != "" {
-		if changed := newerFile(best.SourcePath, best.CreatedAt); changed != "" {
+	if e.SourcePath != "" {
+		if changed := newerFile(e.SourcePath, e.CreatedAt); changed != "" {
 			return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
 		}
 	}
 
-	return readDataFile(c.Cache, Key(best.SourcePath))
+	return readDataFile(c.Cache, key)
 }
 
-// ReadLatest returns the most recent cached result.
+// Latest returns the most recent cached result within TTL.
 //
-// If a session ID is configured, the session's entry is returned. Otherwise,
-// the entry with the most recent CreatedAt across the entire manifest is used.
-func (c *Config) ReadLatest() (*format.Output, error) {
+// When allowStale is false, the entry is also rejected if any source file has
+// been modified since the entry was created. Set allowStale to true when
+// reading for comparison (e.g. diffing against a prior run).
+func (c *Config) Latest(allowStale bool) (*format.Output, error) {
 	m, err := c.LoadManifest()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	if len(m.Entries) == 0 {
-		return nil, fmt.Errorf("no cached results found")
-	}
-
-	sid, explicit := c.sessionID()
-
-	if sid != "" {
-		if sessionKey, ok := m.Sessions[sid]; ok {
-			if e, ok := m.Entries[sessionKey]; ok {
-				if explicit {
-					// Explicit session — caller manages freshness.
-					return readDataFile(c.Cache, sessionKey)
-				}
-				// Terminal session — still check TTL.
-				if c.TTL <= 0 || time.Since(e.CreatedAt) <= c.TTL {
-					return readDataFile(c.Cache, sessionKey)
-				}
-			}
-		}
-	}
-
-	// No session match — find the most recent entry within TTL.
 	var newestKey string
 	var newestTime time.Time
 	for key, e := range m.Entries {
@@ -193,10 +118,12 @@ func (c *Config) ReadLatest() (*format.Output, error) {
 		return nil, fmt.Errorf("no cached results found")
 	}
 
-	best := m.Entries[newestKey]
-	if best.SourcePath != "" {
-		if changed := newerFile(best.SourcePath, best.CreatedAt); changed != "" {
-			return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
+	if !allowStale {
+		best := m.Entries[newestKey]
+		if best.SourcePath != "" {
+			if changed := newerFile(best.SourcePath, best.CreatedAt); changed != "" {
+				return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
+			}
 		}
 	}
 
@@ -223,8 +150,10 @@ func readDataFile(cacheDir, key string) (*format.Output, error) {
 	return &output, nil
 }
 
-// newerFile walks the source directory and returns the path of the first file
-// modified after the given time. Skips known heavy directories.
+// newerFile walks root looking for any file modified after since. It returns
+// the path of the first such file, or "" if none are found. If root does not
+// exist (e.g. a temporary directory that has been cleaned up), the walk
+// silently returns "" so the cached entry is still considered fresh.
 func newerFile(root string, since time.Time) string {
 	var changed string
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -265,4 +194,3 @@ func ReadFile(path string) (*format.Output, error) {
 
 	return &output, nil
 }
-

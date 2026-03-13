@@ -8,16 +8,10 @@ import (
 	"time"
 )
 
-
-const sessionMaxAge = 24 * time.Hour
-
 // Manifest holds the index of all cache entries.
 type Manifest struct {
 	// Entries is keyed by the cache key (hash of the absolute source path).
 	Entries map[string]ManifestEntry `json:"entries"`
-
-	// Sessions maps session IDs to cache keys for fast session-based lookups.
-	Sessions map[string]string `json:"sessions"`
 }
 
 // ManifestEntry holds metadata for a single cached result.
@@ -28,8 +22,6 @@ type ManifestEntry struct {
 	CreatedAt time.Time
 	// SourcePath is the absolute path of the directory that was scanned.
 	SourcePath string
-	// SessionID is the session that produced this entry, if any.
-	SessionID string
 }
 
 func (c *Config) LoadManifest() (*Manifest, error) {
@@ -41,8 +33,7 @@ func (c *Config) LoadManifest() (*Manifest, error) {
 	path := filepath.Join(c.Cache, "manifest.json")
 
 	c.manifest = &Manifest{
-		Entries:  make(map[string]ManifestEntry),
-		Sessions: make(map[string]string),
+		Entries: make(map[string]ManifestEntry),
 	}
 
 	// nolint:gosec // G304: Cache path is derived internally.
@@ -53,7 +44,7 @@ func (c *Config) LoadManifest() (*Manifest, error) {
 		}
 		return nil, err
 	}
-	defer func () {
+	defer func() {
 		_ = f.Close()
 	}()
 
@@ -65,14 +56,6 @@ func (c *Config) LoadManifest() (*Manifest, error) {
 }
 
 func (c *Config) SaveManifest(m *Manifest) error {
-	// Prune stale session mappings. The entry data is kept — only the
-	// session shortcut is removed so the Sessions map doesn't grow unbounded.
-	for sid, key := range m.Sessions {
-		if e, ok := m.Entries[key]; !ok || time.Since(e.CreatedAt) > sessionMaxAge {
-			delete(m.Sessions, sid)
-		}
-	}
-
 	path := filepath.Join(c.Cache, "manifest.json")
 
 	// nolint:gosec // G304: Cache path is derived internally.

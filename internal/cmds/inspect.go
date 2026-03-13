@@ -36,12 +36,12 @@ func Inspect(cfg *config.Config) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("failed to resolve path: %w", err)
 				}
-				data, err = cfg.Cache.Read(absPath, false)
+				data, err = cfg.Cache.ForPath(absPath)
 				if err != nil {
 					return fmt.Errorf("no cached results found, run 'infracost scan %s' first", args[0])
 				}
 			} else {
-				data, err = cfg.Cache.ReadLatest()
+				data, err = cfg.Cache.Latest(false)
 				if err != nil {
 					return fmt.Errorf("no cached results found, run 'infracost scan <path>' first")
 				}

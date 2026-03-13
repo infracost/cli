@@ -76,9 +76,7 @@ func Price(cfg *config.Config) *cobra.Command {
 			eventsClient := cfg.Events.Client(api.Client(cmd.Context(), source, cfg.OrgID))
 
 			// Diff against the previous cached result to detect fixed policy violations.
-			// When a session ID is configured, matching is by session ID only. Otherwise,
-			// matching is by path and TTL so that repeated runs in the same terminal are compared.
-			if prev, err := cfg.Cache.Read(dir, true); err != nil {
+			if prev, err := cfg.Cache.Latest(true); err != nil {
 				logging.Infof("could not load previous run data: %v", err)
 			} else {
 				logging.Infof("found previous run data in cache")

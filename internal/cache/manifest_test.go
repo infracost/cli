@@ -16,7 +16,6 @@ func TestLoadManifestMissing(t *testing.T) {
 	m, err := c.LoadManifest()
 	require.NoError(t, err)
 	assert.Empty(t, m.Entries)
-	assert.Empty(t, m.Sessions)
 }
 
 func TestLoadManifestCached(t *testing.T) {
@@ -41,11 +40,7 @@ func TestSaveAndLoadManifest(t *testing.T) {
 				Version:    1,
 				CreatedAt:  time.Now(),
 				SourcePath: "/test/path",
-				SessionID:  "sess-1",
 			},
-		},
-		Sessions: map[string]string{
-			"sess-1": "abc123",
 		},
 	}
 
@@ -59,58 +54,6 @@ func TestSaveAndLoadManifest(t *testing.T) {
 
 	assert.Len(t, loaded.Entries, 1)
 	assert.Equal(t, "/test/path", loaded.Entries["abc123"].SourcePath)
-	assert.Equal(t, "abc123", loaded.Sessions["sess-1"])
-}
-
-func TestSaveManifestPrunesStaleSession(t *testing.T) {
-	c := testConfig(t)
-	require.NoError(t, os.MkdirAll(c.Cache, 0700))
-
-	now := time.Now()
-	m := &Manifest{
-		Entries: map[string]ManifestEntry{
-			"old-key": {
-				Version:   1,
-				CreatedAt: now.Add(-25 * time.Hour),
-			},
-			"new-key": {
-				Version:   1,
-				CreatedAt: now,
-			},
-		},
-		Sessions: map[string]string{
-			"stale-session":  "old-key",
-			"active-session": "new-key",
-		},
-	}
-
-	err := c.SaveManifest(m)
-	require.NoError(t, err)
-
-	// Stale session should be pruned, active should remain.
-	assert.NotContains(t, m.Sessions, "stale-session")
-	assert.Contains(t, m.Sessions, "active-session")
-
-	// Both entries should still exist.
-	assert.Contains(t, m.Entries, "old-key")
-	assert.Contains(t, m.Entries, "new-key")
-}
-
-func TestSaveManifestPrunesDanglingSession(t *testing.T) {
-	c := testConfig(t)
-	require.NoError(t, os.MkdirAll(c.Cache, 0700))
-
-	m := &Manifest{
-		Entries:  map[string]ManifestEntry{},
-		Sessions: map[string]string{
-			"dangling": "nonexistent-key",
-		},
-	}
-
-	err := c.SaveManifest(m)
-	require.NoError(t, err)
-
-	assert.Empty(t, m.Sessions)
 }
 
 func TestSaveManifestWritesToDisk(t *testing.T) {
@@ -118,8 +61,7 @@ func TestSaveManifestWritesToDisk(t *testing.T) {
 	require.NoError(t, os.MkdirAll(c.Cache, 0700))
 
 	m := &Manifest{
-		Entries:  map[string]ManifestEntry{},
-		Sessions: map[string]string{},
+		Entries: map[string]ManifestEntry{},
 	}
 
 	err := c.SaveManifest(m)
