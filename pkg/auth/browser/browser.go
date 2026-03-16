@@ -11,15 +11,25 @@ import (
 
 // Open opens the specified URL in the user's default browser.
 func Open(url string) error {
-	switch runtime.GOOS {
+	cmd, err := openCommand(runtime.GOOS, url)
+	if err != nil {
+		return err
+	}
+
+	return cmd.Start()
+}
+
+func openCommand(goos, url string) (*exec.Cmd, error) {
+	switch goos {
 	case "windows":
-		return exec.Command("cmd", "/c", "start", url).Start() // #nosec G204
+		// Avoid cmd.exe parsing of URL query separators such as '&'.
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url), nil // #nosec G204
 	case "darwin":
-		return exec.Command("open", url).Start() // #nosec G204
+		return exec.Command("open", url), nil // #nosec G204
 	case "linux":
-		return exec.Command("xdg-open", url).Start() // #nosec G204
+		return exec.Command("xdg-open", url), nil // #nosec G204
 	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+		return nil, fmt.Errorf("unsupported platform: %s", goos)
 	}
 }
 
