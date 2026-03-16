@@ -346,6 +346,17 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 					if issue.Attribute != "" {
 						_, _ = fmt.Fprintf(w, "  Attribute: %s\n", issue.Attribute)
 					}
+					if d := issue.AttributeDetail; d != nil {
+						if d.ChangeKind != "" {
+							_, _ = fmt.Fprintf(w, "  Change kind: %s\n", d.ChangeKind)
+						}
+						if d.From != nil {
+							writeInstanceTypeDetail(w, "From", d.From)
+						}
+						if d.To != nil {
+							writeInstanceTypeDetail(w, "To", d.To)
+						}
+					}
 					_, _ = fmt.Fprintln(w)
 				}
 				return nil
@@ -399,6 +410,23 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 	}
 
 	return fmt.Errorf("resource %q not found for policy %q", opts.Resource, opts.Policy)
+}
+
+func writeInstanceTypeDetail(w io.Writer, label string, d *format.EC2InstanceTypeDetail) {
+	parts := []string{d.Value}
+	if d.VCPUs > 0 {
+		parts = append(parts, fmt.Sprintf("%d vCPUs", d.VCPUs))
+	}
+	if d.MemoryGiB > 0 {
+		parts = append(parts, fmt.Sprintf("%g GiB", d.MemoryGiB))
+	}
+	if d.Arch != "" {
+		parts = append(parts, d.Arch)
+	}
+	if d.NetworkGbps != "" {
+		parts = append(parts, d.NetworkGbps+" Gbps")
+	}
+	_, _ = fmt.Fprintf(w, "  %s: %s\n", label, strings.Join(parts, ", "))
 }
 
 func formatFileLoc(filename string, line int) string {

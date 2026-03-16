@@ -80,12 +80,13 @@ type FinopsFailingResourceOutput struct {
 }
 
 type FinopsIssueOutput struct {
-	Description                   string   `json:"description"`
-	MonthlySavings                *rat.Rat `json:"monthly_savings,omitempty"`
-	MonthlyCarbonSavingsGramsCo2E *rat.Rat `json:"monthly_carbon_savings_grams_co2e,omitempty"`
-	MonthlyWaterSavingsLiters     *rat.Rat `json:"monthly_water_savings_liters,omitempty"`
-	Address                       string   `json:"address,omitempty"`
-	Attribute                     string   `json:"attribute,omitempty"`
+	Description                   string           `json:"description"`
+	MonthlySavings                *rat.Rat         `json:"monthly_savings,omitempty"`
+	MonthlyCarbonSavingsGramsCo2E *rat.Rat         `json:"monthly_carbon_savings_grams_co2e,omitempty"`
+	MonthlyWaterSavingsLiters     *rat.Rat         `json:"monthly_water_savings_liters,omitempty"`
+	Address                       string           `json:"address,omitempty"`
+	Attribute                     string           `json:"attribute,omitempty"`
+	AttributeDetail               *AttributeDetail `json:"attribute_detail,omitempty"`
 }
 
 type TaggingOutput struct {
@@ -127,6 +128,8 @@ type TagPropagationProblemOutput struct {
 }
 
 // ToOutput converts a Result into an Output suitable for JSON serialization.
+// It enriches FinOps issues with structured EC2 instance type metadata using
+// a static lookup table.
 func ToOutput(result *Result) Output {
 	projects := make([]ProjectOutput, 0, len(result.Projects))
 	projectTypes := make([]string, 0, len(result.Projects))
@@ -134,6 +137,16 @@ func ToOutput(result *Result) Output {
 		projects = append(projects, convertProjectResult(pr))
 		projectTypes = append(projectTypes, string(pr.Config.Type))
 	}
+
+	// Batch-enrich all finops issues across all projects.
+	for i := range projects {
+		for j := range projects[i].FinopsResults {
+			for k := range projects[i].FinopsResults[j].FailingResources {
+				enrichFinopsIssues(projects[i].FinopsResults[j].FailingResources[k].Issues)
+			}
+		}
+	}
+
 	return Output{
 		Currency:               result.Config.Currency,
 		Projects:               projects,
