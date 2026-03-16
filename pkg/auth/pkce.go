@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -32,9 +33,14 @@ func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, e
 	var errorString string
 	var serverErr error
 
+	addr := fmt.Sprintf(":%d", c.CallbackPort)
+	if runtime.GOOS == "windows" {
+		addr = fmt.Sprintf("localhost:%d", c.CallbackPort)
+	}
+
 	wg.Go(func() {
 		server := &http.Server{
-			Addr: fmt.Sprintf(":%d", c.CallbackPort),
+			Addr: addr,
 
 			// timeouts not strictly necessary for one-time callback service
 			// but we need to keep golangci-lint happy
