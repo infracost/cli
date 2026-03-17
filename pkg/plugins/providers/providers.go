@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
+	"github.com/infracost/cli/pkg/plugins/consts"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
 	"google.golang.org/grpc"
 )
@@ -47,6 +48,12 @@ func Connect(path string, level hclog.Level) (proto.ProviderServiceClient, func(
 			Level:  level,
 			Output: os.Stderr,
 		}),
+		GRPCDialOptions: []grpc.DialOption{
+			grpc.WithDefaultCallOptions(
+				grpc.MaxCallRecvMsgSize(consts.MaxGRPCMessageSize),
+				grpc.MaxCallSendMsgSize(consts.MaxGRPCMessageSize),
+			),
+		},
 	})
 
 	rpcClient, err := client.Client()
