@@ -46,8 +46,10 @@ var supportedIDEs = []ide{
 		url: "https://zed.dev/extensions?query=infracost",
 	},
 	{
-		name:   "Neovim",
-		manual: "Add infracost-ls to your Neovim LSP config.\nSee: https://infracost.io/docs/integrations/neovim",
+		name:    "Neovim",
+		url:     "https://github.com/infracost/infracost.nvim/blob/main/README.md#installation",
+		hint:    "Follow the instructions to configure your Neovim setup",
+		enabled: true,
 	},
 }
 
@@ -90,7 +92,7 @@ func ideSetup() *cobra.Command {
 				return fmt.Errorf("selecting IDE: %w", err)
 			}
 
-			return installIDE(supportedIDEs[selected])
+			return installIDE(enabledIDEs[selected])
 		},
 	}
 }
