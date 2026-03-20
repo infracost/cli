@@ -41,7 +41,7 @@ func Config(t *testing.T) config.Config {
 			},
 		},
 		Events: events.Config{
-			Client: func(*http.Client) events.Client {
+			ClientFn: func(*http.Client) events.Client {
 				return new(eventsMock.MockClient)
 			},
 		},
@@ -81,7 +81,6 @@ func Config(t *testing.T) config.Config {
 		},
 		Cache: cache.Config{
 			Cache:     filepath.Join(temp, "cache"),
-			SessionID: "testing-session-id",
 		},
 	}
 	cfg.Logging.ForTest(t) // we'll make sure the logger uses the test output
