@@ -204,3 +204,86 @@ func (_c *MockParserServiceClient_Parse_Call) RunAndReturn(run func(ctx context.
 	_c.Call.Return(run)
 	return _c
 }
+
+// ParseToTree provides a mock function for the type MockParserServiceClient
+func (_mock *MockParserServiceClient) ParseToTree(ctx context.Context, in *api.ParseToTreeRequest, opts ...grpc.CallOption) (*api.ParseToTreeResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for ParseToTree")
+	}
+
+	var r0 *api.ParseToTreeResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *api.ParseToTreeRequest, ...grpc.CallOption) (*api.ParseToTreeResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *api.ParseToTreeRequest, ...grpc.CallOption) *api.ParseToTreeResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*api.ParseToTreeResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *api.ParseToTreeRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockParserServiceClient_ParseToTree_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ParseToTree'
+type MockParserServiceClient_ParseToTree_Call struct {
+	*mock.Call
+}
+
+// ParseToTree is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *api.ParseToTreeRequest
+//   - opts ...grpc.CallOption
+func (_e *MockParserServiceClient_Expecter) ParseToTree(ctx interface{}, in interface{}, opts ...interface{}) *MockParserServiceClient_ParseToTree_Call {
+	return &MockParserServiceClient_ParseToTree_Call{Call: _e.mock.On("ParseToTree",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockParserServiceClient_ParseToTree_Call) Run(run func(ctx context.Context, in *api.ParseToTreeRequest, opts ...grpc.CallOption)) *MockParserServiceClient_ParseToTree_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *api.ParseToTreeRequest
+		if args[1] != nil {
+			arg1 = args[1].(*api.ParseToTreeRequest)
+		}
+		var arg2 []grpc.CallOption
+		var variadicArgs []grpc.CallOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]grpc.CallOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockParserServiceClient_ParseToTree_Call) Return(parseToTreeResponse *api.ParseToTreeResponse, err error) *MockParserServiceClient_ParseToTree_Call {
+	_c.Call.Return(parseToTreeResponse, err)
+	return _c
+}
+
+func (_c *MockParserServiceClient_ParseToTree_Call) RunAndReturn(run func(ctx context.Context, in *api.ParseToTreeRequest, opts ...grpc.CallOption) (*api.ParseToTreeResponse, error)) *MockParserServiceClient_ParseToTree_Call {
+	_c.Call.Return(run)
+	return _c
+}
