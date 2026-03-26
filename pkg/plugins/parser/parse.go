@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/infracost/cli/internal/logging"
 	"github.com/infracost/cli/internal/protocache"
+	"github.com/infracost/cli/pkg/logging"
 	repoconfig "github.com/infracost/config"
 	"github.com/infracost/proto/gen/go/infracost/parser/api"
 	"github.com/infracost/proto/gen/go/infracost/parser/cloudformation"

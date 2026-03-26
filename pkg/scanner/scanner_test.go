@@ -35,9 +35,9 @@ func TestMatchProductionFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchProductionFilter(tt.matcher, tt.value)
+			got := MatchProductionFilter(tt.matcher, tt.value)
 			if got != tt.want {
-				t.Errorf("matchProductionFilter(%q, %q) = %v, want %v", tt.matcher, tt.value, got, tt.want)
+				t.Errorf("MatchProductionFilter(%q, %q) = %v, want %v", tt.matcher, tt.value, got, tt.want)
 			}
 		})
 	}
@@ -66,9 +66,9 @@ func TestMatchWildcard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchWildcard(tt.value, tt.pattern)
+			got := MatchWildcard(tt.pattern, tt.value)
 			if got != tt.want {
-				t.Errorf("matchWildcard(%q, %q) = %v, want %v", tt.value, tt.pattern, got, tt.want)
+				t.Errorf("MatchWildcard(%q, %q) = %v, want %v", tt.value, tt.pattern, got, tt.want)
 			}
 		})
 	}
@@ -149,7 +149,7 @@ func TestGetRequiredProviders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provs := make(map[provider.Provider]struct{})
-			unsupported := getRequiredProviders(tt.result, provs)
+			unsupported := GetRequiredProviders(tt.result, provs)
 
 			for _, want := range tt.wantProviders {
 				if _, ok := provs[want]; !ok {
@@ -174,7 +174,7 @@ func TestGetRequiredProviders(t *testing.T) {
 
 func TestCountUsage(t *testing.T) {
 	t.Run("nil input", func(t *testing.T) {
-		est, unest := countUsage(nil)
+		est, unest := CountUsage(nil)
 		if est != nil || unest != nil {
 			t.Errorf("expected nil, nil for nil input, got %v, %v", est, unest)
 		}
@@ -201,7 +201,7 @@ func TestCountUsage(t *testing.T) {
 			},
 		}
 
-		est, unest := countUsage(u)
+		est, unest := CountUsage(u)
 		if est["aws_instance.monthly_hrs"] != 1 {
 			t.Errorf("expected aws_instance.monthly_hrs estimated=1, got %d", est["aws_instance.monthly_hrs"])
 		}
@@ -214,7 +214,7 @@ func TestCountUsage(t *testing.T) {
 		u := &usage.Usage{
 			ByResourceType: map[string]*usage.UsageItemMap{},
 		}
-		est, unest := countUsage(u)
+		est, unest := CountUsage(u)
 		if len(est) != 0 || len(unest) != 0 {
 			t.Errorf("expected empty maps, got est=%v, unest=%v", est, unest)
 		}
@@ -260,7 +260,7 @@ func TestIsEstimated(t *testing.T) {
 
 func TestLoadUsageDefaults(t *testing.T) {
 	t.Run("nil defaults", func(t *testing.T) {
-		result := loadUsageDefaults(nil, "")
+		result := LoadUsageDefaults(nil, "")
 		if result != nil {
 			t.Errorf("expected nil, got %v", result)
 		}
@@ -281,7 +281,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 			},
 		}
 
-		result := loadUsageDefaults(defaults, "")
+		result := LoadUsageDefaults(defaults, "")
 		if result == nil {
 			t.Fatal("expected non-nil result")
 		}
@@ -316,7 +316,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 			},
 		}
 
-		result := loadUsageDefaults(defaults, "")
+		result := LoadUsageDefaults(defaults, "")
 		// The highest priority (10) should win, so the value should be "999"
 		items := result.ByResourceType["aws_instance"]
 		val := items.Items["monthly_hrs"]
@@ -346,7 +346,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 			},
 		}
 
-		result := loadUsageDefaults(defaults, "")
+		result := LoadUsageDefaults(defaults, "")
 		items := result.ByResourceType["aws_instance"]
 		val := items.Items["monthly_hrs"]
 		if val == nil {
@@ -374,7 +374,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 			},
 		}
 
-		result := loadUsageDefaults(defaults, "")
+		result := LoadUsageDefaults(defaults, "")
 		items := result.ByResourceType["aws_instance"]
 		val := items.Items["monthly_hrs"]
 		if val != nil {
@@ -406,7 +406,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 			},
 		}
 
-		result := loadUsageDefaults(defaults, "my-project")
+		result := LoadUsageDefaults(defaults, "my-project")
 		items := result.ByResourceType["aws_instance"]
 		val := items.Items["monthly_hrs"]
 		if val == nil {
@@ -444,7 +444,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 			},
 		}
 
-		result := loadUsageDefaults(defaults, "my-project")
+		result := LoadUsageDefaults(defaults, "my-project")
 		items := result.ByResourceType["aws_instance"]
 		val := items.Items["monthly_hrs"]
 		if val == nil {

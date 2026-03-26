@@ -19,6 +19,7 @@ type RunParameters struct {
 	ProductionFilters []json.RawMessage `json:"productionFilters"`
 	TagPolicies       []json.RawMessage `json:"tagPolicies"`
 	FinopsPolicies    []json.RawMessage `json:"finopsPolicies"`
+	Guardrails        []json.RawMessage `json:"guardrails"`
 }
 
 type Client interface {
@@ -43,6 +44,7 @@ func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) 
     productionFilters
     tagPolicies
     finopsPolicies
+    guardrails
   }
 }`
 

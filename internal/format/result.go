@@ -8,8 +8,9 @@ import (
 )
 
 type Result struct {
-	Config   *config.Config
-	Projects []*ProjectResult
+	Config           *config.Config
+	Projects         []*ProjectResult
+	GuardrailResults []event.GuardrailResult
 
 	// EstimatedUsageCounts tracks usage parameters with non-zero values, keyed
 	// by "resourceType.attribute". A nil map means no usage file was loaded; a

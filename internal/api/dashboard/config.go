@@ -3,7 +3,7 @@ package dashboard
 import (
 	"net/http"
 
-	"github.com/infracost/cli/internal/config/process"
+	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/environment"
 )
 

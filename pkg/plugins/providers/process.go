@@ -5,8 +5,8 @@ import (
 	"errors"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/infracost/cli/internal/logging"
 	"github.com/infracost/cli/internal/protocache"
+	"github.com/infracost/cli/pkg/logging"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
 )
 

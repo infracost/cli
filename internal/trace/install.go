@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
-	"github.com/infracost/cli/internal/logging"
+	"github.com/infracost/cli/pkg/logging"
 )
 
 var InstallID string

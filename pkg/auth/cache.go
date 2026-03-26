@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/infracost/cli/internal/logging"
+	"github.com/infracost/cli/pkg/logging"
 	"golang.org/x/oauth2"
 )
 

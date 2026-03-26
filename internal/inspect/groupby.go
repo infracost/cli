@@ -166,6 +166,20 @@ func collectPolicyRows(data *format.Output) []tableRow {
 			}
 		}
 	}
+
+	for _, gr := range data.GuardrailResults {
+		if !gr.Triggered {
+			continue
+		}
+		rows = append(rows, tableRow{
+			Columns: map[string]string{
+				"policy": gr.GuardrailName,
+				"kind":   "guardrail",
+			},
+			Cost: gr.TotalMonthlyCost,
+		})
+	}
+
 	return rows
 }
 

@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"github.com/infracost/cli/internal/config/process"
+	"github.com/infracost/cli/pkg/config/process"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )

@@ -16,8 +16,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/infracost/cli/internal/config/process"
-	"github.com/infracost/cli/internal/logging"
+	"github.com/infracost/cli/pkg/config/process"
+	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins/parser"
 	"github.com/infracost/cli/pkg/plugins/providers"
 	providerconv "github.com/infracost/go-proto/pkg/providers"
@@ -381,7 +381,6 @@ func extractZipEntry(zf *zip.File, destPath string) error {
 
 	return out.Close()
 }
-
 
 func defaultPluginCachePath() string {
 	dir, err := os.UserCacheDir()

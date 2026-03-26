@@ -3,7 +3,7 @@ package environment
 import (
 	"fmt"
 
-	"github.com/infracost/cli/internal/config/process"
+	"github.com/infracost/cli/pkg/config/process"
 )
 
 const (

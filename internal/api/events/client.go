@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/infracost/cli/internal/logging"
+	"github.com/infracost/cli/pkg/logging"
 )
 
 var (

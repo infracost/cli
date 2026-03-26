@@ -12,8 +12,9 @@ import (
 
 // Output is the top-level JSON structure produced by the scan command.
 type Output struct {
-	Currency string          `json:"currency"`
-	Projects []ProjectOutput `json:"projects"`
+	Currency         string             `json:"currency"`
+	Projects         []ProjectOutput    `json:"projects"`
+	GuardrailResults []GuardrailOutput  `json:"guardrail_results,omitempty"`
 
 	// Fields below are not serialized to JSON but carried through for event
 	// metadata.
@@ -126,6 +127,13 @@ type TagPropagationProblemOutput struct {
 	AffectedTags []string `json:"affected_tags"`
 }
 
+type GuardrailOutput struct {
+	GuardrailID      string   `json:"guardrail_id"`
+	GuardrailName    string   `json:"guardrail_name"`
+	Triggered        bool     `json:"triggered"`
+	TotalMonthlyCost *rat.Rat `json:"total_monthly_cost,omitempty"`
+}
+
 // ToOutput converts a Result into an Output suitable for JSON serialization.
 func ToOutput(result *Result) Output {
 	projects := make([]ProjectOutput, 0, len(result.Projects))
@@ -134,9 +142,20 @@ func ToOutput(result *Result) Output {
 		projects = append(projects, convertProjectResult(pr))
 		projectTypes = append(projectTypes, string(pr.Config.Type))
 	}
+	guardrailResults := make([]GuardrailOutput, 0, len(result.GuardrailResults))
+	for _, gr := range result.GuardrailResults {
+		guardrailResults = append(guardrailResults, GuardrailOutput{
+			GuardrailID:      gr.GuardrailID,
+			GuardrailName:    gr.GuardrailName,
+			Triggered:        gr.Triggered,
+			TotalMonthlyCost: gr.TotalMonthlyCost,
+		})
+	}
+
 	return Output{
 		Currency:               result.Config.Currency,
 		Projects:               projects,
+		GuardrailResults:       guardrailResults,
 		projectTypes:           projectTypes,
 		estimatedUsageCounts:   result.EstimatedUsageCounts,
 		unestimatedUsageCounts: result.UnestimatedUsageCounts,

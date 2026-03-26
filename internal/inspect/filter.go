@@ -23,8 +23,9 @@ func InferProvider(resourceType string) string {
 // Filter returns a new Output with resources filtered according to opts.
 func Filter(data *format.Output, opts Options) *format.Output {
 	out := &format.Output{
-		Currency: data.Currency,
-		Projects: make([]format.ProjectOutput, 0, len(data.Projects)),
+		Currency:         data.Currency,
+		Projects:         make([]format.ProjectOutput, 0, len(data.Projects)),
+		GuardrailResults: data.GuardrailResults,
 	}
 
 	for _, p := range data.Projects {

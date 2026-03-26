@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/infracost/cli/internal/config/process"
+	"github.com/infracost/cli/pkg/config/process"
 	"github.com/rs/zerolog"
 )
 
