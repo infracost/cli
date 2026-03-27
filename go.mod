@@ -13,7 +13,7 @@ require (
 	github.com/hashicorp/go-plugin v1.7.0
 	github.com/infracost/config v0.4.2
 	github.com/infracost/go-proto v0.10.1-0.20260326130149-0544670ac46f
-	github.com/infracost/proto v1.28.0
+	github.com/infracost/proto v1.29.0
 	github.com/liamg/tml v0.7.1
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.10.2

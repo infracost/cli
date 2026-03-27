@@ -24,6 +24,12 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var (
+	pj = protojson.UnmarshalOptions{
+		DiscardUnknown: true,
+	}
+)
+
 type Scanner struct {
 	plugins         *plugins.Config
 	logging         logging.Config
@@ -62,7 +68,7 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		tagPolicies = make([]*event.TagPolicy, 0, len(runParameters.TagPolicies))
 		for _, p := range runParameters.TagPolicies {
 			policy := new(event.TagPolicy)
-			if err := protojson.Unmarshal(p, policy); err != nil {
+			if err := pj.Unmarshal(p, policy); err != nil {
 				return nil, nil, fmt.Errorf("failed to unmarshal tag policy: %w", err)
 			}
 			tagPolicies = append(tagPolicies, policy)
@@ -71,7 +77,7 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		finopsPolicySettings = make([]*event.FinopsPolicySettings, 0, len(runParameters.FinopsPolicies))
 		for _, p := range runParameters.FinopsPolicies {
 			policy := new(event.FinopsPolicySettings)
-			if err := protojson.Unmarshal(p, policy); err != nil {
+			if err := pj.Unmarshal(p, policy); err != nil {
 				return nil, nil, fmt.Errorf("failed to unmarshal FinOps policy: %w", err)
 			}
 			finopsPolicySettings = append(finopsPolicySettings, policy)
@@ -148,7 +154,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	repositoryName := runParameters.RepositoryName
 
 	usageDefaults := new(event.UsageDefaults)
-	if err := protojson.Unmarshal(runParameters.UsageDefaults, usageDefaults); err != nil {
+	if err := pj.Unmarshal(runParameters.UsageDefaults, usageDefaults); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal usage defaults: %w", err)
 	}
 
@@ -195,7 +201,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	productionFilters := make([]*event.ProductionFilter, 0, len(runParameters.ProductionFilters))
 	for _, f := range runParameters.ProductionFilters {
 		filter := new(event.ProductionFilter)
-		if err := protojson.Unmarshal(f, filter); err != nil {
+		if err := pj.Unmarshal(f, filter); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal production filter: %w", err)
 		}
 		productionFilters = append(productionFilters, filter)
@@ -204,7 +210,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	tagPolicies := make([]*event.TagPolicy, 0, len(runParameters.TagPolicies))
 	for _, p := range runParameters.TagPolicies {
 		policy := new(event.TagPolicy)
-		if err := protojson.Unmarshal(p, policy); err != nil {
+		if err := pj.Unmarshal(p, policy); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal tag policy: %w", err)
 		}
 		tagPolicies = append(tagPolicies, policy)
@@ -213,7 +219,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	finopsPolicies := make([]*event.FinopsPolicySettings, 0, len(runParameters.FinopsPolicies))
 	for _, p := range runParameters.FinopsPolicies {
 		policy := new(event.FinopsPolicySettings)
-		if err := protojson.Unmarshal(p, policy); err != nil {
+		if err := pj.Unmarshal(p, policy); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal FinOps policy: %w", err)
 		}
 		finopsPolicies = append(finopsPolicies, policy)
@@ -262,7 +268,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	var guardrails []*event.Guardrail
 	for _, raw := range runParameters.Guardrails {
 		g := new(event.Guardrail)
-		if err := protojson.Unmarshal(raw, g); err != nil {
+		if err := pj.Unmarshal(raw, g); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal guardrail: %w", err)
 		}
 		if g.TotalThreshold != nil {
