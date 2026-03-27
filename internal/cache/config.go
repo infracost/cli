@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/infracost/cli/internal/logging"
+	"github.com/infracost/cli/pkg/logging"
 )
 
 type Config struct {

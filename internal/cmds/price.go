@@ -11,9 +11,9 @@ import (
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
-	"github.com/infracost/cli/internal/logging"
 	"github.com/infracost/cli/internal/scanner"
 	"github.com/infracost/cli/internal/vcs"
+	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
 )
 

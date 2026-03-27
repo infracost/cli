@@ -31,6 +31,8 @@ type summaryData struct {
 	FinopsPolicies    int              `json:"finops_policies"`
 	FailingPolicies   int              `json:"failing_policies"`
 	TaggingPolicies   int              `json:"tagging_policies"`
+	Guardrails        int              `json:"guardrails"`
+	TriggeredGuardrails int            `json:"triggered_guardrails"`
 	CriticalDiags     int              `json:"critical_diagnostics"`
 	WarningDiags      int              `json:"warning_diagnostics"`
 }
@@ -98,17 +100,9 @@ func WriteSummary(w io.Writer, data *format.Output, asJSON bool) error {
 
 	_, _ = fmt.Fprintf(w, "Monthly cost: $%s\n", s.MonthlyCost.StringFixed(2))
 
-	policyLine := fmt.Sprintf("FinOps policies: %d", s.FinopsPolicies)
-	if s.FailingPolicies > 0 {
-		policyLine += fmt.Sprintf(" (%d failing)", s.FailingPolicies)
-	} else {
-		policyLine += " (0 failing)"
-	}
-	_, _ = fmt.Fprintln(w, policyLine)
-
-	if s.TaggingPolicies > 0 {
-		_, _ = fmt.Fprintf(w, "Tagging policies: %d\n", s.TaggingPolicies)
-	}
+	_, _ = fmt.Fprintf(w, "FinOps policies: %d (%d failing)\n", s.FinopsPolicies, s.FailingPolicies)
+	_, _ = fmt.Fprintf(w, "Tagging policies: %d\n", s.TaggingPolicies)
+	_, _ = fmt.Fprintf(w, "Guardrails: %d (%d triggered)\n", s.Guardrails, s.TriggeredGuardrails)
 
 	if s.CriticalDiags > 0 {
 		_, _ = fmt.Fprintf(w, "Diagnostics: %d critical", s.CriticalDiags)
@@ -177,6 +171,13 @@ func buildSummary(data *format.Output) summaryData {
 		s.TaggingPolicies += ps.TaggingPolicies
 
 		s.ProjectDetails = append(s.ProjectDetails, ps)
+	}
+
+	for _, gr := range data.GuardrailResults {
+		s.Guardrails++
+		if gr.Triggered {
+			s.TriggeredGuardrails++
+		}
 	}
 
 	return s

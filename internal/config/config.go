@@ -6,10 +6,10 @@ import (
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cache"
-	"github.com/infracost/cli/internal/config/process"
-	"github.com/infracost/cli/internal/logging"
 	"github.com/infracost/cli/pkg/auth"
+	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/environment"
+	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins"
 )
 

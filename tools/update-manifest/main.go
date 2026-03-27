@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/go-github/v83/github"
-	"github.com/infracost/cli/internal/config/process"
+	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/plugins"
 )
 

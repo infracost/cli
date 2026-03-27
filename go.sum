@@ -109,10 +109,10 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/infracost/config v0.4.2 h1:jC0X6oFUIgYrZdzc8D6S1r61o9JnU6teqYL2tULOgxE=
 github.com/infracost/config v0.4.2/go.mod h1:XyCBuDQowPYNF6n95+Woz61snyaf7K94DVbNiHcg+1A=
-github.com/infracost/go-proto v0.2.1 h1:NrM4z6D6rmkMkhaU7JqblG3imCmKenlB6YW9gmhNc10=
-github.com/infracost/go-proto v0.2.1/go.mod h1:C8q18V30lfDaVgRKoGeo3NN+CridCKkzbEjxCovQcfk=
-github.com/infracost/proto v1.26.1 h1:X9YQIVE/wFefj4GMe0fnJ0hmqgTBdk8XGULG8/AAGL8=
-github.com/infracost/proto v1.26.1/go.mod h1:Z8vPWBWblwJlw+/ksO+BtsXwf9NiOcSTWx0WRWNbfUA=
+github.com/infracost/go-proto v0.10.1-0.20260326130149-0544670ac46f h1:P2RLFr9KAPt54QmN7XEkq4E/DFIyhKI/6TSCW4FVqZg=
+github.com/infracost/go-proto v0.10.1-0.20260326130149-0544670ac46f/go.mod h1:wLcmZcjmzJI/cx3jFYmN+GWdoBvA3SZPOTmZa6Z7tso=
+github.com/infracost/proto v1.28.0 h1:q/PW3LE4eD8W1+c0aLAHcU0+cghKoU2Y/+HW4ISozRY=
+github.com/infracost/proto v1.28.0/go.mod h1:Z8vPWBWblwJlw+/ksO+BtsXwf9NiOcSTWx0WRWNbfUA=
 github.com/jhump/protoreflect v1.17.0 h1:qOEr613fac2lOuTgWN4tPAtLL7fUSbuJL5X5XumQh94=
 github.com/jhump/protoreflect v1.17.0/go.mod h1:h9+vUUL38jiBzck8ck+6G/aeMX8Z4QUY/NiJPwPNi+8=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=

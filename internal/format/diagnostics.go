@@ -16,5 +16,5 @@ func Diagnostics(diags *diagnostic.Diagnostics) {
 
 // Diagnostic prints a diagnostic to stderr.
 func Diagnostic(diag *diagnostic.Diagnostic) {
-	_, _ = fmt.Fprintln(os.Stderr, diag.String())
+	_, _ = fmt.Fprintln(os.Stderr, diag.FormatMessage())
 }

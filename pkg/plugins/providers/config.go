@@ -2,7 +2,7 @@ package providers
 
 import (
 	"github.com/hashicorp/go-hclog"
-	"github.com/infracost/cli/internal/config/process"
+	"github.com/infracost/cli/pkg/config/process"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
 )
 

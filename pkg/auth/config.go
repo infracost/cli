@@ -8,9 +8,9 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/infracost/cli/internal/config/process"
-	"github.com/infracost/cli/internal/logging"
+	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/environment"
+	"github.com/infracost/cli/pkg/logging"
 	"golang.org/x/oauth2"
 )
 
