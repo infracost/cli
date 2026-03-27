@@ -43,37 +43,6 @@ func TestMatchProductionFilter(t *testing.T) {
 	}
 }
 
-func TestMatchWildcard(t *testing.T) {
-	tests := []struct {
-		name    string
-		value   string
-		pattern string
-		want    bool
-	}{
-		{"star matches all", "anything", "*", true},
-		{"exact match", "hello", "hello", true},
-		{"no match", "hello", "world", false},
-		{"trailing star", "hello world", "hello*", true},
-		{"leading star", "hello world", "*world", true},
-		{"middle star", "hello world", "hello*world", true},
-		{"question mark", "hello", "hell?", true},
-		{"question mark no match", "hello", "hel?", false},
-		{"multiple stars", "a/b/c", "a/*/c", true},
-		{"empty value star", "", "*", true},
-		{"empty value no pattern", "", "", true},
-		{"empty value with pattern", "", "a", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := MatchWildcard(tt.pattern, tt.value)
-			if got != tt.want {
-				t.Errorf("MatchWildcard(%q, %q) = %v, want %v", tt.value, tt.pattern, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestGetRequiredProviders(t *testing.T) {
 	tests := []struct {
 		name                string

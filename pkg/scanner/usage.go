@@ -3,6 +3,7 @@ package scanner
 import (
 	"slices"
 
+	goprotoevent "github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
 	"github.com/infracost/proto/gen/go/infracost/usage"
@@ -36,17 +37,8 @@ func LoadUsageDefaults(defaults *event.UsageDefaults, projectName string) *usage
 					continue
 				}
 
-				if item.Filters != nil && item.Filters.Project != nil {
-					for _, include := range item.Filters.Project.Include {
-						if !MatchWildcard(include, projectName) {
-							continue List
-						}
-					}
-					for _, exclude := range item.Filters.Project.Exclude {
-						if MatchWildcard(exclude, projectName) {
-							continue List
-						}
-					}
+				if !goprotoevent.StringFilterFromProto(item.GetFilters().GetProject()).Matches(projectName) {
+					continue List
 				}
 
 				if q, err := rat.NewFromString(item.Quantity); err == nil {
@@ -102,41 +94,4 @@ func isEstimated(v *usage.UsageValue) bool {
 	default:
 		return false
 	}
-}
-
-// MatchWildcard evaluates wildcard patterns for usage and policy filters.
-func MatchWildcard(pattern, value string) bool {
-	if pattern == "*" {
-		return true
-	}
-
-	patternLen := len(pattern)
-	valueLen := len(value)
-	var patternIndex, valueIndex, starIndex, matchIndex int
-	starIndex = -1
-	matchIndex = -1
-
-	for valueIndex < valueLen {
-		switch {
-		case patternIndex < patternLen && pattern[patternIndex] == '*':
-			starIndex = patternIndex
-			matchIndex = valueIndex
-			patternIndex++
-		case patternIndex < patternLen && (pattern[patternIndex] == value[valueIndex] || pattern[patternIndex] == '?'):
-			patternIndex++
-			valueIndex++
-		case starIndex != -1:
-			patternIndex = starIndex + 1
-			matchIndex++
-			valueIndex = matchIndex
-		default:
-			return false
-		}
-	}
-
-	for patternIndex < patternLen && pattern[patternIndex] == '*' {
-		patternIndex++
-	}
-
-	return patternIndex == patternLen
 }
