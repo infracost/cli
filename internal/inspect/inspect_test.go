@@ -216,6 +216,9 @@ func TestGroupByPolicy(t *testing.T) {
 
 	output := buf.String()
 	assert.Contains(t, output, "Use GP3")
+	assert.Contains(t, output, "Message")
+	assert.Contains(t, output, "Consider using GP3 volumes")
+	assert.Contains(t, output, "All resources must have required tags")
 }
 
 func TestGroupByTop(t *testing.T) {

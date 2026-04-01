@@ -23,7 +23,7 @@ type tableRow struct {
 	Count   int               `json:"count,omitempty"`
 }
 
-var detailColumns = []string{"kind", "resource", "file"}
+var detailColumns = []string{"kind", "resource", "file", "message"}
 
 func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 	hasPolicyDim := slices.Contains(opts.GroupBy, "policy")
@@ -146,6 +146,7 @@ func collectPolicyRows(data *format.Output) []tableRow {
 						"provider": InferProvider(resourceTypeFromAddress(fr.Name)),
 						"resource": fr.Name,
 						"file":     formatFileLoc(meta.Filename, meta.StartLine),
+						"message":  f.PolicyMessage,
 					},
 				})
 			}
@@ -161,6 +162,7 @@ func collectPolicyRows(data *format.Output) []tableRow {
 						"provider": InferProvider(tr.ResourceType),
 						"resource": tr.Address,
 						"file":     formatFileLoc(tr.Path, tr.Line),
+						"message":  t.Message,
 					},
 				})
 			}
