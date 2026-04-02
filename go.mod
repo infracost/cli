@@ -11,10 +11,11 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.7.0
-	github.com/infracost/config v0.4.2
-	github.com/infracost/go-proto v0.10.1-0.20260326130149-0544670ac46f
+	github.com/infracost/config v0.4.3-0.20260402115916-c2bd656ede05
+	github.com/infracost/go-proto v0.12.0
 	github.com/infracost/proto v1.29.0
 	github.com/liamg/tml v0.7.1
+	github.com/maruel/panicparse/v2 v2.5.0
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
@@ -56,12 +57,10 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
-	github.com/maruel/panicparse/v2 v2.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
-	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421 // indirect

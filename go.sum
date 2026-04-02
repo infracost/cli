@@ -107,12 +107,10 @@ github.com/hashicorp/yamux v0.1.2 h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8
 github.com/hashicorp/yamux v0.1.2/go.mod h1:C+zze2n6e/7wshOZep2A70/aQU6QBRWJO/G6FT1wIns=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/infracost/config v0.4.2 h1:jC0X6oFUIgYrZdzc8D6S1r61o9JnU6teqYL2tULOgxE=
-github.com/infracost/config v0.4.2/go.mod h1:XyCBuDQowPYNF6n95+Woz61snyaf7K94DVbNiHcg+1A=
-github.com/infracost/go-proto v0.10.1-0.20260326130149-0544670ac46f h1:P2RLFr9KAPt54QmN7XEkq4E/DFIyhKI/6TSCW4FVqZg=
-github.com/infracost/go-proto v0.10.1-0.20260326130149-0544670ac46f/go.mod h1:wLcmZcjmzJI/cx3jFYmN+GWdoBvA3SZPOTmZa6Z7tso=
-github.com/infracost/proto v1.28.0 h1:q/PW3LE4eD8W1+c0aLAHcU0+cghKoU2Y/+HW4ISozRY=
-github.com/infracost/proto v1.28.0/go.mod h1:Z8vPWBWblwJlw+/ksO+BtsXwf9NiOcSTWx0WRWNbfUA=
+github.com/infracost/config v0.4.3-0.20260402115916-c2bd656ede05 h1:8bcwCQ1R2DLN8qAGvd9HYFC7JmINSZFS1uVrE5iIOiM=
+github.com/infracost/config v0.4.3-0.20260402115916-c2bd656ede05/go.mod h1:XyCBuDQowPYNF6n95+Woz61snyaf7K94DVbNiHcg+1A=
+github.com/infracost/go-proto v0.12.0 h1:A+4/yEkqp0IWiCgOcgF4Auw1l92LWGUzd8sZhGXWeDA=
+github.com/infracost/go-proto v0.12.0/go.mod h1:VtzyuTe3h6GzrgHOQkVxjiP6Wpn4iUbr1HDaszcaV3k=
 github.com/infracost/proto v1.29.0 h1:+SaqDjOwGMpKlitplVS9GdK3TnL4kat0Iyfbxkvzudk=
 github.com/infracost/proto v1.29.0/go.mod h1:Z8vPWBWblwJlw+/ksO+BtsXwf9NiOcSTWx0WRWNbfUA=
 github.com/jhump/protoreflect v1.17.0 h1:qOEr613fac2lOuTgWN4tPAtLL7fUSbuJL5X5XumQh94=
@@ -147,8 +145,6 @@ github.com/mattn/go-localereader v0.0.1 h1:ygSAOl7ZXTx4RdPYinUpg6W99U8jWvWi9Ye2J
 github.com/mattn/go-localereader v0.0.1/go.mod h1:8fBrzywKY7BI3czFoHkuzRoWE9C+EiG4R1k4Cjx5p88=
 github.com/mattn/go-runewidth v0.0.16 h1:E5ScNMtiwvlvB5paMFdw9p4kSQzbXFikJ5SQO6TULQc=
 github.com/mattn/go-runewidth v0.0.16/go.mod h1:Jdepj2loyihRzMpdS35Xk/zdY8IAYHsh153qUoGf23w=
-github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d h1:5PJl274Y63IEHC+7izoQE9x6ikvDFZS2mDVS3drnohI=
-github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d/go.mod h1:01TrycV0kFyexm33Z7vhZRXopbI8J3TDReVlkTgMUxE=
 github.com/mitchellh/go-wordwrap v1.0.1 h1:TLuKupo69TCn6TQSyGxwI1EblZZEsQ0vMlAFQflz0v0=
 github.com/mitchellh/go-wordwrap v1.0.1/go.mod h1:R62XHJLzvMFRBbcrT7m7WgmE1eOyTSsCt+hzestvNj0=
 github.com/mitchellh/hashstructure/v2 v2.0.2 h1:vGKWl0YJqUNxE8d+h8f6NJLcCJrgbhC4NcD46KavDd4=
