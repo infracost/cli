@@ -138,3 +138,13 @@ export INFRACOST_CLI_PROVIDER_PLUGIN_AZURERM=/path/to/bin/infracost-provider-plu
 ```
 
 When a plugin path override is set, the CLI uses that binary directly and skips downloading for that plugin.
+
+
+## Bugs and feedback
+
+If you run into any issues or have feedback, please open a thread in [GitHub Discussions](https://github.com/infracost/infracost/discussions).
+
+## Contributing
+
+We ❤️ contributions big or small. Please start by opening a thread in [GitHub Discussions](https://github.com/infracost/infracost/discussions) to discuss your idea before submitting a PR. 
+
