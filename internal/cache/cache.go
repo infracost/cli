@@ -91,6 +91,25 @@ func (c *Config) ForPath(absPath string) (*format.Output, error) {
 	return readDataFile(c.Cache, key)
 }
 
+// ForPathAllowStale returns cached results for the given absolute path without
+// checking whether source files have been modified since the entry was created.
+// The entry must still be within TTL.
+func (c *Config) ForPathAllowStale(absPath string) (*format.Output, error) {
+	m, err := c.LoadManifest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	key := Key(absPath)
+
+	e, ok := m.Entries[key]
+	if !ok || c.TTL <= 0 || time.Since(e.CreatedAt) > c.TTL {
+		return nil, fmt.Errorf("no cached results found")
+	}
+
+	return readDataFile(c.Cache, key)
+}
+
 // Latest returns the most recent cached result within TTL.
 //
 // When allowStale is false, the entry is also rejected if any source file has

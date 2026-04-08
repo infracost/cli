@@ -33,9 +33,10 @@ type ProjectOutput struct {
 }
 
 type ResourceMetadata struct {
-	Filename  string `json:"filename,omitempty"`
-	StartLine int    `json:"start_line,omitempty"`
-	EndLine   int    `json:"end_line,omitempty"`
+	Filename     string `json:"filename,omitempty"`
+	StartLine    int    `json:"start_line,omitempty"`
+	EndLine      int    `json:"end_line,omitempty"`
+	DeepChecksum string `json:"deep_checksum,omitempty"`
 }
 
 type ResourceOutput struct {
@@ -246,9 +247,10 @@ func convertResource(r *provider.Resource) ResourceOutput {
 	var metadata ResourceMetadata
 	if r.Metadata != nil {
 		metadata = ResourceMetadata{
-			Filename:  r.Metadata.Filename,
-			StartLine: int(r.Metadata.StartLine),
-			EndLine:   int(r.Metadata.EndLine),
+			Filename:     r.Metadata.Filename,
+			StartLine:    int(r.Metadata.StartLine),
+			EndLine:      int(r.Metadata.EndLine),
+			DeepChecksum: r.Metadata.DeepChecksum,
 		}
 	}
 
