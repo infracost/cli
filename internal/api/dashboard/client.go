@@ -11,6 +11,24 @@ import (
 	"github.com/infracost/cli/internal/api/dashboard/graphql"
 )
 
+type Organization struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Slug  string `json:"slug"`
+	Roles []Role `json:"roles"`
+}
+
+type Role struct {
+	ID string `json:"id"`
+}
+
+type CurrentUser struct {
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Email         string         `json:"email"`
+	Organizations []Organization `json:"organizations"`
+}
+
 type RunParameters struct {
 	OrganizationID string `json:"organizationId"`
 	RepositoryName string `json:"repositoryName"`
@@ -23,6 +41,7 @@ type RunParameters struct {
 }
 
 type Client interface {
+	CurrentUser(ctx context.Context) (CurrentUser, error)
 	RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error)
 }
 
@@ -33,6 +52,42 @@ var (
 type client struct {
 	client *http.Client
 	config *Config
+}
+
+func (c *client) CurrentUser(ctx context.Context) (CurrentUser, error) {
+	const query = `{
+  currentUser {
+    id
+    name
+    email
+    organizations {
+      id
+      name
+      slug
+      roles {
+        id
+      }
+    }
+  }
+}`
+
+	type response struct {
+		CurrentUser CurrentUser `json:"currentUser"`
+	}
+
+	r, err := graphql.Query[response](ctx, c.client, fmt.Sprintf("%s/graphql", c.config.Endpoint), query, nil)
+	if err != nil {
+		return CurrentUser{}, err
+	}
+
+	if len(r.Errors) > 0 {
+		var errs []string
+		for _, e := range r.Errors {
+			errs = append(errs, e.Message)
+		}
+		return r.Data.CurrentUser, errors.New(strings.Join(errs, ";"))
+	}
+	return r.Data.CurrentUser, nil
 }
 
 func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error) {

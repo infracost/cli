@@ -65,6 +65,7 @@ func run() (exitCode int) {
 	cmd.AddCommand(cmds.Login(cfg))
 	cmd.AddCommand(cmds.Logout(cfg))
 	cmd.AddCommand(cmds.Price(cfg))
+	cmd.AddCommand(cmds.WhoAmI(cfg))
 	cmd.AddCommand(cmds.Update(cfg))
 	cmd.AddCommand(cmds.Version(cfg))
 

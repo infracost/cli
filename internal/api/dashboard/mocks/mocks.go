@@ -38,6 +38,32 @@ func (_m *MockClient) EXPECT() *MockClient_Expecter {
 	return &MockClient_Expecter{mock: &_m.Mock}
 }
 
+// CurrentUser provides a mock function for the type MockClient
+func (_mock *MockClient) CurrentUser(ctx context.Context) (dashboard.CurrentUser, error) {
+	ret := _mock.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CurrentUser")
+	}
+
+	var r0 dashboard.CurrentUser
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context) (dashboard.CurrentUser, error)); ok {
+		return returnFunc(ctx)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context) dashboard.CurrentUser); ok {
+		r0 = returnFunc(ctx)
+	} else {
+		r0 = ret.Get(0).(dashboard.CurrentUser)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = returnFunc(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
 // RunParameters provides a mock function for the type MockClient
 func (_mock *MockClient) RunParameters(ctx context.Context, repoURL string, branchName string) (dashboard.RunParameters, error) {
 	ret := _mock.Called(ctx, repoURL, branchName)
