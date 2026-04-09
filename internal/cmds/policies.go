@@ -65,11 +65,17 @@ func Policies(cfg *config.Config) *cobra.Command {
 			branchName := vcs.GetCurrentBranch(absoluteDirectory)
 
 			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
+
+			if err := resolveOrg(cmd.Context(), cfg, client); err != nil {
+				return err
+			}
 			var runParameters *dashboard.RunParameters
 			if rp, err := client.RunParameters(cmd.Context(), repositoryURL, branchName); err != nil {
 				logging.Warnf("Failed to fetch runParameters, gathering policies without them: %s", err.Error())
 			} else {
-				cfg.OrgID = rp.OrganizationID
+				if cfg.Org == "" {
+					cfg.OrgID = rp.OrganizationID
+				}
 				runParameters = &rp
 			}
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,10 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 			user, err := client.CurrentUser(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("fetching current user: %w", err)
+			}
+
+			if _, err := fetchAndCacheUser(cmd.Context(), cfg, client); err != nil {
+				logging.WithError(err).Msg("failed to update user cache")
 			}
 
 			fmt.Printf("Name:  %s\n", user.Name)
