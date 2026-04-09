@@ -17,6 +17,7 @@ import (
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 )
 
 // actionsRef is the pinned commit SHA for the infracost/actions composite actions.
@@ -49,32 +50,44 @@ func parseRemoteURL(remoteURL string) (repoInfo, error) {
 		return repoInfo{host: m[1], owner: m[2], repo: m[3]}, nil
 	}
 
-	return repoInfo{}, fmt.Errorf("could not parse remote URL: %s", remoteURL)
+	return repoInfo{}, fmt.Errorf("could not parse remote URL %q — expected SSH (git@host:owner/repo.git) or HTTPS (https://host/owner/repo.git) format", remoteURL)
 }
 
-// resolveOrg picks the right org from the user's organizations.
-// TODO(DEV-232): Once `infracost org` subcommands land, replace the multi-org
-// error with an interactive org picker (and respect per-repo overrides).
-func resolveOrg(orgs []dashboard.Organization, orgID string) (dashboard.Organization, error) {
-	if len(orgs) == 0 {
-		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account")
+// selectSetupOrg resolves the user's organization for setup commands.
+// It respects the --org flag (via resolveOrg from org.go), auto-selects when
+// there is only one org, and errors when there are multiple without --org set.
+// TODO(DEV-232): Replace the multi-org error with an interactive org picker.
+func selectSetupOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) (dashboard.Organization, error) {
+	if err := resolveOrg(ctx, cfg, source); err != nil {
+		return dashboard.Organization{}, err
 	}
 
-	if orgID != "" {
-		for _, org := range orgs {
-			if org.ID == orgID || org.Slug == orgID {
+	client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
+	user, err := client.CurrentUser(ctx)
+	if err != nil {
+		return dashboard.Organization{}, fmt.Errorf("fetching current user: %w", err)
+	}
+
+	if len(user.Organizations) == 0 {
+		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or check that you're logged into the right account with `infracost login`")
+	}
+
+	// If --org resolved to a specific org ID, find it.
+	if cfg.OrgID != "" {
+		for _, org := range user.Organizations {
+			if org.ID == cfg.OrgID {
 				return org, nil
 			}
 		}
-		return dashboard.Organization{}, fmt.Errorf("organization %q not found", orgID)
+		return dashboard.Organization{}, fmt.Errorf("organization %q not found — check the value passed to --org", cfg.Org)
 	}
 
-	if len(orgs) == 1 {
-		return orgs[0], nil
+	if len(user.Organizations) == 1 {
+		return user.Organizations[0], nil
 	}
 
 	return dashboard.Organization{}, fmt.Errorf(
-		"you belong to multiple organizations — set INFRACOST_CLI_ORG_ID or use --org-id to select one",
+		"you belong to multiple organizations — use --org to select one",
 	)
 }
 
@@ -118,7 +131,7 @@ func RunCISetup(ctx context.Context, cfg *config.Config, ciPipeline, yes bool) e
 
 	repoRoot := vcs.GetRepoRoot(cwd)
 	if repoRoot == "" {
-		return fmt.Errorf("not inside a git repository")
+		return fmt.Errorf("not inside a git repository — run this command from within a git repo")
 	}
 
 	remoteURL := vcs.GetRemoteURL(repoRoot)
@@ -151,13 +164,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 		return fmt.Errorf("authenticating: %w", err)
 	}
 
-	client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
-	user, err := client.CurrentUser(ctx)
-	if err != nil {
-		return fmt.Errorf("fetching current user: %w", err)
-	}
-
-	org, err := resolveOrg(user.Organizations, cfg.OrgID)
+	org, err := selectSetupOrg(ctx, cfg, source)
 	if err != nil {
 		return err
 	}
@@ -233,13 +240,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		return fmt.Errorf("authenticating: %w", err)
 	}
 
-	client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
-	user, err := client.CurrentUser(ctx)
-	if err != nil {
-		return fmt.Errorf("fetching current user: %w", err)
-	}
-
-	org, err := resolveOrg(user.Organizations, cfg.OrgID)
+	org, err := selectSetupOrg(ctx, cfg, source)
 	if err != nil {
 		return err
 	}
