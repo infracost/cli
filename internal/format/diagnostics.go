@@ -3,6 +3,7 @@ package format
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/infracost/go-proto/pkg/diagnostic"
 )
@@ -16,5 +17,14 @@ func Diagnostics(diags *diagnostic.Diagnostics) {
 
 // Diagnostic prints a diagnostic to stderr.
 func Diagnostic(diag *diagnostic.Diagnostic) {
-	_, _ = fmt.Fprintln(os.Stderr, diag.FormatMessage())
+	prefix := diagnostic.MessagePrefix(diag.Type)
+	if strings.HasPrefix(prefix, "DIAGNOSTIC_TYPE_") {
+		// No human-readable prefix for this type, use severity instead.
+		if diag.Warning {
+			prefix = "Warning"
+		} else {
+			prefix = "Error"
+		}
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "%s: %s\n", prefix, diag.Error)
 }
