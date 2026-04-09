@@ -96,6 +96,15 @@ func Scan(cfg *config.Config) *cobra.Command {
 
 			eventsClient := cfg.Events.Client(api.Client(cmd.Context(), source, cfg.OrgID))
 
+			// Load previous result for this directory (stale allowed) for run diff counts.
+			var prevForDir *format.Output
+			if p, err := cfg.Cache.ForPathAllowStale(absoluteDirectory); err != nil {
+				logging.Infof("could not load previous run data for directory: %v", err)
+			} else {
+				logging.Infof("found previous run data for directory in cache")
+				prevForDir = p
+			}
+
 			// Diff against the previous cached result to detect fixed policy violations.
 			if prev, err := cfg.Cache.Latest(true); err != nil {
 				logging.Infof("could not load previous run data: %v", err)
@@ -108,7 +117,7 @@ func Scan(cfg *config.Config) *cobra.Command {
 				logging.Warn("failed to cache results: " + err.Error())
 			}
 
-			output.TrackRun(cmd.Context(), eventsClient, runSeconds, "json")
+			output.TrackRun(cmd.Context(), eventsClient, runSeconds, "json", prevForDir)
 
 			if err := output.ToJSON(os.Stdout); err != nil {
 				return fmt.Errorf("failed to write JSON output: %w", err)
