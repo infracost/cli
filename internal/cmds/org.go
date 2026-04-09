@@ -58,6 +58,10 @@ func fetchAndCacheUser(ctx context.Context, cfg *config.Config, client dashboard
 		return nil, err
 	}
 
+	return cacheUser(cfg, user), nil
+}
+
+func cacheUser(cfg *config.Config, user dashboard.CurrentUser) *auth.UserCache {
 	orgs := make([]auth.CachedOrganization, len(user.Organizations))
 	for i, org := range user.Organizations {
 		orgs[i] = auth.CachedOrganization{
@@ -78,5 +82,5 @@ func fetchAndCacheUser(ctx context.Context, cfg *config.Config, client dashboard
 		logging.WithError(err).Msg("failed to save user cache")
 	}
 
-	return uc, nil
+	return uc
 }
