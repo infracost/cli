@@ -1,0 +1,321 @@
+package cmds
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+
+	"github.com/charmbracelet/huh"
+	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/pkg/auth/browser"
+	"github.com/spf13/cobra"
+)
+
+const (
+	infracostMarketplace     = "infracost/claude-skills"
+	infracostMarketplaceName = "infracost"
+	infracostPlugin          = "infracost@infracost"
+	infracostSkillsRepo      = "https://github.com/infracost/agent-skills"
+)
+
+type agent struct {
+	name     string
+	binaries []string                       // CLI binaries to look for on PATH
+	setup    func(bin, scope string) error  // CLI-based setup
+	teardown func(bin, scope string) error  // CLI-based teardown
+	manual   string                         // manual setup instructions
+	remove   string                         // manual remove instructions
+	url      string                         // fallback URL to open
+	hint     string                         // message shown before opening URL
+	enabled  bool
+}
+
+func pluginSetup(bin, marketplace, plugin, scope string) error {
+	fmt.Println("Adding Infracost skills marketplace...")
+	if err := runAgentBinary(bin, "plugin", "marketplace", "add", marketplace); err != nil {
+		return fmt.Errorf("adding marketplace: %w", err)
+	}
+
+	fmt.Println("Installing Infracost plugin...")
+	if err := runAgentBinary(bin, "plugin", "install", "--scope", scope, plugin); err != nil {
+		return fmt.Errorf("installing plugin: %w", err)
+	}
+
+	return nil
+}
+
+func pluginTeardown(bin, marketplaceName, plugin, scope string) error {
+	var errs []error
+
+	fmt.Println("Uninstalling Infracost plugin...")
+	if err := runAgentBinary(bin, "plugin", "uninstall", "--scope", scope, plugin); err != nil {
+		errs = append(errs, fmt.Errorf("uninstalling plugin: %w", err))
+	}
+
+	fmt.Println("Removing Infracost skills marketplace...")
+	if err := runAgentBinary(bin, "plugin", "marketplace", "remove", marketplaceName); err != nil {
+		errs = append(errs, fmt.Errorf("removing marketplace: %w", err))
+	}
+
+	return errors.Join(errs...)
+}
+
+func runAgentBinary(bin string, args ...string) error {
+	var stderr bytes.Buffer
+	cmd := exec.Command(bin, args...) //nolint:gosec // bin is user-configured or looked up on PATH
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+		return err
+	}
+	return nil
+}
+
+var supportedAgents = []agent{
+	{
+		name:     "Claude Code",
+		binaries: []string{"claude"},
+		setup: func(bin, scope string) error {
+			return pluginSetup(bin, infracostMarketplace, infracostPlugin, scope)
+		},
+		teardown: func(bin, scope string) error {
+			return pluginTeardown(bin, infracostMarketplaceName, infracostPlugin, scope)
+		},
+		enabled: true,
+	},
+	{
+		name:     "GitHub Copilot (CLI)",
+		binaries: []string{"copilot"},
+		setup: func(bin, scope string) error {
+			return pluginSetup(bin, infracostMarketplace, infracostPlugin, scope)
+		},
+		teardown: func(bin, scope string) error {
+			return pluginTeardown(bin, infracostMarketplaceName, infracostPlugin, scope)
+		},
+		enabled: true,
+	},
+	{
+		name:     "GitHub Copilot (VS Code)",
+		binaries: []string{"code", "codium"},
+		manual: `To install Infracost skills in GitHub Copilot for VS Code:
+  1. Open the Command Palette (Cmd+Shift+P / Ctrl+Shift+P)
+  2. Run "Chat: Install Plugin From Source"
+  3. Enter the repository URL: ` + infracostSkillsRepo + `
+  4. Restart VS Code`,
+		remove: `To remove Infracost skills from GitHub Copilot for VS Code:
+  1. Open the Command Palette (Cmd+Shift+P / Ctrl+Shift+P)
+  2. Run "Chat: Uninstall Plugin"
+  3. Select the Infracost plugin
+  4. Restart VS Code`,
+		enabled: true,
+	},
+	{
+		name: "OpenAI Codex",
+		manual: `To install Infracost skills in OpenAI Codex, run the following prompt:
+  $skill-installer infracost/agent-skills`,
+		remove: `To remove Infracost skills from OpenAI Codex, remove the infracost skills from your Codex configuration.`,
+		enabled: true,
+	},
+	{
+		name: "Cursor",
+		manual: `To install Infracost skills in Cursor:
+  1. Open Settings → Rules
+  2. Click "+New"
+  3. Select "Add from GitHub/GitLab"
+  4. Enter the repository URL: ` + infracostSkillsRepo + `.git`,
+		remove: `To remove Infracost skills from Cursor:
+  1. Open Settings → Rules
+  2. Find and delete the Infracost rule`,
+		enabled: true,
+	},
+	{
+		name:    "Gemini CLI",
+		enabled: false,
+	},
+}
+
+var validAgentScopes = map[string]struct{}{
+	"user":    {},
+	"project": {},
+	"local":   {},
+}
+
+func Agent(cfg *config.Config) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agent",
+		Short: "Manage AI coding agent integrations",
+	}
+	cmd.AddCommand(agentSetup(cfg))
+	cmd.AddCommand(agentRemove(cfg))
+	return cmd
+}
+
+func agentSetup(cfg *config.Config) *cobra.Command {
+	var scope string
+
+	cmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Install Infracost skills for your AI coding agent",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if _, ok := validAgentScopes[scope]; !ok {
+				return fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
+			}
+
+			selected, err := selectAgent("Which AI coding agent do you use?")
+			if err != nil {
+				return err
+			}
+			if selected == nil {
+				return nil
+			}
+
+			return setupAgent(cfg, *selected, scope)
+		},
+	}
+	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope: user (global), project, or local")
+	return cmd
+}
+
+func agentRemove(cfg *config.Config) *cobra.Command {
+	var scope string
+
+	cmd := &cobra.Command{
+		Use:   "remove",
+		Short: "Remove Infracost skills from your AI coding agent",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if _, ok := validAgentScopes[scope]; !ok {
+				return fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
+			}
+
+			selected, err := selectAgent("Which AI coding agent do you want to remove Infracost skills from?")
+			if err != nil {
+				return err
+			}
+			if selected == nil {
+				return nil
+			}
+
+			return removeAgent(cfg, *selected, scope)
+		},
+	}
+	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope: user (global), project, or local")
+	return cmd
+}
+
+func selectAgent(title string) (*agent, error) {
+	var enabledAgents []agent
+	for _, a := range supportedAgents {
+		if a.enabled {
+			enabledAgents = append(enabledAgents, a)
+		}
+	}
+
+	options := make([]huh.Option[int], len(enabledAgents))
+	for i, a := range enabledAgents {
+		options[i] = huh.NewOption(a.name, i)
+	}
+
+	var selected int
+	err := huh.NewSelect[int]().
+		Title(title).
+		Options(options...).
+		Value(&selected).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("selecting agent: %w", err)
+	}
+
+	result := enabledAgents[selected]
+	return &result, nil
+}
+
+func agentBinary(cfg *config.Config, a agent) string {
+	// For Claude Code, check config for a custom path.
+	if a.name == "Claude Code" && cfg.ClaudePath != "" {
+		return cfg.ClaudePath
+	}
+	return ""
+}
+
+func resolveAgentBinary(cfg *config.Config, a agent) (string, error) {
+	// Check for configured path override.
+	if configured := agentBinary(cfg, a); configured != "" {
+		if _, err := exec.LookPath(configured); err != nil {
+			return "", fmt.Errorf("%s CLI not found at configured path %q", a.name, configured)
+		}
+		return configured, nil
+	}
+
+	// Search PATH for known binaries.
+	for _, bin := range a.binaries {
+		if path, err := exec.LookPath(bin); err == nil {
+			return path, nil
+		}
+	}
+
+	return "", fmt.Errorf("%s CLI not found on PATH", a.name)
+}
+
+func setupAgent(cfg *config.Config, a agent, scope string) error {
+	if a.manual != "" {
+		fmt.Println(a.manual)
+		return nil
+	}
+
+	if a.setup == nil {
+		return fmt.Errorf("no setup method available for %s", a.name)
+	}
+
+	bin, err := resolveAgentBinary(cfg, a)
+	if err != nil {
+		if a.url != "" {
+			fmt.Printf("Could not find a CLI for %s on your PATH.\n", a.name)
+			if a.hint != "" {
+				fmt.Println(a.hint)
+			}
+			fmt.Printf("Opening %s in your browser...\n", a.url)
+			if err := browser.Open(a.url); err != nil {
+				fmt.Printf("Failed to open browser. Visit the URL manually:\n  %s\n", a.url)
+			}
+			return nil
+		}
+		return err
+	}
+
+	if err := a.setup(bin, scope); err != nil {
+		return err
+	}
+
+	fmt.Printf("Infracost skills enabled for %s. Restart your agent to activate.\n", a.name)
+	return nil
+}
+
+func removeAgent(cfg *config.Config, a agent, scope string) error {
+	if a.remove != "" {
+		fmt.Println(a.remove)
+		return nil
+	}
+
+	if a.teardown == nil {
+		return fmt.Errorf("no remove method available for %s", a.name)
+	}
+
+	bin, err := resolveAgentBinary(cfg, a)
+	if err != nil {
+		return err
+	}
+
+	if err := a.teardown(bin, scope); err != nil {
+		return err
+	}
+
+	fmt.Printf("Infracost skills removed from %s.\n", a.name)
+	return nil
+}
