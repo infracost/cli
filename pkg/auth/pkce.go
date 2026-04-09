@@ -26,7 +26,7 @@ func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, e
 	authURL := config.AuthCodeURL(state,
 		oauth2.S256ChallengeOption(verifier),
 		oauth2.SetAuthURLParam("audience", c.Audience),
-		oauth2.SetAuthURLParam("icSource", "cliv2"))
+		oauth2.SetAuthURLParam("icSource", "cli"))
 
 	var wg sync.WaitGroup
 	var code string
