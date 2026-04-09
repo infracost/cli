@@ -62,7 +62,7 @@ func IDE(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func ideSetup(cfg *config.Config) *cobra.Command {
+func ideSetup(_ *config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
 		Short: "Install the Infracost extension for your IDE",

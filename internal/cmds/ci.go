@@ -297,23 +297,23 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	}
 
 	if writeWorkflows {
-		if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		if err := os.MkdirAll(workflowDir, 0o750); err != nil { //nolint:gosec // G301: workflows dir needs group read+exec for CI runners
 			return fmt.Errorf("creating workflow directory: %w", err)
 		}
 
-		if err := os.WriteFile(diffPath, []byte(diffWorkflowContent()), 0o644); err != nil {
+		if err := os.WriteFile(diffPath, []byte(diffWorkflowContent()), 0o600); err != nil {
 			return fmt.Errorf("writing diff workflow: %w", err)
 		}
 		fmt.Println("✔  Created .github/workflows/infracost-diff.yml")
 
-		if err := os.WriteFile(scanPath, []byte(scanWorkflowContent(defaultBranch)), 0o644); err != nil {
+		if err := os.WriteFile(scanPath, []byte(scanWorkflowContent(defaultBranch)), 0o600); err != nil {
 			return fmt.Errorf("writing scan workflow: %w", err)
 		}
 		fmt.Println("✔  Created .github/workflows/infracost-scan.yml")
 	}
 
 	if hasGH {
-		ghCmd := exec.CommandContext(ctx, ghPath, "secret", "set", "INFRACOST_API_KEY",
+		ghCmd := exec.CommandContext(ctx, ghPath, "secret", "set", "INFRACOST_API_KEY", //nolint:gosec // G204: ghPath is from exec.LookPath, not user input
 			"--body", apiKey,
 			"--repo", repo.slug())
 		if err := ghCmd.Run(); err != nil {
