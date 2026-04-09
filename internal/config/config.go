@@ -30,7 +30,7 @@ type Config struct {
 	PricingEndpoint string `env:"INFRACOST_CLI_PRICING_ENDPOINT" flag:"pricing-endpoint;hidden" usage:"The pricing endpoint to use for prices" default:"https://pricing.api.infracost.io"`
 
 	// Org is the organization slug or ID to use. Resolved to an ID before API calls.
-	Org string `env:"INFRACOST_ORG" flag:"org" usage:"The organization slug or ID to use"`
+	Org string `env:"INFRACOST_CLI_ORG" flag:"org" usage:"The organization slug or ID to use"`
 
 	// OrgID is the resolved organization ID, set after resolving --org or from RunParameters.
 	OrgID string
