@@ -30,6 +30,23 @@ func GetRepoRoot(path string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// GetDefaultBranch returns the default branch name for the remote "origin".
+// It falls back to "main" if the default branch cannot be determined.
+func GetDefaultBranch(dir string) string {
+	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD", "--short")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err == nil {
+		// Output is "origin/main" — strip the "origin/" prefix.
+		branch := strings.TrimSpace(string(out))
+		if strings.HasPrefix(branch, "origin/") {
+			return strings.TrimPrefix(branch, "origin/")
+		}
+		return branch
+	}
+	return "main"
+}
+
 // GetRemoteURL returns the git remote URL for the given directory.
 // It defaults to the "origin" remote. If it fails to get the URL, it returns an empty string.
 func GetRemoteURL(dir string) string {

@@ -98,6 +98,78 @@ func (_c *MockClient_CurrentUser_Call) RunAndReturn(run func(ctx context.Context
 	return _c
 }
 
+// HasRepo provides a mock function for the type MockClient
+func (_mock *MockClient) HasRepo(ctx context.Context, orgID string, repoName string) (bool, error) {
+	ret := _mock.Called(ctx, orgID, repoName)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HasRepo")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (bool, error)); ok {
+		return returnFunc(ctx, orgID, repoName)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) bool); ok {
+		r0 = returnFunc(ctx, orgID, repoName)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, orgID, repoName)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_HasRepo_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HasRepo'
+type MockClient_HasRepo_Call struct {
+	*mock.Call
+}
+
+// HasRepo is a helper method to define mock.On call
+//   - ctx context.Context
+//   - orgID string
+//   - repoName string
+func (_e *MockClient_Expecter) HasRepo(ctx interface{}, orgID interface{}, repoName interface{}) *MockClient_HasRepo_Call {
+	return &MockClient_HasRepo_Call{Call: _e.mock.On("HasRepo", ctx, orgID, repoName)}
+}
+
+func (_c *MockClient_HasRepo_Call) Run(run func(ctx context.Context, orgID string, repoName string)) *MockClient_HasRepo_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClient_HasRepo_Call) Return(b bool, err error) *MockClient_HasRepo_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *MockClient_HasRepo_Call) RunAndReturn(run func(ctx context.Context, orgID string, repoName string) (bool, error)) *MockClient_HasRepo_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // RunParameters provides a mock function for the type MockClient
 func (_mock *MockClient) RunParameters(ctx context.Context, repoURL string, branchName string) (dashboard.RunParameters, error) {
 	ret := _mock.Called(ctx, repoURL, branchName)
