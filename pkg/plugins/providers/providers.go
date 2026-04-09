@@ -26,9 +26,9 @@ func Connect(path string, level hclog.Level) (proto.ProviderServiceClient, func(
 	}
 
 	if stat, err := os.Stat(path); err != nil {
-		return nil, nil, fmt.Errorf("error accessing plugin at %s: %w", path, err)
+		return nil, nil, fmt.Errorf("error accessing plugin at %s: %w (try setting INFRACOST_CLI_PLUGIN_AUTO_UPDATE=true to re-download)", path, err)
 	} else if stat.IsDir() {
-		return nil, nil, fmt.Errorf("plugin path %s is a directory, not a binary", path)
+		return nil, nil, fmt.Errorf("plugin path %s is a directory, not a binary (try deleting it and running again)", path)
 	} else if runtime.GOOS != "windows" && stat.Mode()&0111 == 0 {
 		return nil, nil, fmt.Errorf("plugin at %s is not executable (try: chmod +x %s)", path, path)
 	}
