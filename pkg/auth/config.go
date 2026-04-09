@@ -64,6 +64,9 @@ type InternalConfig struct {
 
 	// TokenCachePath is the path to the token cache file.
 	TokenCachePath string `env:"INFRACOST_CLI_OAUTH_TOKEN_CACHE_PATH" flag:"access-token-cache-path;hidden" usage:"The path to the token cache file"`
+
+	// UserCachePath is the path to the user cache file.
+	UserCachePath string `env:"INFRACOST_CLI_USER_CACHE_PATH" flag:"user-cache-path;hidden" usage:"The path to the user cache file"`
 }
 
 // ExternalConfig contains the configuration settings that end users should know about and can set.
@@ -94,6 +97,10 @@ func (c *Config) Process() {
 
 	if len(c.TokenCachePath) == 0 {
 		c.TokenCachePath = defaultTokenCachePath()
+	}
+
+	if len(c.UserCachePath) == 0 {
+		c.UserCachePath = defaultUserCachePath()
 	}
 }
 

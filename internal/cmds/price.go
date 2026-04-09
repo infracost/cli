@@ -52,11 +52,11 @@ func Price(cfg *config.Config) *cobra.Command {
 			repositoryURL := vcs.GetRemoteURL(dir)
 			branchName := vcs.GetCurrentBranch(dir)
 
-			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-
-			if err := resolveOrg(cmd.Context(), cfg, client); err != nil {
+			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
 				return err
 			}
+
+			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
 			runParameters, err := client.RunParameters(cmd.Context(), repositoryURL, branchName)
 			if err != nil {
 				return fmt.Errorf("failed to retrieve run parameters: %w", err)

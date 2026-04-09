@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/infracost/cli/pkg/logging"
 )
@@ -24,10 +25,19 @@ type UserCache struct {
 	Email         string               `json:"email"`
 	Organizations []CachedOrganization `json:"organizations"`
 	SelectedOrgID string               `json:"selectedOrgId,omitempty"`
+	UpdatedAt     time.Time            `json:"updatedAt"`
+}
+
+// userCacheTTL is how long the cached user data is considered fresh.
+const userCacheTTL = 24 * time.Hour
+
+// IsStale returns true if the cache is older than the TTL.
+func (uc *UserCache) IsStale() bool {
+	return time.Since(uc.UpdatedAt) > userCacheTTL
 }
 
 func (c *Config) LoadUserCache() (*UserCache, error) {
-	path := userCachePath()
+	path := os.ExpandEnv(c.UserCachePath)
 
 	// nolint:gosec // G304: Path is derived from the user's own config directory.
 	f, err := os.Open(path)
@@ -48,11 +58,13 @@ func (c *Config) LoadUserCache() (*UserCache, error) {
 }
 
 func (c *Config) SaveUserCache(uc *UserCache) error {
-	path := userCachePath()
+	path := os.ExpandEnv(c.UserCachePath)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("creating user cache directory: %w", err)
 	}
+
+	uc.UpdatedAt = time.Now()
 
 	// nolint:gosec // G304: Path is derived from the user's own config directory.
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
@@ -71,7 +83,7 @@ func (c *Config) SaveUserCache(uc *UserCache) error {
 }
 
 func (c *Config) ClearUserCache() error {
-	path := userCachePath()
+	path := os.ExpandEnv(c.UserCachePath)
 	err := os.Remove(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clearing user cache: %w", err)
@@ -79,7 +91,7 @@ func (c *Config) ClearUserCache() error {
 	return nil
 }
 
-func userCachePath() string {
+func defaultUserCachePath() string {
 	dir, err := os.UserConfigDir()
 	if err == nil {
 		return filepath.Join(dir, "infracost", "user.json")

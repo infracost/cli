@@ -53,12 +53,11 @@ func Scan(cfg *config.Config) *cobra.Command {
 			repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
 			branchName := vcs.GetCurrentBranch(absoluteDirectory)
 
-			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-
-			if err := resolveOrg(cmd.Context(), cfg, client); err != nil {
+			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
 				return err
 			}
 
+			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
 			runParameters, err := client.RunParameters(cmd.Context(), repositoryURL, branchName)
 			if err != nil {
 				return fmt.Errorf("failed to retrieve run parameters: %w", err)
@@ -69,7 +68,9 @@ func Scan(cfg *config.Config) *cobra.Command {
 			if cfg.Org == "" {
 				cfg.OrgID = runParameters.OrganizationID
 			} else if runParameters.OrganizationID != "" && cfg.OrgID != runParameters.OrganizationID {
-				if uc, _ := cfg.Auth.LoadUserCache(); uc != nil {
+				if uc, ucErr := cfg.Auth.LoadUserCache(); ucErr != nil {
+					logging.WithError(ucErr).Msg("failed to load user cache for override message")
+				} else if uc != nil {
 					for _, org := range uc.Organizations {
 						if org.ID == cfg.OrgID {
 							_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "→ %s (overriding default)\n", org.Slug)
