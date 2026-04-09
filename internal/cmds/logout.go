@@ -15,6 +15,9 @@ func Logout(config *config.Config) *cobra.Command {
 			if err := config.Auth.ClearCache(); err != nil {
 				return err
 			}
+			if err := config.Auth.ClearUserCache(); err != nil {
+				return err
+			}
 			fmt.Println("Logged out")
 			return nil
 		},

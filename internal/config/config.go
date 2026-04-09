@@ -29,8 +29,11 @@ type Config struct {
 	// PricingEndpoint is the endpoint to use for prices. Defaults to https://pricing.api.infracost.io.
 	PricingEndpoint string `env:"INFRACOST_CLI_PRICING_ENDPOINT" flag:"pricing-endpoint;hidden" usage:"The pricing endpoint to use for prices" default:"https://pricing.api.infracost.io"`
 
-	// OrgID is the organization ID to use for authentication. Defaults to the value of the INFRACOST_ORG_ID environment variable.
-	OrgID string `env:"INFRACOST_CLI_ORG_ID" flag:"org-id;hidden" usage:"The organization ID to use for authentication"`
+	// Org is the organization slug or ID to use. Resolved to an ID before API calls.
+	Org string `env:"INFRACOST_CLI_ORG" flag:"org" usage:"The organization slug or ID to use"`
+
+	// OrgID is the resolved organization ID, set after resolving --org or from RunParameters.
+	OrgID string
 
 	// ClaudePath is the path to the Claude CLI binary. Defaults to "claude" (looked up on PATH).
 	ClaudePath string `env:"INFRACOST_CLI_CLAUDE_PATH" flag:"claude-path;hidden" usage:"Path to the Claude CLI binary"`

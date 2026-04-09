@@ -80,7 +80,7 @@ func run() (exitCode int) {
 	}
 
 	if err := cmd.Execute(); err != nil {
-		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_UNSPECIFIED, err))
+		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_FAILED_OPERATION, err))
 	}
 	format.Diagnostics(diags)
 	if diags.Critical().Len() > 0 {

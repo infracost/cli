@@ -24,6 +24,8 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("fetching current user: %w", err)
 			}
 
+			cacheUser(cfg, user)
+
 			fmt.Printf("Name:  %s\n", user.Name)
 			fmt.Printf("Email: %s\n", user.Email)
 			fmt.Println()
