@@ -53,48 +53,54 @@ var supportedIDEs = []ide{
 	},
 }
 
-func IDE(_ *config.Config) *cobra.Command {
+func IDE(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ide",
 		Short: "Manage IDE integrations",
 	}
-	cmd.AddCommand(ideSetup())
+	cmd.AddCommand(ideSetup(cfg))
 	return cmd
 }
 
-func ideSetup() *cobra.Command {
+func ideSetup(_ *config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
 		Short: "Install the Infracost extension for your IDE",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			var enabledIDEs []ide
-			for _, ide := range supportedIDEs {
-				if ide.enabled {
-					enabledIDEs = append(enabledIDEs, ide)
-				}
-			}
-
-			options := make([]huh.Option[int], len(enabledIDEs))
-			for i, ide := range enabledIDEs {
-				options[i] = huh.NewOption(ide.name, i)
-			}
-
-			var selected int
-			err := huh.NewSelect[int]().
-				Title("Which IDE do you use?").
-				Options(options...).
-				Value(&selected).
-				Run()
-			if err != nil {
-				if errors.Is(err, huh.ErrUserAborted) {
-					return nil
-				}
-				return fmt.Errorf("selecting IDE: %w", err)
-			}
-
-			return installIDE(enabledIDEs[selected])
+			return RunIDESetup()
 		},
 	}
+}
+
+// RunIDESetup is the core logic for `infracost ide setup`, callable from the
+// unified `infracost setup` flow (DEV-230).
+func RunIDESetup() error {
+	var enabledIDEs []ide
+	for _, ide := range supportedIDEs {
+		if ide.enabled {
+			enabledIDEs = append(enabledIDEs, ide)
+		}
+	}
+
+	options := make([]huh.Option[int], len(enabledIDEs))
+	for i, ide := range enabledIDEs {
+		options[i] = huh.NewOption(ide.name, i)
+	}
+
+	var selected int
+	err := huh.NewSelect[int]().
+		Title("Which IDE do you use?").
+		Options(options...).
+		Value(&selected).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return nil
+		}
+		return fmt.Errorf("selecting IDE: %w", err)
+	}
+
+	return installIDE(enabledIDEs[selected])
 }
 
 func installIDE(i ide) error {
@@ -117,20 +123,21 @@ func installIDE(i ide) error {
 			return fmt.Errorf("installing extension: %w", err)
 		}
 
-		fmt.Println("Infracost extension installed successfully.")
+		fmt.Println("✔  Infracost extension installed successfully.")
 		return nil
 	}
 
 	if i.url != "" {
 		if len(i.binaries) > 0 {
-			fmt.Printf("Could not find a CLI for %s on your PATH.\n", i.name)
+			fmt.Printf("!  Could not find a CLI for %s on your PATH.\n", i.name)
 		}
 		if i.hint != "" {
 			fmt.Println(i.hint)
 		}
-		fmt.Printf("Opening %s in your browser...\n", i.url)
 		if err := browser.Open(i.url); err != nil {
-			fmt.Printf("Failed to open browser. Visit the URL manually:\n  %s\n", i.url)
+			fmt.Printf("✗  Failed to open browser. Visit the URL manually:\n   %s\n", i.url)
+		} else {
+			fmt.Printf("✔  Opened %s in your browser.\n", i.url)
 		}
 		return nil
 	}

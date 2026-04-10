@@ -37,11 +37,13 @@ func pluginSetup(bin, marketplace, plugin, scope string) error {
 	if err := runAgentBinary(bin, "plugin", "marketplace", "add", marketplace); err != nil {
 		return fmt.Errorf("adding marketplace: %w", err)
 	}
+	fmt.Println("✔  Marketplace added")
 
 	fmt.Println("Installing Infracost plugin...")
 	if err := runAgentBinary(bin, "plugin", "install", "--scope", scope, plugin); err != nil {
 		return fmt.Errorf("installing plugin: %w", err)
 	}
+	fmt.Println("✔  Plugin installed")
 
 	return nil
 }
@@ -161,23 +163,29 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Install Infracost skills for your AI coding agent",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if _, ok := validAgentScopes[scope]; !ok {
-				return fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
-			}
-
-			selected, err := selectAgent("Which AI coding agent do you use?")
-			if err != nil {
-				return err
-			}
-			if selected == nil {
-				return nil
-			}
-
-			return setupAgent(cfg, *selected, scope)
+			return RunAgentSetup(cfg, scope)
 		},
 	}
 	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope: user (global), project, or local")
 	return cmd
+}
+
+// RunAgentSetup is the core logic for `infracost agent setup`, callable from
+// the unified `infracost setup` flow (DEV-230).
+func RunAgentSetup(cfg *config.Config, scope string) error {
+	if _, ok := validAgentScopes[scope]; !ok {
+		return fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
+	}
+
+	selected, err := selectAgent("Which AI coding agent do you use?")
+	if err != nil {
+		return err
+	}
+	if selected == nil {
+		return nil
+	}
+
+	return setupAgent(cfg, *selected, scope)
 }
 
 func agentRemove(cfg *config.Config) *cobra.Command {
@@ -276,13 +284,14 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 	bin, err := resolveAgentBinary(cfg, a)
 	if err != nil {
 		if a.url != "" {
-			fmt.Printf("Could not find a CLI for %s on your PATH.\n", a.name)
+			fmt.Printf("!  Could not find a CLI for %s on your PATH.\n", a.name)
 			if a.hint != "" {
 				fmt.Println(a.hint)
 			}
-			fmt.Printf("Opening %s in your browser...\n", a.url)
 			if err := browser.Open(a.url); err != nil {
-				fmt.Printf("Failed to open browser. Visit the URL manually:\n  %s\n", a.url)
+				fmt.Printf("✗  Failed to open browser. Visit the URL manually:\n   %s\n", a.url)
+			} else {
+				fmt.Printf("✔  Opened %s in your browser.\n", a.url)
 			}
 			return nil
 		}
@@ -293,7 +302,7 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 		return err
 	}
 
-	fmt.Printf("Infracost skills enabled for %s. Restart your agent to activate.\n", a.name)
+	fmt.Printf("✔  Infracost skills enabled for %s. Restart your agent to activate.\n", a.name)
 	return nil
 }
 
@@ -316,6 +325,6 @@ func removeAgent(cfg *config.Config, a agent, scope string) error {
 		return err
 	}
 
-	fmt.Printf("Infracost skills removed from %s.\n", a.name)
+	fmt.Printf("✔  Infracost skills removed from %s.\n", a.name)
 	return nil
 }
