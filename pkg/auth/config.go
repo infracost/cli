@@ -47,6 +47,12 @@ type Config struct {
 	source oauth2.TokenSource
 }
 
+// SetTokenSource sets the token source directly, bypassing the login flow.
+// This is intended for testing.
+func (c *Config) SetTokenSource(ts oauth2.TokenSource) {
+	c.source = ts
+}
+
 // InternalConfig contains the configuration for authenticating with Auth0. End users should never be setting these
 // directly, so the flags and environment variables are hidden. These are exposed as flags mainly to help with
 // development and testing.

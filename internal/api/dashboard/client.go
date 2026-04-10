@@ -43,6 +43,7 @@ type RunParameters struct {
 type Client interface {
 	CurrentUser(ctx context.Context) (CurrentUser, error)
 	RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error)
+	HasRepo(ctx context.Context, orgID, repoName string) (bool, error)
 }
 
 var (
@@ -134,4 +135,52 @@ func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) 
 		return r.Data.RunParameters, errors.New(strings.Join(errs, ";"))
 	}
 	return r.Data.RunParameters, nil
+}
+
+func (c *client) HasRepo(ctx context.Context, orgID, repoName string) (bool, error) {
+	const query = `query Repos($orgId: String!, $searchFilter: String) {
+  repos(organizationId: $orgId, searchFilter: $searchFilter, first: 10) {
+    edges {
+      node {
+        name
+      }
+    }
+  }
+}`
+
+	type node struct {
+		Name string `json:"name"`
+	}
+	type edge struct {
+		Node node `json:"node"`
+	}
+	type repos struct {
+		Edges []edge `json:"edges"`
+	}
+	type response struct {
+		Repos repos `json:"repos"`
+	}
+
+	r, err := graphql.Query[response](ctx, c.client, fmt.Sprintf("%s/graphql", c.config.Endpoint), query, map[string]interface{}{
+		"orgId":        orgID,
+		"searchFilter": repoName,
+	})
+	if err != nil {
+		return false, err
+	}
+
+	if len(r.Errors) > 0 {
+		var errs []string
+		for _, e := range r.Errors {
+			errs = append(errs, e.Message)
+		}
+		return false, errors.New(strings.Join(errs, ";"))
+	}
+
+	for _, edge := range r.Data.Repos.Edges {
+		if edge.Node.Name == repoName {
+			return true, nil
+		}
+	}
+	return false, nil
 }
