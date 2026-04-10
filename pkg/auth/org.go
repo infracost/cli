@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -44,7 +45,7 @@ func orgNotFoundError(orgFlag string, orgs []CachedOrganization) error {
 		fmt.Fprintf(&b, "\nDid you mean '%s'? Run with --org %s to retry.", bestSlug, bestSlug)
 	}
 
-	return fmt.Errorf("%s", b.String())
+	return errors.New(b.String())
 }
 
 // levenshteinDistance computes the edit distance between two strings.

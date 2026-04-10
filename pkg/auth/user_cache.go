@@ -12,9 +12,10 @@ import (
 
 // CachedOrganization is a minimal representation of an organization stored in the user cache.
 type CachedOrganization struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Slug  string   `json:"slug"`
+	Roles []string `json:"roles,omitempty"`
 }
 
 // UserCache stores the current user's identity and organization memberships.
