@@ -93,7 +93,7 @@ func Price(cfg *config.Config) *cobra.Command {
 				logging.Warn("failed to cache results: " + err.Error())
 			}
 
-			output.TrackRun(cmd.Context(), eventsClient, runSeconds, "json")
+			output.TrackRun(cmd.Context(), eventsClient, runSeconds, "json", nil)
 
 			if err := output.ToJSON(os.Stdout); err != nil {
 				return fmt.Errorf("failed to write JSON output: %w", err)

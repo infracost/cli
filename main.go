@@ -59,7 +59,7 @@ func run() (exitCode int) {
 
 	cmd.AddCommand(cmds.Scan(cfg))
 	cmd.AddCommand(cmds.Policies(cfg))
-	cmd.AddCommand(cmds.Claude(cfg))
+	cmd.AddCommand(cmds.Agent(cfg))
 	cmd.AddCommand(cmds.IDE(cfg))
 	cmd.AddCommand(cmds.Inspect(cfg))
 	cmd.AddCommand(cmds.Login(cfg))

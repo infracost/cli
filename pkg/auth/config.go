@@ -8,6 +8,7 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/environment"
 	"github.com/infracost/cli/pkg/logging"
@@ -193,7 +194,13 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 
 	// abort if not in interactive tty
 	if !isInteractive() {
-		return nil, fmt.Errorf("no cached token found and not in interactive environment, cannot log in")
+		caller, _ := events.GetMetadata[string]("caller")
+		switch {
+		case caller != "":
+			return nil, fmt.Errorf("not logged in. Run `infracost login` in your terminal first, then retry")
+		default:
+			return nil, fmt.Errorf("not logged in. Set INFRACOST_CLI_AUTHENTICATION_TOKEN for non-interactive environments, or run `infracost login` in an interactive terminal first")
+		}
 	}
 
 	login := c.PKCE

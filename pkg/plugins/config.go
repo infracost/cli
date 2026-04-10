@@ -152,7 +152,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 
 	p, ok := manifest.Plugins[plugin]
 	if !ok {
-		return "", fmt.Errorf("plugin %q not found in manifest", plugin)
+		return "", fmt.Errorf("plugin %q not found in manifest at %s", plugin, c.ManifestURL)
 	}
 
 	if len(wantVersion) == 0 {
@@ -164,12 +164,12 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 
 	version, ok := p.Versions[wantVersion]
 	if !ok {
-		return "", fmt.Errorf("plugin %q version %q not found in manifest", plugin, wantVersion)
+		return "", fmt.Errorf("plugin %q version %q not found in manifest (omit the version to use the latest)", plugin, wantVersion)
 	}
 
 	artifact, ok := version.Artifacts[platform]
 	if !ok {
-		return "", fmt.Errorf("plugin %q version %q has no artifact for %s", plugin, wantVersion, platform)
+		return "", fmt.Errorf("plugin %q version %q is not available for your platform (%s)", plugin, wantVersion, platform)
 	}
 
 	binaryPath := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
@@ -188,7 +188,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 	defer func() { _ = os.Remove(archivePath) }()
 
 	if err := os.MkdirAll(filepath.Dir(binaryPath), 0750); err != nil {
-		return "", fmt.Errorf("failed to create plugin cache directory: %w", err)
+		return "", fmt.Errorf("failed to create plugin cache directory: %w (use INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY to change the location)", err)
 	}
 
 	tmpBinary := binaryPath + ".tmp"
@@ -232,7 +232,7 @@ func (c *Config) loadManifest() (*Manifest, error) {
 	}()
 
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch plugin manifest: %s", response.Status)
+		return nil, fmt.Errorf("failed to fetch plugin manifest (%s): %s (check your internet connection, or use INFRACOST_CLI_PLUGIN_MANIFEST_URL to override the manifest endpoint)", c.ManifestURL, response.Status)
 	}
 
 	var manifest Manifest
@@ -289,7 +289,7 @@ func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
 		actualSHA := hex.EncodeToString(hasher.Sum(nil))
 		if actualSHA != expectedSHA {
 			_ = os.Remove(tmpPath) //nolint:gosec // G703: path is from os.CreateTemp
-			return "", fmt.Errorf("SHA256 mismatch: expected %s, got %s", expectedSHA, actualSHA)
+			return "", fmt.Errorf("SHA256 mismatch: expected %s, got %s (the download may be corrupted, try again)", expectedSHA, actualSHA)
 		}
 	}
 

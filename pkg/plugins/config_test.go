@@ -321,7 +321,7 @@ func TestEnsure(t *testing.T) {
 
 		c := &Config{Cache: t.TempDir(), ManifestURL: srv.URL, AutoUpdate: true}
 		_, err := c.Ensure(pluginName, "")
-		assert.ErrorContains(t, err, "no artifact for")
+		assert.ErrorContains(t, err, "is not available for your platform")
 	})
 
 	t.Run("successful download and install tar.gz", func(t *testing.T) {
