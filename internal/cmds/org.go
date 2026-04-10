@@ -21,9 +21,9 @@ import (
 //  2. .infracost/org file in the working directory
 //  3. SelectedOrgID saved in the user cache (from `infracost org switch`)
 //
-// If no org context is found and the user belongs to multiple orgs, a warning
-// is written to stderr advising them to set one explicitly.
-// If the user belongs to exactly one org, it is used automatically.
+// If no org context is found and the user belongs to exactly one org, it is
+// used automatically. If they belong to multiple orgs, they are prompted to
+// pick one (TTY only); on non-TTY a warning is written to stderr instead.
 func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) error {
 	uc, err := ensureUserCache(ctx, cfg, source)
 	if err != nil {

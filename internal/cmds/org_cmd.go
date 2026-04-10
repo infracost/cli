@@ -32,7 +32,7 @@ func orgList(cfg *config.Config) *cobra.Command {
 		Use:   "list",
 		Short: "List your organizations",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			uc, err := loadOrgs(cmd, cfg)
+			uc, err := ensureOrgCache(cmd, cfg)
 			if err != nil {
 				return err
 			}
@@ -64,7 +64,7 @@ func orgSwitch(cfg *config.Config) *cobra.Command {
 		Short: "Switch the active organization",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			uc, err := loadOrgs(cmd, cfg)
+			uc, err := ensureOrgCache(cmd, cfg)
 			if err != nil {
 				return err
 			}
@@ -123,7 +123,7 @@ func orgCurrent(cfg *config.Config) *cobra.Command {
 		Use:   "current",
 		Short: "Show the current organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			uc, err := loadOrgs(cmd, cfg)
+			uc, err := ensureOrgCache(cmd, cfg)
 			if err != nil {
 				return err
 			}
@@ -146,8 +146,8 @@ func orgCurrent(cfg *config.Config) *cobra.Command {
 	}
 }
 
-// loadOrgs fetches (or loads from cache) the user's organizations.
-func loadOrgs(cmd *cobra.Command, cfg *config.Config) (*auth.UserCache, error) {
+// ensureOrgCache fetches (or loads from cache) the user's organizations.
+func ensureOrgCache(cmd *cobra.Command, cfg *config.Config) (*auth.UserCache, error) {
 	source, err := cfg.Auth.Token(cmd.Context())
 	if err != nil {
 		return nil, fmt.Errorf("authenticating: %w", err)
@@ -238,7 +238,7 @@ func pickOrg(orgs []auth.CachedOrganization, cfg *config.Config, selectedOrgID s
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			return "", huh.ErrUserAborted
+			return "", err
 		}
 		return "", fmt.Errorf("selecting organization: %w", err)
 	}
