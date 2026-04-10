@@ -16,8 +16,6 @@ import (
 
 const defaultPickOrgTitle = "Which organization do you want to use?"
 
-var errPickCancelled = errors.New("cancelled")
-
 func Org(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "org",
@@ -81,6 +79,9 @@ func orgSwitch(cfg *config.Config) *cobra.Command {
 			} else {
 				slug, err = pickOrg(uc.Organizations, cfg, uc.SelectedOrgID, defaultPickOrgTitle)
 				if err != nil {
+					if errors.Is(err, huh.ErrUserAborted) {
+						return nil
+					}
 					return err
 				}
 			}
@@ -237,7 +238,7 @@ func pickOrg(orgs []auth.CachedOrganization, cfg *config.Config, selectedOrgID s
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			return "", errPickCancelled
+			return "", huh.ErrUserAborted
 		}
 		return "", fmt.Errorf("selecting organization: %w", err)
 	}

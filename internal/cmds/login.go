@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/pkg/logging"
@@ -49,7 +50,7 @@ func Login(cfg *config.Config) *cobra.Command {
 			title := fmt.Sprintf("You have %d organizations, which would you like to be your default?", len(uc.Organizations))
 			slug, pickErr := pickOrg(uc.Organizations, cfg, "", title)
 			if pickErr != nil {
-				if !errors.Is(pickErr, errPickCancelled) {
+				if !errors.Is(pickErr, huh.ErrUserAborted) {
 					return pickErr
 				}
 				fmt.Println("No organization selected. Run 'infracost org switch' to set one.")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
@@ -88,12 +89,12 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 					return nil
 				}
 			}
-		} else if !errors.Is(pickErr, errPickCancelled) {
+		} else if !errors.Is(pickErr, huh.ErrUserAborted) {
 			logging.WithError(pickErr).Msg("failed to prompt for org selection")
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "warning: you belong to %d organizations but none is selected.\n", len(uc.Organizations))
+	fmt.Fprintf(os.Stderr, "warning: you belong to %d organizations but none are selected.\n", len(uc.Organizations))
 	fmt.Fprintf(os.Stderr, "         Run 'infracost org switch' to select one, or set INFRACOST_CLI_ORG.\n")
 
 	return nil
