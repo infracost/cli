@@ -1,9 +1,11 @@
 package cmds
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
@@ -13,12 +15,13 @@ import (
 
 type ide struct {
 	name       string
-	binaries   []string // CLI binaries to look for on PATH
-	installCmd func(bin string) *exec.Cmd
-	url        string // marketplace/install URL fallback
-	hint       string // message shown before opening the URL
-	manual     string // manual instructions (instead of URL) e.g. neovim
-	enabled    bool   // temporarily disable IDEs under development
+	binaries   []string                    // CLI binaries to look for on PATH
+	installCmd func(bin string) *exec.Cmd  // CLI-based install
+	check      func(bin string) (bool, error) // returns true if infracost extension is installed
+	url        string                       // marketplace/install URL fallback
+	hint       string                       // message shown before opening the URL
+	manual     string                       // manual instructions (instead of URL) e.g. neovim
+	enabled    bool                         // temporarily disable IDEs under development
 }
 
 var supportedIDEs = []ide{
@@ -27,6 +30,16 @@ var supportedIDEs = []ide{
 		binaries: []string{"code", "codium"},
 		installCmd: func(bin string) *exec.Cmd {
 			return exec.Command(bin, "--install-extension", "infracost.infracost")
+		},
+		check: func(bin string) (bool, error) {
+			var out bytes.Buffer
+			cmd := exec.Command(bin, "--list-extensions") //nolint:gosec // bin is resolved from PATH
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			if err := cmd.Run(); err != nil {
+				return false, err
+			}
+			return strings.Contains(out.String(), "infracost.infracost"), nil
 		},
 		enabled: true,
 		url:     "https://marketplace.visualstudio.com/items?itemName=infracost.infracost",
