@@ -163,7 +163,7 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Install Infracost skills for your AI coding agent",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return RunAgentSetup(cfg, scope)
+			return RunAgentSetup(cfg, scope, false)
 		},
 	}
 	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope: user (global), project, or local")
@@ -171,13 +171,14 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 }
 
 // RunAgentSetup is the core logic for `infracost agent setup`, callable from
-// the unified `infracost setup` flow (DEV-230).
-func RunAgentSetup(cfg *config.Config, scope string) error {
+// the unified `infracost setup` flow (DEV-230). When skippable is true, a
+// "Skip" option is appended to the selection list.
+func RunAgentSetup(cfg *config.Config, scope string, skippable bool) error {
 	if _, ok := validAgentScopes[scope]; !ok {
 		return fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
 	}
 
-	selected, err := selectAgent("Which AI coding agent do you use?")
+	selected, err := selectAgent("Which AI coding agent do you use?", skippable)
 	if err != nil {
 		return err
 	}
@@ -199,7 +200,7 @@ func agentRemove(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
 			}
 
-			selected, err := selectAgent("Which AI coding agent do you want to remove Infracost skills from?")
+			selected, err := selectAgent("Which AI coding agent do you want to remove Infracost skills from?", false)
 			if err != nil {
 				return err
 			}
@@ -214,7 +215,7 @@ func agentRemove(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func selectAgent(title string) (*agent, error) {
+func selectAgent(title string, skippable bool) (*agent, error) {
 	var enabledAgents []agent
 	for _, a := range supportedAgents {
 		if a.enabled {
@@ -225,6 +226,9 @@ func selectAgent(title string) (*agent, error) {
 	options := make([]huh.Option[int], len(enabledAgents))
 	for i, a := range enabledAgents {
 		options[i] = huh.NewOption(a.name, i)
+	}
+	if skippable {
+		options = append(options, huh.NewOption("Skip", -1))
 	}
 
 	var selected int
@@ -238,6 +242,10 @@ func selectAgent(title string) (*agent, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("selecting agent: %w", err)
+	}
+
+	if selected < 0 {
+		return nil, nil
 	}
 
 	result := enabledAgents[selected]

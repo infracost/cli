@@ -57,6 +57,7 @@ func run() (exitCode int) {
 		},
 	}
 
+	cmd.AddCommand(cmds.Setup(cfg))
 	cmd.AddCommand(cmds.Scan(cfg))
 	cmd.AddCommand(cmds.Policies(cfg))
 	cmd.AddCommand(cmds.CI(cfg))
