@@ -11,6 +11,7 @@ import (
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/pkg/auth"
+	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -146,7 +147,8 @@ func orgCurrent(cfg *config.Config) *cobra.Command {
 	}
 }
 
-// ensureOrgCache fetches (or loads from cache) the user's organizations.
+// ensureOrgCache always fetches fresh user/org data from the API, caching the
+// result. Falls back to stale cached data if the fetch fails.
 func ensureOrgCache(cmd *cobra.Command, cfg *config.Config) (*auth.UserCache, error) {
 	source, err := cfg.Auth.Token(cmd.Context())
 	if err != nil {
@@ -158,19 +160,16 @@ func ensureOrgCache(cmd *cobra.Command, cfg *config.Config) (*auth.UserCache, er
 		uc = nil
 	}
 
-	if uc == nil || len(uc.Organizations) == 0 || uc.IsStale() {
-		client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, ""))
-		fresh, fetchErr := fetchAndCacheUser(cmd.Context(), cfg, client)
-		if fetchErr != nil {
-			if uc != nil && len(uc.Organizations) > 0 {
-				return uc, nil
-			}
-			return nil, fmt.Errorf("fetching user data: %w", fetchErr)
+	client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, ""))
+	fresh, fetchErr := fetchAndCacheUser(cmd.Context(), cfg, client)
+	if fetchErr != nil {
+		if uc != nil && len(uc.Organizations) > 0 {
+			logging.WithError(fetchErr).Msg("failed to refresh org cache, using stale data")
+			return uc, nil
 		}
-		return fresh, nil
+		return nil, fmt.Errorf("fetching user data: %w", fetchErr)
 	}
-
-	return uc, nil
+	return fresh, nil
 }
 
 type orgSource int

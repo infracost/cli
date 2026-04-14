@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +33,12 @@ func RunLogin(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	fmt.Println("Retrieved valid access token.")
+
+	// Always fetch fresh user/org data on login, bypassing the staleness check.
+	client := cfg.Dashboard.Client(api.Client(ctx, source, ""))
+	if _, err := fetchAndCacheUser(ctx, cfg, client); err != nil {
+		logging.WithError(err).Msg("failed to refresh user cache after login")
+	}
 
 	return resolveOrg(ctx, cfg, source)
 }
