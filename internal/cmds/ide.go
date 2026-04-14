@@ -1,9 +1,11 @@
 package cmds
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
@@ -13,12 +15,13 @@ import (
 
 type ide struct {
 	name       string
-	binaries   []string // CLI binaries to look for on PATH
-	installCmd func(bin string) *exec.Cmd
-	url        string // marketplace/install URL fallback
-	hint       string // message shown before opening the URL
-	manual     string // manual instructions (instead of URL) e.g. neovim
-	enabled    bool   // temporarily disable IDEs under development
+	binaries   []string                    // CLI binaries to look for on PATH
+	installCmd func(bin string) *exec.Cmd  // CLI-based install
+	check      func(bin string) (bool, error) // returns true if infracost extension is installed
+	url        string                       // marketplace/install URL fallback
+	hint       string                       // message shown before opening the URL
+	manual     string                       // manual instructions (instead of URL) e.g. neovim
+	enabled    bool                         // temporarily disable IDEs under development
 }
 
 var supportedIDEs = []ide{
@@ -27,6 +30,16 @@ var supportedIDEs = []ide{
 		binaries: []string{"code", "codium"},
 		installCmd: func(bin string) *exec.Cmd {
 			return exec.Command(bin, "--install-extension", "infracost.infracost")
+		},
+		check: func(bin string) (bool, error) {
+			var out bytes.Buffer
+			cmd := exec.Command(bin, "--list-extensions") //nolint:gosec // bin is resolved from PATH
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			if err := cmd.Run(); err != nil {
+				return false, err
+			}
+			return strings.Contains(out.String(), "infracost.infracost"), nil
 		},
 		enabled: true,
 		url:     "https://marketplace.visualstudio.com/items?itemName=infracost.infracost",
@@ -67,14 +80,15 @@ func ideSetup(_ *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Install the Infracost extension for your IDE",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return RunIDESetup()
+			return RunIDESetup(false)
 		},
 	}
 }
 
 // RunIDESetup is the core logic for `infracost ide setup`, callable from the
-// unified `infracost setup` flow (DEV-230).
-func RunIDESetup() error {
+// unified `infracost setup` flow (DEV-230). When skippable is true, a "Skip"
+// option is appended to the selection list.
+func RunIDESetup(skippable bool) error {
 	var enabledIDEs []ide
 	for _, ide := range supportedIDEs {
 		if ide.enabled {
@@ -85,6 +99,9 @@ func RunIDESetup() error {
 	options := make([]huh.Option[int], len(enabledIDEs))
 	for i, ide := range enabledIDEs {
 		options[i] = huh.NewOption(ide.name, i)
+	}
+	if skippable {
+		options = append(options, huh.NewOption("Skip", -1))
 	}
 
 	var selected int
@@ -98,6 +115,10 @@ func RunIDESetup() error {
 			return nil
 		}
 		return fmt.Errorf("selecting IDE: %w", err)
+	}
+
+	if selected < 0 {
+		return nil
 	}
 
 	return installIDE(enabledIDEs[selected])

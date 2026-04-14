@@ -26,29 +26,58 @@ const (
 	repoName  = "cli"
 )
 
-func Update(ctx context.Context) error {
+// VersionInfo holds the result of a version check against the latest release.
+type VersionInfo struct {
+	Current  string
+	Latest   string
+	UpToDate bool
+}
 
+// CheckLatestVersion fetches the latest GitHub release and compares it with
+// the running version. It does not download or install anything.
+func CheckLatestVersion(ctx context.Context) (VersionInfo, error) {
 	currentVersion, _ := semver.NewVersion(version.Version)
 
 	client := newGitHubClient()
 
 	release, _, err := client.Repositories.GetLatestRelease(ctx, repoOwner, repoName)
 	if err != nil {
-		return fmt.Errorf("failed to fetch latest release: %w", err)
+		return VersionInfo{}, fmt.Errorf("failed to fetch latest release: %w", err)
 	}
 
 	tag := release.GetTagName()
 	latestVersion, err := semver.NewVersion(tag)
 	if err != nil {
-		return fmt.Errorf("cannot parse release version %q: %w", tag, err)
+		return VersionInfo{}, fmt.Errorf("cannot parse release version %q: %w", tag, err)
 	}
 
-	if currentVersion != nil && !latestVersion.GreaterThan(currentVersion) {
-		fmt.Printf("Already up to date (v%s).\n", currentVersion)
+	upToDate := currentVersion != nil && !latestVersion.GreaterThan(currentVersion)
+	return VersionInfo{
+		Current:  version.Version,
+		Latest:   fmt.Sprintf("v%s", latestVersion),
+		UpToDate: upToDate,
+	}, nil
+}
+
+func Update(ctx context.Context) error {
+	info, err := CheckLatestVersion(ctx)
+	if err != nil {
+		return err
+	}
+
+	if info.UpToDate {
+		fmt.Printf("Already up to date (%s).\n", info.Current)
 		return nil
 	}
 
+	latestVersion, _ := semver.NewVersion(info.Latest)
 	fmt.Printf("Updating %s → v%s...\n", version.Version, latestVersion)
+
+	client := newGitHubClient()
+	release, _, err := client.Repositories.GetLatestRelease(ctx, repoOwner, repoName)
+	if err != nil {
+		return fmt.Errorf("failed to fetch latest release: %w", err)
+	}
 
 	assetName := expectedAssetName(latestVersion.String())
 	var assetID int64
