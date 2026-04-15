@@ -27,11 +27,18 @@ var detailColumns = []string{"kind", "resource", "file", "message"}
 
 func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 	hasPolicyDim := slices.Contains(opts.GroupBy, "policy")
+	hasBudgetDim := slices.Contains(opts.GroupBy, "budget")
+	hasGuardrailDim := slices.Contains(opts.GroupBy, "guardrail")
 
 	var rows []tableRow
-	if hasPolicyDim {
+	switch {
+	case hasBudgetDim:
+		rows = collectBudgetRows(data)
+	case hasGuardrailDim:
+		rows = collectGuardrailRows(data)
+	case hasPolicyDim:
 		rows = collectPolicyRows(data)
-	} else {
+	default:
 		rows = collectResourceRows(data)
 	}
 
@@ -40,7 +47,7 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 	}
 
 	dims := opts.GroupBy
-	aggregate := !hasPolicyDim
+	aggregate := !hasPolicyDim && !hasBudgetDim && !hasGuardrailDim
 
 	if aggregate {
 		rows = aggregateRows(rows, dims)
@@ -70,14 +77,26 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 	}
 
 	caser := cases.Title(language.English)
-	headers := make([]string, 0, len(dims)+len(detailColumns)+2)
+
+	// Determine columns based on the view type.
+	var extraCols []string
+	switch {
+	case hasBudgetDim:
+		extraCols = []string{"status", "actual spend", "limit", "message"}
+	case hasGuardrailDim:
+		extraCols = []string{"status", "Monthly Cost"}
+	case hasPolicyDim:
+		extraCols = detailColumns
+	}
+
+	headers := make([]string, 0, len(dims)+len(extraCols)+2)
 	for _, dim := range dims {
 		headers = append(headers, caser.String(dim))
 	}
 	if aggregate {
 		headers = append(headers, "Count", "Monthly Cost")
 	} else {
-		for _, col := range detailColumns {
+		for _, col := range extraCols {
 			headers = append(headers, caser.String(col))
 		}
 	}
@@ -91,13 +110,35 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 			if aggregate {
 				vals = append(vals, fmt.Sprintf("%d", r.count()), "$"+r.Cost.StringFixed(2))
 			} else {
-				for _, col := range detailColumns {
-					vals = append(vals, r.Columns[col])
+				for _, col := range extraCols {
+					if col == "Monthly Cost" && r.Cost != nil {
+						vals = append(vals, "$"+r.Cost.StringFixed(2))
+					} else {
+						vals = append(vals, r.Columns[col])
+					}
 				}
 			}
 			add(vals)
 		}
 	})
+}
+
+func WriteGuardrailDetail(w io.Writer, data *format.Output, opts Options) error {
+	for _, gr := range data.GuardrailResults {
+		if matchesPolicy(gr.GuardrailName, gr.GuardrailID, opts.Guardrail) {
+			return writeGuardrailDetail(w, data.Currency, gr)
+		}
+	}
+	return fmt.Errorf("guardrail %q not found", opts.Guardrail)
+}
+
+func WriteBudgetDetail(w io.Writer, data *format.Output, opts Options) error {
+	for _, br := range data.BudgetResults {
+		if matchesPolicy(br.BudgetName, br.BudgetID, opts.Budget) {
+			return writeBudgetDetail(w, data, br)
+		}
+	}
+	return fmt.Errorf("budget %q not found", opts.Budget)
 }
 
 func WritePolicyDetail(w io.Writer, data *format.Output, opts Options) error {
@@ -169,20 +210,57 @@ func collectPolicyRows(data *format.Output) []tableRow {
 		}
 	}
 
+	return rows
+}
+
+func collectGuardrailRows(data *format.Output) []tableRow {
+	rows := make([]tableRow, 0, len(data.GuardrailResults))
 	for _, gr := range data.GuardrailResults {
-		if !gr.Triggered {
-			continue
+		status := "not triggered"
+		if gr.Triggered {
+			status = "TRIGGERED"
 		}
 		rows = append(rows, tableRow{
 			Columns: map[string]string{
-				"policy": gr.GuardrailName,
-				"kind":   "guardrail",
+				"guardrail": gr.GuardrailName,
+				"status":    status,
 			},
 			Cost: gr.TotalMonthlyCost,
 		})
 	}
-
 	return rows
+}
+
+func collectBudgetRows(data *format.Output) []tableRow {
+	rows := make([]tableRow, 0, len(data.BudgetResults))
+	for _, br := range data.BudgetResults {
+		status := "under"
+		if br.OverBudget {
+			status = "OVER"
+		}
+		row := tableRow{
+			Columns: map[string]string{
+				"budget":       br.BudgetName,
+				"status":       status,
+				"limit":        "$" + br.Amount.StringFixed(2),
+				"actual spend": "$" + br.CurrentCost.StringFixed(2),
+			},
+			Cost: br.CurrentCost,
+		}
+		if br.CustomOverrunMessage != "" {
+			row.Columns["message"] = br.CustomOverrunMessage
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func formatBudgetTagScope(tags []format.BudgetTagOutput) string {
+	parts := make([]string, len(tags))
+	for i, t := range tags {
+		parts[i] = fmt.Sprintf("%s=%s", t.Key, t.Value)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func filterRowsByResource(rows []tableRow, resource string) []tableRow {
@@ -415,6 +493,185 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 	}
 
 	return fmt.Errorf("resource %q not found for policy %q", opts.Resource, opts.Policy)
+}
+
+func writeGuardrailDetail(w io.Writer, currency string, gr format.GuardrailOutput) error {
+	_, _ = fmt.Fprintf(w, "Guardrail: %s\n", gr.GuardrailName)
+	if gr.TotalMonthlyCost != nil {
+		_, _ = fmt.Fprintf(w, "Total monthly cost: %s%s\n", currencySymbol(currency), gr.TotalMonthlyCost.StringFixed(2))
+	}
+	if gr.Triggered {
+		_, _ = fmt.Fprintln(w, "Status: TRIGGERED")
+	} else {
+		_, _ = fmt.Fprintln(w, "Status: not triggered")
+	}
+	return nil
+}
+
+func writeBudgetDetail(w io.Writer, data *format.Output, br format.BudgetOutput) error {
+	sym := currencySymbol(data.Currency)
+	_, _ = fmt.Fprintf(w, "Budget: %s\n", br.BudgetName)
+	if len(br.Tags) > 0 {
+		_, _ = fmt.Fprintf(w, "Scope: %s\n", formatBudgetTagScope(br.Tags))
+	}
+	_, _ = fmt.Fprintf(w, "Limit: %s%s\n", sym, br.Amount.StringFixed(2))
+	_, _ = fmt.Fprintf(w, "Actual spend: %s%s\n", sym, br.CurrentCost.StringFixed(2))
+
+	if br.OverBudget {
+		overBy := br.CurrentCost.Sub(br.Amount)
+		_, _ = fmt.Fprintf(w, "Status: OVER by %s%s\n", sym, overBy.StringFixed(2))
+	} else {
+		remaining := br.Amount.Sub(br.CurrentCost)
+		pct := remaining.Div(br.Amount).Mul(rat.New(100))
+		_, _ = fmt.Fprintf(w, "Status: %s%s remaining (%s%% left)\n", sym, remaining.StringFixed(2), pct.StringFixed(1))
+	}
+
+	if br.CustomOverrunMessage != "" {
+		_, _ = fmt.Fprintf(w, "Message: %s\n", br.CustomOverrunMessage)
+	}
+
+	// Show resources in this scan that match the budget's tags.
+	matching := collectMatchingResources(data, br.Tags)
+	if len(matching) > 0 {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "Resources in this scan matching budget tags:")
+		_ = writeTable(w, []string{"Type", "Count", "Monthly Cost"}, func(add func([]string)) {
+			for _, m := range matching {
+				add([]string{m.resourceType, fmt.Sprintf("%d", m.count), sym + m.cost.StringFixed(2)})
+			}
+		})
+	}
+
+	// Show FinOps policy violations on matching resources.
+	savings := collectBudgetSavings(data, br.Tags)
+	if len(savings) > 0 {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "FinOps policy violations on matching resources:")
+		for _, s := range savings {
+			_, _ = fmt.Fprintf(w, "  %s: up to %s%s/mo (%d %s)\n", s.policyName, sym, s.savings.StringFixed(2), s.resourceCount, pluralize("resource", s.resourceCount))
+		}
+	}
+
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Actual spend is based on cloud billing data for all resources")
+	_, _ = fmt.Fprintln(w, "matching this budget's tags across the organization.")
+
+	return nil
+}
+
+type matchingResourceGroup struct {
+	resourceType string
+	count        int
+	cost         *rat.Rat
+}
+
+func collectMatchingResources(data *format.Output, budgetTags []format.BudgetTagOutput) []matchingResourceGroup {
+	groups := map[string]*matchingResourceGroup{}
+	var order []string
+
+	for _, p := range data.Projects {
+		for _, r := range p.Resources {
+			if !resourceMatchesBudgetTags(r, budgetTags) {
+				continue
+			}
+			cost := ResourceCost(&r)
+			if g, ok := groups[r.Type]; ok {
+				g.count++
+				g.cost = g.cost.Add(cost)
+			} else {
+				groups[r.Type] = &matchingResourceGroup{resourceType: r.Type, count: 1, cost: cost}
+				order = append(order, r.Type)
+			}
+		}
+	}
+
+	result := make([]matchingResourceGroup, 0, len(order))
+	for _, t := range order {
+		result = append(result, *groups[t])
+	}
+	return result
+}
+
+type budgetSaving struct {
+	policyName    string
+	savings       *rat.Rat
+	resourceCount int
+}
+
+func collectBudgetSavings(data *format.Output, budgetTags []format.BudgetTagOutput) []budgetSaving {
+	// Build set of resource names that match the budget tags.
+	matchingNames := map[string]bool{}
+	for _, p := range data.Projects {
+		for _, r := range p.Resources {
+			if resourceMatchesBudgetTags(r, budgetTags) {
+				matchingNames[r.Name] = true
+			}
+		}
+	}
+
+	if len(matchingNames) == 0 {
+		return nil
+	}
+
+	// Find finops savings on those resources.
+	var results []budgetSaving
+	for _, p := range data.Projects {
+		for _, f := range p.FinopsResults {
+			savings := rat.Zero
+			count := 0
+			for _, fr := range f.FailingResources {
+				if !matchingNames[fr.Name] {
+					continue
+				}
+				count++
+				for _, iss := range fr.Issues {
+					if iss.MonthlySavings != nil && iss.MonthlySavings.GreaterThanZero() {
+						savings = savings.Add(iss.MonthlySavings)
+					}
+				}
+			}
+			if count > 0 && savings.GreaterThanZero() {
+				results = append(results, budgetSaving{
+					policyName:    f.PolicyName,
+					savings:       savings,
+					resourceCount: count,
+				})
+			}
+		}
+	}
+	return results
+}
+
+func resourceMatchesBudgetTags(r format.ResourceOutput, budgetTags []format.BudgetTagOutput) bool {
+	if len(r.Tags) == 0 {
+		return false
+	}
+	for _, bt := range budgetTags {
+		if v, ok := r.Tags[bt.Key]; !ok || v != bt.Value {
+			return false
+		}
+	}
+	return true
+}
+
+func pluralize(word string, count int) string {
+	if count == 1 {
+		return word
+	}
+	return word + "s"
+}
+
+func currencySymbol(code string) string {
+	switch code {
+	case "USD":
+		return "$"
+	case "EUR":
+		return "€"
+	case "GBP":
+		return "£"
+	default:
+		return code + " "
+	}
 }
 
 func formatFileLoc(filename string, line int) string {

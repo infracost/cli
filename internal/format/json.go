@@ -15,6 +15,7 @@ type Output struct {
 	Currency         string             `json:"currency"`
 	Projects         []ProjectOutput    `json:"projects"`
 	GuardrailResults []GuardrailOutput  `json:"guardrail_results,omitempty"`
+	BudgetResults    []BudgetOutput     `json:"budget_results,omitempty"`
 
 	// Fields below are not serialized to JSON but carried through for event
 	// metadata.
@@ -46,6 +47,7 @@ type ResourceOutput struct {
 	IsFree              bool                  `json:"is_free"`
 	CostComponents      []CostComponentOutput `json:"cost_components,omitempty"`
 	Subresources        []ResourceOutput      `json:"subresources,omitempty"`
+	Tags                map[string]string     `json:"tags,omitempty"`
 	SupportsTags        bool                  `json:"supports_tags,omitempty"`
 	SupportsDefaultTags bool                  `json:"supports_default_tags,omitempty"`
 	Metadata            ResourceMetadata      `json:"metadata"`
@@ -135,6 +137,21 @@ type GuardrailOutput struct {
 	TotalMonthlyCost *rat.Rat `json:"total_monthly_cost,omitempty"`
 }
 
+type BudgetTagOutput struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type BudgetOutput struct {
+	BudgetID             string            `json:"budget_id"`
+	BudgetName           string            `json:"budget_name"`
+	Tags                 []BudgetTagOutput `json:"tags"`
+	Amount               *rat.Rat          `json:"amount"`
+	CurrentCost          *rat.Rat          `json:"current_cost"`
+	OverBudget           bool              `json:"over_budget"`
+	CustomOverrunMessage string            `json:"custom_overrun_message,omitempty"`
+}
+
 // ToOutput converts a Result into an Output suitable for JSON serialization.
 func ToOutput(result *Result) Output {
 	projects := make([]ProjectOutput, 0, len(result.Projects))
@@ -153,10 +170,28 @@ func ToOutput(result *Result) Output {
 		})
 	}
 
+	budgetResults := make([]BudgetOutput, 0, len(result.BudgetResults))
+	for _, br := range result.BudgetResults {
+		tags := make([]BudgetTagOutput, 0, len(br.Tags))
+		for _, t := range br.Tags {
+			tags = append(tags, BudgetTagOutput{Key: t.Key, Value: t.Value})
+		}
+		budgetResults = append(budgetResults, BudgetOutput{
+			BudgetID:             br.BudgetID,
+			BudgetName:           br.BudgetName,
+			Tags:                 tags,
+			Amount:               br.Amount,
+			CurrentCost:          br.CurrentCost,
+			OverBudget:           br.CurrentCost.GreaterThan(br.Amount),
+			CustomOverrunMessage: br.CustomOverrunMessage,
+		})
+	}
+
 	return Output{
 		Currency:               result.Config.Currency,
 		Projects:               projects,
 		GuardrailResults:       guardrailResults,
+		BudgetResults:          budgetResults,
 		projectTypes:           projectTypes,
 		estimatedUsageCounts:   result.EstimatedUsageCounts,
 		unestimatedUsageCounts: result.UnestimatedUsageCounts,
@@ -254,11 +289,20 @@ func convertResource(r *provider.Resource) ResourceOutput {
 		}
 	}
 
+	var tags map[string]string
+	if r.Tagging != nil && len(r.Tagging.Tags) > 0 {
+		tags = make(map[string]string, len(r.Tagging.Tags))
+		for _, t := range r.Tagging.Tags {
+			tags[t.Key] = t.Value
+		}
+	}
+
 	return ResourceOutput{
 		Name:                r.Name,
 		Type:                r.Type,
 		CostComponents:      costs,
 		Subresources:        subs,
+		Tags:                tags,
 		IsSupported:         r.IsSupported,
 		IsFree:              r.IsFree,
 		SupportsTags:        r.Tagging != nil && r.Tagging.SupportsTags,

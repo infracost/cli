@@ -17,6 +17,7 @@ import (
 	"github.com/infracost/cli/pkg/plugins"
 	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	repoconfig "github.com/infracost/config"
+	goprotoevent "github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -285,6 +286,24 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			})
 		}
 		result.GuardrailResults = pkgscanner.EvaluateGuardrails(guardrails, nil, headProjects)
+	}
+
+	// Unmarshal budgets and evaluate against scan resources.
+	var budgets []*event.Budget
+	for _, raw := range runParameters.Budgets {
+		b := new(event.Budget)
+		if err := pj.Unmarshal(raw, b); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal budget: %w", err)
+		}
+		budgets = append(budgets, b)
+	}
+
+	if len(budgets) > 0 {
+		var costInfos []goprotoevent.ResourceCostInfo
+		for _, p := range result.Projects {
+			costInfos = append(costInfos, pkgscanner.ResourceCostInfos(p.Resources)...)
+		}
+		result.BudgetResults = goprotoevent.Budgets(budgets).Evaluate(costInfos)
 	}
 
 	return &result, nil
