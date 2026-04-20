@@ -383,7 +383,7 @@ func extractZipEntry(zf *zip.File, destPath string) error {
 	return out.Close()
 }
 
-// renameWithRetry attempts os.Rename up to 5 times with 500ms backoff.
+// renameWithRetry attempts os.Rename up to 5 times with linear backoff (500ms, 1s, 1.5s, 2s).
 // On Windows, antivirus software can briefly lock a newly written executable
 // file while scanning it, causing the rename to fail with "access denied" or
 // "the process cannot access the file because it is being used by another
@@ -400,7 +400,7 @@ func renameWithRetry(src, dst string) error {
 		}
 		lastErr = err
 		if i < maxAttempts-1 {
-			time.Sleep(retryDelay)
+			time.Sleep(retryDelay * time.Duration(i+1))
 		}
 	}
 	return lastErr
