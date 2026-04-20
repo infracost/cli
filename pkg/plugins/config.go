@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/logging"
@@ -210,7 +211,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 		return "", fmt.Errorf("failed to make plugin binary executable: %w", err)
 	}
 
-	if err := os.Rename(tmpBinary, binaryPath); err != nil {
+	if err := renameWithRetry(tmpBinary, binaryPath); err != nil {
 		return "", fmt.Errorf("failed to install plugin binary: %w", err)
 	}
 
@@ -380,6 +381,29 @@ func extractZipEntry(zf *zip.File, destPath string) error {
 	}
 
 	return out.Close()
+}
+
+// renameWithRetry attempts os.Rename up to 5 times with linear backoff (500ms, 1s, 1.5s, 2s).
+// On Windows, antivirus software can briefly lock a newly written executable
+// file while scanning it, causing the rename to fail with "access denied" or
+// "the process cannot access the file because it is being used by another
+// process". Retrying a few times gives the scanner time to finish.
+func renameWithRetry(src, dst string) error {
+	const maxAttempts = 5
+	const retryDelay = 500 * time.Millisecond
+
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		err := os.Rename(src, dst)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if i < maxAttempts-1 {
+			time.Sleep(retryDelay * time.Duration(i+1))
+		}
+	}
+	return lastErr
 }
 
 func defaultPluginCachePath() string {
