@@ -20,6 +20,7 @@ import (
 
 func healthTestConfig(t *testing.T, mockClient *mocks.MockClient) *config.Config {
 	t.Helper()
+	nonInteractiveStdin(t)
 	cfg := &config.Config{
 		Dashboard: dashboard.Config{
 			Client: func(_ *http.Client) dashboard.Client {
@@ -96,6 +97,7 @@ func TestHealth_NoCredentials(t *testing.T) {
 }
 
 func TestHealth_AuthenticationToken(t *testing.T) {
+	nonInteractiveStdin(t)
 	mockClient := mocks.NewMockClient(t)
 	mockClient.EXPECT().
 		CurrentUser(mock.Anything).

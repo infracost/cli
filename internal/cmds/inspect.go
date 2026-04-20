@@ -19,6 +19,22 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "inspect [path]",
 		Short: "Inspect cached analysis results with filtering and grouping",
+		PreRunE: func(_ *cobra.Command, _ []string) error {
+			count := 0
+			if opts.Policy != "" {
+				count++
+			}
+			if opts.Budget != "" {
+				count++
+			}
+			if opts.Guardrail != "" {
+				count++
+			}
+			if count > 1 {
+				return fmt.Errorf("--policy, --budget, and --guardrail are mutually exclusive")
+			}
+			return nil
+		},
 		RunE: func(_ *cobra.Command, args []string) error {
 			var data *format.Output
 			var err error
@@ -55,6 +71,8 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.Summary, "summary", false, "Show summary overview")
 	cmd.Flags().StringSliceVar(&opts.GroupBy, "group-by", nil, "Group by: type, provider, project, policy (comma-separated or repeated)")
 	cmd.Flags().StringVar(&opts.Policy, "policy", "", "Filter by policy name or slug")
+	cmd.Flags().StringVar(&opts.Budget, "budget", "", "Show budget detail by name or ID")
+	cmd.Flags().StringVar(&opts.Guardrail, "guardrail", "", "Show guardrail detail by name or ID")
 	cmd.Flags().StringVar(&opts.Resource, "resource", "", "Filter by resource address")
 	cmd.Flags().StringVar(&opts.Provider, "provider", "", "Filter by provider (aws, google, azurerm)")
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Filter by project name")
