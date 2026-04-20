@@ -60,6 +60,7 @@ func run() (exitCode int) {
 	cmd.AddCommand(cmds.Setup(cfg))
 	cmd.AddCommand(cmds.Scan(cfg))
 	cmd.AddCommand(cmds.Policies(cfg))
+	cmd.AddCommand(cmds.Guardrails(cfg))
 	cmd.AddCommand(cmds.CI(cfg))
 	cmd.AddCommand(cmds.Agent(cfg))
 	cmd.AddCommand(cmds.IDE(cfg))
@@ -71,6 +72,7 @@ func run() (exitCode int) {
 	cmd.AddCommand(cmds.WhoAmI(cfg))
 	cmd.AddCommand(cmds.Update(cfg))
 	cmd.AddCommand(cmds.Version(cfg))
+	cmd.AddCommand(cmds.Health(cfg))
 
 	diags.Merge(process.PreProcess(cfg, cmd.PersistentFlags()))
 	if diags.Critical().Len() > 0 {

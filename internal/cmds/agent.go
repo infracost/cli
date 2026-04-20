@@ -25,6 +25,7 @@ type agent struct {
 	binaries []string                       // CLI binaries to look for on PATH
 	setup    func(bin, scope string) error  // CLI-based setup
 	teardown func(bin, scope string) error  // CLI-based teardown
+	check    func(bin string) (bool, error) // returns true if infracost skills are installed
 	manual   string                         // manual setup instructions
 	remove   string                         // manual remove instructions
 	url      string                         // fallback URL to open
@@ -46,6 +47,17 @@ func pluginSetup(bin, marketplace, plugin, scope string) error {
 	fmt.Println("✔  Plugin installed")
 
 	return nil
+}
+
+func pluginCheck(bin, name string) (bool, error) {
+	var out bytes.Buffer
+	cmd := exec.Command(bin, "plugin", "list") //nolint:gosec // bin is user-configured or looked up on PATH
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return false, err
+	}
+	return strings.Contains(out.String(), name), nil
 }
 
 func pluginTeardown(bin, marketplaceName, plugin, scope string) error {
@@ -87,6 +99,9 @@ var supportedAgents = []agent{
 		teardown: func(bin, scope string) error {
 			return pluginTeardown(bin, infracostMarketplaceName, infracostPlugin, scope)
 		},
+		check: func(bin string) (bool, error) {
+			return pluginCheck(bin, "infracost")
+		},
 		enabled: true,
 	},
 	{
@@ -97,6 +112,9 @@ var supportedAgents = []agent{
 		},
 		teardown: func(bin, scope string) error {
 			return pluginTeardown(bin, infracostMarketplaceName, infracostPlugin, scope)
+		},
+		check: func(bin string) (bool, error) {
+			return pluginCheck(bin, "infracost")
 		},
 		enabled: true,
 	},
