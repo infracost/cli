@@ -12,8 +12,8 @@ require (
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.7.0
 	github.com/infracost/config v0.5.0
-	github.com/infracost/go-proto v0.12.1-0.20260415195028-660fcf52a50b
-	github.com/infracost/proto v1.29.1-0.20260415193526-63cb3df7afe9
+	github.com/infracost/go-proto v1.13.0
+	github.com/infracost/proto v1.34.0
 	github.com/liamg/tml v0.7.1
 	github.com/maruel/panicparse/v2 v2.5.0
 	github.com/rs/zerolog v1.34.0

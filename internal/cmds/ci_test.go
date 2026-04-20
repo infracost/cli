@@ -26,6 +26,7 @@ import (
 // (not AuthenticationToken), since ci setup blocks authentication tokens.
 func ciTestConfig(t *testing.T, mockClient *mocks.MockClient) *config.Config {
 	t.Helper()
+	nonInteractiveStdin(t)
 	cfg := &config.Config{
 		Dashboard: dashboard.Config{
 			Client: func(_ *http.Client) dashboard.Client {
@@ -41,6 +42,7 @@ func ciTestConfig(t *testing.T, mockClient *mocks.MockClient) *config.Config {
 // for testing that ci setup rejects it.
 func ciTestConfigWithAuthToken(t *testing.T) *config.Config {
 	t.Helper()
+	nonInteractiveStdin(t)
 	return &config.Config{
 		Auth: auth.Config{
 			ExternalConfig: auth.ExternalConfig{
@@ -48,6 +50,25 @@ func ciTestConfigWithAuthToken(t *testing.T) *config.Config {
 			},
 		},
 	}
+}
+
+// nonInteractiveStdin replaces os.Stdin with a pipe whose write end is
+// immediately closed, so resolveOrg's TTY check sees no char device and
+// skips the interactive org picker. Without this, `go test` from a real
+// terminal hangs on multi-org prompts.
+func nonInteractiveStdin(t *testing.T) {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	old := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = old
+		_ = r.Close()
+	})
 }
 
 func initGitRepo(t *testing.T, remoteURL string) string {
