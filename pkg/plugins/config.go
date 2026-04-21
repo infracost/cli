@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/logging"
@@ -152,7 +153,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 
 	p, ok := manifest.Plugins[plugin]
 	if !ok {
-		return "", fmt.Errorf("plugin %q not found in manifest", plugin)
+		return "", fmt.Errorf("plugin %q not found in manifest at %s", plugin, c.ManifestURL)
 	}
 
 	if len(wantVersion) == 0 {
@@ -164,12 +165,12 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 
 	version, ok := p.Versions[wantVersion]
 	if !ok {
-		return "", fmt.Errorf("plugin %q version %q not found in manifest", plugin, wantVersion)
+		return "", fmt.Errorf("plugin %q version %q not found in manifest (omit the version to use the latest)", plugin, wantVersion)
 	}
 
 	artifact, ok := version.Artifacts[platform]
 	if !ok {
-		return "", fmt.Errorf("plugin %q version %q has no artifact for %s", plugin, wantVersion, platform)
+		return "", fmt.Errorf("plugin %q version %q is not available for your platform (%s)", plugin, wantVersion, platform)
 	}
 
 	binaryPath := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
@@ -188,7 +189,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 	defer func() { _ = os.Remove(archivePath) }()
 
 	if err := os.MkdirAll(filepath.Dir(binaryPath), 0750); err != nil {
-		return "", fmt.Errorf("failed to create plugin cache directory: %w", err)
+		return "", fmt.Errorf("failed to create plugin cache directory: %w (use INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY to change the location)", err)
 	}
 
 	tmpBinary := binaryPath + ".tmp"
@@ -210,7 +211,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 		return "", fmt.Errorf("failed to make plugin binary executable: %w", err)
 	}
 
-	if err := os.Rename(tmpBinary, binaryPath); err != nil {
+	if err := renameWithRetry(tmpBinary, binaryPath); err != nil {
 		return "", fmt.Errorf("failed to install plugin binary: %w", err)
 	}
 
@@ -232,7 +233,7 @@ func (c *Config) loadManifest() (*Manifest, error) {
 	}()
 
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch plugin manifest: %s", response.Status)
+		return nil, fmt.Errorf("failed to fetch plugin manifest (%s): %s (check your internet connection, or use INFRACOST_CLI_PLUGIN_MANIFEST_URL to override the manifest endpoint)", c.ManifestURL, response.Status)
 	}
 
 	var manifest Manifest
@@ -289,7 +290,7 @@ func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
 		actualSHA := hex.EncodeToString(hasher.Sum(nil))
 		if actualSHA != expectedSHA {
 			_ = os.Remove(tmpPath) //nolint:gosec // G703: path is from os.CreateTemp
-			return "", fmt.Errorf("SHA256 mismatch: expected %s, got %s", expectedSHA, actualSHA)
+			return "", fmt.Errorf("SHA256 mismatch: expected %s, got %s (the download may be corrupted, try again)", expectedSHA, actualSHA)
 		}
 	}
 
@@ -380,6 +381,29 @@ func extractZipEntry(zf *zip.File, destPath string) error {
 	}
 
 	return out.Close()
+}
+
+// renameWithRetry attempts os.Rename up to 5 times with linear backoff (500ms, 1s, 1.5s, 2s).
+// On Windows, antivirus software can briefly lock a newly written executable
+// file while scanning it, causing the rename to fail with "access denied" or
+// "the process cannot access the file because it is being used by another
+// process". Retrying a few times gives the scanner time to finish.
+func renameWithRetry(src, dst string) error {
+	const maxAttempts = 5
+	const retryDelay = 500 * time.Millisecond
+
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		err := os.Rename(src, dst)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if i < maxAttempts-1 {
+			time.Sleep(retryDelay * time.Duration(i+1))
+		}
+	}
+	return lastErr
 }
 
 func defaultPluginCachePath() string {

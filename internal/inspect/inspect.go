@@ -8,8 +8,10 @@ import (
 
 type Options struct {
 	Summary   bool
-	GroupBy   []string // type, provider, project, policy
+	GroupBy   []string // type, provider, project, policy, budget, guardrail
 	Policy    string   // filter to a specific policy name/slug
+	Budget    string   // filter to a specific budget name/id
+	Guardrail string   // filter to a specific guardrail name/id
 	Resource  string   // filter to a specific resource address
 	Provider  string
 	Project   string
@@ -21,6 +23,14 @@ type Options struct {
 
 func Run(w io.Writer, data *format.Output, opts Options) error {
 	filtered := Filter(data, opts)
+
+	if opts.Budget != "" {
+		return WriteBudgetDetail(w, filtered, opts)
+	}
+
+	if opts.Guardrail != "" {
+		return WriteGuardrailDetail(w, filtered, opts)
+	}
 
 	if opts.Policy != "" {
 		return WritePolicyDetail(w, filtered, opts)

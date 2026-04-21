@@ -57,16 +57,22 @@ func run() (exitCode int) {
 		},
 	}
 
+	cmd.AddCommand(cmds.Setup(cfg))
 	cmd.AddCommand(cmds.Scan(cfg))
 	cmd.AddCommand(cmds.Policies(cfg))
-	cmd.AddCommand(cmds.Claude(cfg))
+	cmd.AddCommand(cmds.Guardrails(cfg))
+	cmd.AddCommand(cmds.CI(cfg))
+	cmd.AddCommand(cmds.Agent(cfg))
 	cmd.AddCommand(cmds.IDE(cfg))
 	cmd.AddCommand(cmds.Inspect(cfg))
 	cmd.AddCommand(cmds.Login(cfg))
 	cmd.AddCommand(cmds.Logout(cfg))
+	cmd.AddCommand(cmds.Org(cfg))
 	cmd.AddCommand(cmds.Price(cfg))
+	cmd.AddCommand(cmds.WhoAmI(cfg))
 	cmd.AddCommand(cmds.Update(cfg))
 	cmd.AddCommand(cmds.Version(cfg))
+	cmd.AddCommand(cmds.Health(cfg))
 
 	diags.Merge(process.PreProcess(cfg, cmd.PersistentFlags()))
 	if diags.Critical().Len() > 0 {
@@ -79,7 +85,7 @@ func run() (exitCode int) {
 	}
 
 	if err := cmd.Execute(); err != nil {
-		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_UNSPECIFIED, err))
+		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_FAILED_OPERATION, err))
 	}
 	format.Diagnostics(diags)
 	if diags.Critical().Len() > 0 {

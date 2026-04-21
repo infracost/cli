@@ -6,11 +6,13 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/pkg/logging"
+	"github.com/infracost/go-proto/pkg/flag"
 	"github.com/infracost/cli/pkg/plugins"
 	repoconfig "github.com/infracost/config"
 	"github.com/infracost/go-proto/pkg/diagnostic"
@@ -27,13 +29,14 @@ import (
 
 // ProjectResult holds the outputs for a single project scan.
 type ProjectResult struct {
-	Name             string
-	Config           *repoconfig.Project
-	TotalMonthlyCost *rat.Rat
-	Resources        []*provider.Resource
-	FinopsResults    []*provider.FinopsPolicyResult
-	TagPolicyResults []goprotoevent.TaggingPolicyResult
-	Diagnostics      []*diagnostic.Diagnostic
+	Name              string
+	Config            *repoconfig.Project
+	TotalMonthlyCost  *rat.Rat
+	Resources         []*provider.Resource
+	FinopsResults     []*provider.FinopsPolicyResult
+	TagPolicyResults  []goprotoevent.TaggingPolicyResult
+	Diagnostics       []*diagnostic.Diagnostic
+	RemoteModuleCalls []string
 }
 
 // ScanProjectOptions contains all the inputs needed to scan a single project.
@@ -101,7 +104,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		WorkingDirectory:   opts.RootDir,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("parser plugin error: %w", err)
+		return nil, fmt.Errorf("parser plugin error: %w (set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
 	}
 
 	projectResult := &ProjectResult{
@@ -131,6 +134,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 			logging.Warnf("skipping unsupported provider: %s", u)
 		}
 		requiredProviders = slices.Collect(maps.Keys(rps))
+		projectResult.RemoteModuleCalls = extractRemoteModuleCalls(result.Terraform)
 	case *parserpb.ParseResponseResult_Cloudformation:
 		requiredProviders = []provider.Provider{provider.Provider_PROVIDER_AWS}
 	default:
@@ -226,3 +230,40 @@ func GetRequiredProviders(result *terraform.ModuleResult, providers map[provider
 	}
 	return unsupported
 }
+
+// extractRemoteModuleCalls extracts unique remote (non-registry) module call
+// URLs from a terraform parse result, stripping credentials and query parameters.
+// Registry modules are excluded since they don't correspond to git repositories.
+func extractRemoteModuleCalls(module *terraform.ModuleResult) []string {
+	if module == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	for _, call := range collectRemoteModuleCalls(module) {
+		seen[call] = struct{}{}
+	}
+	result := make([]string, 0, len(seen))
+	for call := range seen {
+		result = append(result, call)
+	}
+	return result
+}
+
+func collectRemoteModuleCalls(module *terraform.ModuleResult) []string {
+	var results []string
+	if module.LoadData != nil && module.LoadData.Source != nil &&
+		module.LoadData.Source.Flags&uint64(flag.RegistryModule) == 0 &&
+		module.LoadData.Source.Flags&uint64(flag.RemoteModule) != 0 {
+		url := credRedactionRegex.ReplaceAllString(module.LoadData.Source.Base, "://")
+		url, _, _ = strings.Cut(url, "?")
+		results = append(results, url)
+	}
+	for _, mods := range module.Modules {
+		for _, mod := range mods.Results {
+			results = append(results, collectRemoteModuleCalls(mod)...)
+		}
+	}
+	return results
+}
+
+var credRedactionRegex = regexp.MustCompile(`(?im)://(.+):(.+)@`)

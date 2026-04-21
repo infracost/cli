@@ -13,6 +13,33 @@ import (
 func testData() *format.Output {
 	return &format.Output{
 		Currency: "USD",
+		GuardrailResults: []format.GuardrailOutput{
+			{
+				GuardrailID:      "g-1",
+				GuardrailName:    "Cost increase > $100",
+				Triggered:        true,
+				TotalMonthlyCost: rat.New(500),
+			},
+		},
+		BudgetResults: []format.BudgetOutput{
+			{
+				BudgetID:    "b-1",
+				BudgetName:  "Production budget",
+				Tags:        []format.BudgetTagOutput{{Key: "env", Value: "production"}},
+				Amount:      rat.New(1000),
+				CurrentCost: rat.New(500),
+				OverBudget:  false,
+			},
+			{
+				BudgetID:             "b-2",
+				BudgetName:           "Frontend Q2",
+				Tags:                 []format.BudgetTagOutput{{Key: "team", Value: "frontend"}},
+				Amount:               rat.New(300),
+				CurrentCost:          rat.New(400),
+				OverBudget:           true,
+				CustomOverrunMessage: "Notify #frontend-costs",
+			},
+		},
 		Projects: []format.ProjectOutput{
 			{
 				ProjectName: "web-app",
@@ -21,6 +48,7 @@ func testData() *format.Output {
 					{
 						Name: "aws_instance.web",
 						Type: "aws_instance",
+						Tags: map[string]string{"env": "production"},
 						CostComponents: []format.CostComponentOutput{
 							{Name: "Instance usage", TotalMonthlyCost: rat.New(20)},
 						},
@@ -33,11 +61,21 @@ func testData() *format.Output {
 					{
 						Name:   "aws_s3_bucket.logs",
 						Type:   "aws_s3_bucket",
+						Tags:   map[string]string{"env": "production"},
 						IsFree: true,
+					},
+					{
+						Name: "aws_ebs_volume.data",
+						Type: "aws_ebs_volume",
+						Tags: map[string]string{"env": "production"},
+						CostComponents: []format.CostComponentOutput{
+							{Name: "Storage", TotalMonthlyCost: rat.New(10)},
+						},
 					},
 					{
 						Name: "google_compute_instance.api",
 						Type: "google_compute_instance",
+						Tags: map[string]string{"env": "production", "team": "frontend"},
 						CostComponents: []format.CostComponentOutput{
 							{Name: "Instance usage", TotalMonthlyCost: rat.New(30)},
 						},
@@ -111,7 +149,7 @@ func TestFilterByProvider(t *testing.T) {
 	filtered := Filter(data, Options{Provider: "aws"})
 
 	assert.Len(t, filtered.Projects, 2)
-	assert.Len(t, filtered.Projects[0].Resources, 2, "should include aws_instance and aws_s3_bucket")
+	assert.Len(t, filtered.Projects[0].Resources, 3, "should include aws_instance, aws_s3_bucket, and aws_ebs_volume")
 	assert.Len(t, filtered.Projects[1].Resources, 1, "should include aws_lambda_function")
 }
 
@@ -146,12 +184,14 @@ func TestSummary(t *testing.T) {
 	assert.Contains(t, output, "1 with errors")
 	assert.Contains(t, output, "web-app")
 	assert.Contains(t, output, "api-service")
-	assert.Contains(t, output, "Resources: 4")
-	assert.Contains(t, output, "3 costed, 1 free")
-	assert.Contains(t, output, "$55.00")
+	assert.Contains(t, output, "Resources: 5")
+	assert.Contains(t, output, "4 costed, 1 free")
+	assert.Contains(t, output, "$65.00")
 	assert.Contains(t, output, "FinOps policies: 1")
 	assert.Contains(t, output, "1 failing")
 	assert.Contains(t, output, "1 critical")
+	assert.Contains(t, output, "Guardrails: 1 (1 triggered)")
+	assert.Contains(t, output, "Budgets: 2 (1 over)")
 }
 
 func TestSummaryJSON(t *testing.T) {
@@ -412,6 +452,125 @@ func TestResourceTypeFromAddress(t *testing.T) {
 			assert.Equal(t, tt.want, resourceTypeFromAddress(tt.addr))
 		})
 	}
+}
+
+func TestGuardrailDetail(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGuardrailDetail(&buf, data, Options{Guardrail: "Cost increase > $100"})
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Guardrail: Cost increase > $100")
+	assert.Contains(t, output, "Total monthly cost: $500.00")
+	assert.Contains(t, output, "Status: TRIGGERED")
+}
+
+func TestGuardrailDetailByID(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGuardrailDetail(&buf, data, Options{Guardrail: "g-1"})
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Guardrail: Cost increase > $100")
+}
+
+func TestGuardrailNotFound(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGuardrailDetail(&buf, data, Options{Guardrail: "nonexistent"})
+	assert.EqualError(t, err, `guardrail "nonexistent" not found`)
+}
+
+func TestBudgetDetailUnder(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteBudgetDetail(&buf, data, Options{Budget: "Production budget"})
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Budget: Production budget")
+	assert.Contains(t, output, "Scope: env=production")
+	assert.Contains(t, output, "Limit: $1000.00")
+	assert.Contains(t, output, "Actual spend: $500.00")
+	assert.Contains(t, output, "remaining")
+	assert.Contains(t, output, "50.0% left")
+	assert.Contains(t, output, "cloud billing data")
+	// Resources matching budget tags should be listed.
+	assert.Contains(t, output, "Resources in this scan matching budget tags")
+	assert.Contains(t, output, "aws_instance")
+	// Finops violations on matching resources should be shown.
+	assert.Contains(t, output, "FinOps policy violations")
+	assert.Contains(t, output, "Use GP3")
+}
+
+func TestBudgetDetailOver(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteBudgetDetail(&buf, data, Options{Budget: "Frontend Q2"})
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Budget: Frontend Q2")
+	assert.Contains(t, output, "Scope: team=frontend")
+	assert.Contains(t, output, "Limit: $300.00")
+	assert.Contains(t, output, "Actual spend: $400.00")
+	assert.Contains(t, output, "OVER by $100.00")
+	assert.Contains(t, output, "Message: Notify #frontend-costs")
+}
+
+func TestBudgetDetailByID(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteBudgetDetail(&buf, data, Options{Budget: "b-1"})
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Budget: Production budget")
+}
+
+func TestBudgetNotFound(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteBudgetDetail(&buf, data, Options{Budget: "nonexistent"})
+	assert.EqualError(t, err, `budget "nonexistent" not found`)
+}
+
+func TestGroupByBudget(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"budget"}})
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Production budget")
+	assert.Contains(t, output, "Frontend Q2")
+	assert.Contains(t, output, "OVER")
+	assert.Contains(t, output, "under")
+	assert.Contains(t, output, "Limit")
+	assert.Contains(t, output, "Actual Spend")
+}
+
+func TestGroupByGuardrail(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"guardrail"}})
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Cost increase > $100")
+	assert.Contains(t, output, "TRIGGERED")
+	assert.Contains(t, output, "$500.00")
 }
 
 func TestRunDefaultsToSummary(t *testing.T) {

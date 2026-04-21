@@ -7,6 +7,7 @@ import (
 
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
+	"github.com/stretchr/testify/require"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"github.com/infracost/proto/gen/go/infracost/usage"
@@ -251,17 +252,11 @@ func TestLoadUsageDefaults(t *testing.T) {
 		}
 
 		result := LoadUsageDefaults(defaults, "")
-		if result == nil {
-			t.Fatal("expected non-nil result")
-		}
+		require.NotNil(t, result, "expected non-nil result")
 		items := result.ByResourceType["aws_instance"]
-		if items == nil {
-			t.Fatal("expected aws_instance in result")
-		}
+		require.NotNil(t, items, "expected aws_instance in result")
 		val := items.Items["monthly_hrs"]
-		if val == nil {
-			t.Fatal("expected monthly_hrs value")
-		}
+		require.NotNil(t, val, "expected monthly_hrs value")
 		nv, ok := val.Value.(*usage.UsageValue_NumberValue)
 		if !ok || nv.NumberValue == nil {
 			t.Fatal("expected number value")
@@ -287,11 +282,11 @@ func TestLoadUsageDefaults(t *testing.T) {
 
 		result := LoadUsageDefaults(defaults, "")
 		// The highest priority (10) should win, so the value should be "999"
+		require.NotNil(t, result)
 		items := result.ByResourceType["aws_instance"]
+		require.NotNil(t, items)
 		val := items.Items["monthly_hrs"]
-		if val == nil {
-			t.Fatal("expected monthly_hrs value")
-		}
+		require.NotNil(t, val, "expected monthly_hrs value")
 		// Verify it picked the highest priority by checking the value is not from the lower priorities
 		nv, ok := val.Value.(*usage.UsageValue_NumberValue)
 		if !ok || nv.NumberValue == nil {
@@ -318,9 +313,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 		result := LoadUsageDefaults(defaults, "")
 		items := result.ByResourceType["aws_instance"]
 		val := items.Items["monthly_hrs"]
-		if val == nil {
-			t.Fatal("expected monthly_hrs value after skipping empty")
-		}
+		require.NotNil(t, val, "expected monthly_hrs value after skipping empty")
 		nv, ok := val.Value.(*usage.UsageValue_NumberValue)
 		if !ok || nv.NumberValue == nil {
 			t.Fatal("expected number value")
@@ -378,9 +371,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 		result := LoadUsageDefaults(defaults, "my-project")
 		items := result.ByResourceType["aws_instance"]
 		val := items.Items["monthly_hrs"]
-		if val == nil {
-			t.Fatal("expected value after filtering")
-		}
+		require.NotNil(t, val, "expected value after filtering")
 		// The 999 should be filtered out (include filter doesn't match "my-project"),
 		// so we should get the lower priority 100
 		nv, ok := val.Value.(*usage.UsageValue_NumberValue)
@@ -416,9 +407,7 @@ func TestLoadUsageDefaults(t *testing.T) {
 		result := LoadUsageDefaults(defaults, "my-project")
 		items := result.ByResourceType["aws_instance"]
 		val := items.Items["monthly_hrs"]
-		if val == nil {
-			t.Fatal("expected value after filtering")
-		}
+		require.NotNil(t, val, "expected value after filtering")
 		nv, ok := val.Value.(*usage.UsageValue_NumberValue)
 		if !ok || nv.NumberValue == nil {
 			t.Fatal("expected number value")

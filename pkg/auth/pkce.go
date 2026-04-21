@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/infracost/cli/internal/api/events"
@@ -26,7 +27,7 @@ func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, e
 	authURL := config.AuthCodeURL(state,
 		oauth2.S256ChallengeOption(verifier),
 		oauth2.SetAuthURLParam("audience", c.Audience),
-		oauth2.SetAuthURLParam("icSource", "cliv2"))
+		oauth2.SetAuthURLParam("icSource", "cli"))
 
 	var wg sync.WaitGroup
 	var code string
@@ -94,6 +95,8 @@ func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, e
 	wg.Wait() // wait for the server to finish
 
 	switch {
+	case errors.Is(serverErr, syscall.EADDRINUSE):
+		return nil, nil, fmt.Errorf("callback server error: %w (use --oauth-callback-port or INFRACOST_CLI_OAUTH_CALLBACK_PORT to change the port)", serverErr)
 	case serverErr != nil:
 		return nil, nil, fmt.Errorf("callback server error: %w", serverErr)
 	case len(errorString) > 0:

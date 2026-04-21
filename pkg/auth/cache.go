@@ -24,7 +24,7 @@ func (c *Config) LoadCache(ctx context.Context) (oauth2.TokenSource, *oauth2.Tok
 		if os.IsNotExist(err) {
 			return nil, nil, nil
 		}
-		return nil, nil, fmt.Errorf("failed to open token cache: %w", err)
+		return nil, nil, fmt.Errorf("failed to open token cache at %s: %w (use INFRACOST_CLI_OAUTH_TOKEN_CACHE_PATH to change the location)", path, err)
 	}
 	defer func() {
 		_ = f.Close()
@@ -32,7 +32,7 @@ func (c *Config) LoadCache(ctx context.Context) (oauth2.TokenSource, *oauth2.Tok
 
 	var token oauth2.Token
 	if err := json.NewDecoder(f).Decode(&token); err != nil {
-		return nil, nil, fmt.Errorf("failed to decode token cache: %w", err)
+		return nil, nil, fmt.Errorf("failed to decode token cache at %s: %w (the file may be corrupted, try deleting it and running `infracost login` again)", path, err)
 	}
 
 	ts := c.OAuth2Config().TokenSource(ctx, &token)
@@ -60,7 +60,7 @@ func (c *Config) SaveCache(token *oauth2.Token) error {
 	path := os.ExpandEnv(c.TokenCachePath)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return fmt.Errorf("failed to create token cache directory: %w", err)
+		return fmt.Errorf("failed to create token cache directory: %w (use INFRACOST_CLI_OAUTH_TOKEN_CACHE_PATH to change the location)", err)
 	}
 
 	// nolint:gosec // G304: Users can choose where they cache their own token.

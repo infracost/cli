@@ -22,15 +22,15 @@ var (
 func Connect(path string, level hclog.Level) (proto.ProviderServiceClient, func(), error) {
 
 	if path == "" {
-		return nil, nil, fmt.Errorf("no plugin path provided")
+		return nil, nil, fmt.Errorf("no plugin path provided (set INFRACOST_CLI_PLUGIN_AUTO_UPDATE=true to download plugins automatically)")
 	}
 
 	if stat, err := os.Stat(path); err != nil {
-		return nil, nil, fmt.Errorf("error accessing plugin path: %w", err)
+		return nil, nil, fmt.Errorf("error accessing plugin at %s: %w (try setting INFRACOST_CLI_PLUGIN_AUTO_UPDATE=true to re-download)", path, err)
 	} else if stat.IsDir() {
-		return nil, nil, fmt.Errorf("plugin path is a directory")
+		return nil, nil, fmt.Errorf("plugin path %s is a directory, not a binary (try deleting it and running again)", path)
 	} else if runtime.GOOS != "windows" && stat.Mode()&0111 == 0 {
-		return nil, nil, fmt.Errorf("plugin path is not executable")
+		return nil, nil, fmt.Errorf("plugin at %s is not executable (try: chmod +x %s)", path, path)
 	}
 
 	client := plugin.NewClient(&plugin.ClientConfig{

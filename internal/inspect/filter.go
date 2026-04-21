@@ -26,6 +26,7 @@ func Filter(data *format.Output, opts Options) *format.Output {
 		Currency:         data.Currency,
 		Projects:         make([]format.ProjectOutput, 0, len(data.Projects)),
 		GuardrailResults: data.GuardrailResults,
+		BudgetResults:    data.BudgetResults,
 	}
 
 	for _, p := range data.Projects {

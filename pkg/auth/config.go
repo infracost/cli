@@ -8,6 +8,7 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/environment"
 	"github.com/infracost/cli/pkg/logging"
@@ -46,6 +47,12 @@ type Config struct {
 	source oauth2.TokenSource
 }
 
+// SetTokenSource sets the token source directly, bypassing the login flow.
+// This is intended for testing.
+func (c *Config) SetTokenSource(ts oauth2.TokenSource) {
+	c.source = ts
+}
+
 // InternalConfig contains the configuration for authenticating with Auth0. End users should never be setting these
 // directly, so the flags and environment variables are hidden. These are exposed as flags mainly to help with
 // development and testing.
@@ -64,6 +71,9 @@ type InternalConfig struct {
 
 	// TokenCachePath is the path to the token cache file.
 	TokenCachePath string `env:"INFRACOST_CLI_OAUTH_TOKEN_CACHE_PATH" flag:"access-token-cache-path;hidden" usage:"The path to the token cache file"`
+
+	// UserCachePath is the path to the user cache file.
+	UserCachePath string `env:"INFRACOST_CLI_USER_CACHE_PATH" flag:"user-cache-path;hidden" usage:"The path to the user cache file"`
 }
 
 // ExternalConfig contains the configuration settings that end users should know about and can set.
@@ -94,6 +104,10 @@ func (c *Config) Process() {
 
 	if len(c.TokenCachePath) == 0 {
 		c.TokenCachePath = defaultTokenCachePath()
+	}
+
+	if len(c.UserCachePath) == 0 {
+		c.UserCachePath = defaultUserCachePath()
 	}
 }
 
@@ -186,7 +200,13 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 
 	// abort if not in interactive tty
 	if !isInteractive() {
-		return nil, fmt.Errorf("no cached token found and not in interactive environment, cannot log in")
+		caller, _ := events.GetMetadata[string]("caller")
+		switch {
+		case caller != "":
+			return nil, fmt.Errorf("not logged in. Run `infracost login` in your terminal first, then retry")
+		default:
+			return nil, fmt.Errorf("not logged in. Set INFRACOST_CLI_AUTHENTICATION_TOKEN for non-interactive environments, or run `infracost login` in an interactive terminal first")
+		}
 	}
 
 	login := c.PKCE

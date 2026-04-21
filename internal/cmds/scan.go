@@ -53,12 +53,32 @@ func Scan(cfg *config.Config) *cobra.Command {
 			repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
 			branchName := vcs.GetCurrentBranch(absoluteDirectory)
 
+			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+				return err
+			}
+
 			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
 			runParameters, err := client.RunParameters(cmd.Context(), repositoryURL, branchName)
 			if err != nil {
 				return fmt.Errorf("failed to retrieve run parameters: %w", err)
 			}
-			cfg.OrgID = runParameters.OrganizationID
+
+			// If --org was not provided, use the org from RunParameters.
+			// If --org was provided, show a message when it overrides the default.
+			if cfg.Org == "" {
+				cfg.OrgID = runParameters.OrganizationID
+			} else if runParameters.OrganizationID != "" && cfg.OrgID != runParameters.OrganizationID {
+				if uc, ucErr := cfg.Auth.LoadUserCache(); ucErr != nil {
+					logging.WithError(ucErr).Msg("failed to load user cache for override message")
+				} else if uc != nil {
+					for _, org := range uc.Organizations {
+						if org.ID == cfg.OrgID {
+							_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "→ %s (overriding default)\n", org.Slug)
+							break
+						}
+					}
+				}
+			}
 
 			events.RegisterMetadata("orgId", cfg.OrgID)
 			events.RegisterMetadata("repoId", repositoryURL)
@@ -76,6 +96,15 @@ func Scan(cfg *config.Config) *cobra.Command {
 
 			eventsClient := cfg.Events.Client(api.Client(cmd.Context(), source, cfg.OrgID))
 
+			// Load previous result for this directory (stale allowed) for run diff counts.
+			var prevForDir *format.Output
+			if p, err := cfg.Cache.ForPathAllowStale(absoluteDirectory); err != nil {
+				logging.Infof("could not load previous run data for directory: %v", err)
+			} else {
+				logging.Infof("found previous run data for directory in cache")
+				prevForDir = p
+			}
+
 			// Diff against the previous cached result to detect fixed policy violations.
 			if prev, err := cfg.Cache.Latest(true); err != nil {
 				logging.Infof("could not load previous run data: %v", err)
@@ -88,7 +117,7 @@ func Scan(cfg *config.Config) *cobra.Command {
 				logging.Warn("failed to cache results: " + err.Error())
 			}
 
-			output.TrackRun(cmd.Context(), eventsClient, runSeconds, "json")
+			output.TrackRun(cmd.Context(), eventsClient, runSeconds, "json", prevForDir)
 
 			if err := output.ToJSON(os.Stdout); err != nil {
 				return fmt.Errorf("failed to write JSON output: %w", err)

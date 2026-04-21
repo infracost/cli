@@ -22,6 +22,7 @@ import (
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -302,15 +303,9 @@ func TestScan(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if result == nil {
-			t.Fatal("expected non-nil result")
-		}
-		if len(result.Projects) != 1 {
-			t.Fatalf("expected 1 project, got %d", len(result.Projects))
-		}
-		if len(result.Projects[0].Resources) != 1 {
-			t.Fatalf("expected 1 resource, got %d", len(result.Projects[0].Resources))
-		}
+		require.NotNil(t, result, "expected non-nil result")
+		require.Len(t, result.Projects, 1)
+		require.Len(t, result.Projects[0].Resources, 1)
 		if result.Projects[0].Resources[0].Name != "aws_instance.web" {
 			t.Errorf("expected resource name %q, got %q", "aws_instance.web", result.Projects[0].Resources[0].Name)
 		}
@@ -635,6 +630,60 @@ projects:
 		proj := result.Projects[0]
 		if len(proj.TagPolicyResults) == 0 {
 			t.Fatal("expected tag policy results to be populated")
+		}
+	})
+
+	t.Run("budgets evaluated against resources", func(t *testing.T) {
+		dir := writeTestProject(t)
+
+		budget := &event.Budget{
+			Id:        "b-1",
+			PrComment: true,
+			Tags: []*event.BudgetTag{
+				{Key: "env", Value: "production"},
+			},
+		}
+		budgetJSON, err := protojson.Marshal(budget)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: awsTerraformParseResponse("aws_instance"),
+			awsResources: []*provider.Resource{
+				{
+					Name: "aws_instance.web",
+					Type: "aws_instance",
+					Tagging: &provider.Tagging{
+						SupportsTags: true,
+						Tags:         []*provider.Tag{{Key: "env", Value: "production"}},
+					},
+					Costs: &provider.ResourceCosts{
+						Components: []*provider.CostComponent{
+							{
+								PeriodPrice: &provider.PeriodPrice{
+									Price:  (&provider.PeriodPrice{}).GetPrice(), // zero price placeholder
+									Period: provider.Period_MONTH,
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+
+		result, err := s.Scan(context.Background(), dashboard.RunParameters{
+			UsageDefaults: emptyUsageDefaults(t),
+			Budgets:       []json.RawMessage{budgetJSON},
+		}, dir, "main", auth.AuthenticationToken("test-token"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.BudgetResults) != 1 {
+			t.Fatalf("expected 1 budget result, got %d", len(result.BudgetResults))
+		}
+		if result.BudgetResults[0].BudgetID != "b-1" {
+			t.Errorf("expected budget ID %q, got %q", "b-1", result.BudgetResults[0].BudgetID)
 		}
 	})
 

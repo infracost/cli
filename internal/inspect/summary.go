@@ -31,8 +31,10 @@ type summaryData struct {
 	FinopsPolicies    int              `json:"finops_policies"`
 	FailingPolicies   int              `json:"failing_policies"`
 	TaggingPolicies   int              `json:"tagging_policies"`
-	Guardrails        int              `json:"guardrails"`
-	TriggeredGuardrails int            `json:"triggered_guardrails"`
+	Guardrails          int              `json:"guardrails"`
+	TriggeredGuardrails int              `json:"triggered_guardrails"`
+	Budgets             int              `json:"budgets"`
+	OverBudget          int              `json:"over_budget"`
 	CriticalDiags     int              `json:"critical_diagnostics"`
 	WarningDiags      int              `json:"warning_diagnostics"`
 }
@@ -103,6 +105,7 @@ func WriteSummary(w io.Writer, data *format.Output, asJSON bool) error {
 	_, _ = fmt.Fprintf(w, "FinOps policies: %d (%d failing)\n", s.FinopsPolicies, s.FailingPolicies)
 	_, _ = fmt.Fprintf(w, "Tagging policies: %d\n", s.TaggingPolicies)
 	_, _ = fmt.Fprintf(w, "Guardrails: %d (%d triggered)\n", s.Guardrails, s.TriggeredGuardrails)
+	_, _ = fmt.Fprintf(w, "Budgets: %d (%d over)\n", s.Budgets, s.OverBudget)
 
 	if s.CriticalDiags > 0 {
 		_, _ = fmt.Fprintf(w, "Diagnostics: %d critical", s.CriticalDiags)
@@ -177,6 +180,13 @@ func buildSummary(data *format.Output) summaryData {
 		s.Guardrails++
 		if gr.Triggered {
 			s.TriggeredGuardrails++
+		}
+	}
+
+	for _, br := range data.BudgetResults {
+		s.Budgets++
+		if br.OverBudget {
+			s.OverBudget++
 		}
 	}
 
