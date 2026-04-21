@@ -141,6 +141,18 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		return nil, fmt.Errorf("unsupported parse result type: %T", result)
 	}
 
+	// A nil FinopsPolicies slice signals "no explicit policy list — let the
+	// provider default to all available policies" (used by the local test
+	// harness via INFRACOST_CLI_USE_ALL_LOCAL_POLICIES). An empty-but-non-nil
+	// slice means "the user has configured zero policies"; leave the config
+	// populated so the provider evaluates none.
+	var finopsPolicyConfig *provider.FinopsPolicyConfiguration
+	if opts.FinopsPolicies != nil {
+		finopsPolicyConfig = &provider.FinopsPolicyConfiguration{
+			Policies: opts.FinopsPolicies,
+		}
+	}
+
 	input := &provider.Input{
 		ParseResult:  response,
 		AbsolutePath: absoluteProjectPath,
@@ -152,9 +164,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		},
 		PreviousResourceAddresses: opts.PreviousResourceAddresses,
 		Usage:                     projectUsage,
-		FinopsPolicyConfig: &provider.FinopsPolicyConfiguration{
-			Policies: opts.FinopsPolicies,
-		},
+		FinopsPolicyConfig:        finopsPolicyConfig,
 		Features: &provider.Features{
 			EnablePriceLookups:         true,
 			EnableRecommendations:      true,
