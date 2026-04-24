@@ -66,7 +66,7 @@ func (m spinnerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m spinnerModel) View() string {
 	if m.done {
-		if m.err != nil {
+		if m.err != nil || m.doneTitle == "" {
 			return ""
 		}
 		return tml.Sprintf("  <lightgreen>✔</lightgreen>  %s\n", m.doneTitle)

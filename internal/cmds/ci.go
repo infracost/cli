@@ -92,6 +92,46 @@ func selectSetupOrg(ctx context.Context, cfg *config.Config, source oauth2.Token
 	)
 }
 
+// resolveSetupOrgWithSpinner is like selectSetupOrg but shows a spinner
+// during the network call to fetch the org list. The org resolution step
+// (resolveOrg) runs outside the spinner because it may prompt interactively.
+func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) (dashboard.Organization, error) {
+	if err := resolveOrg(ctx, cfg, source); err != nil {
+		return dashboard.Organization{}, err
+	}
+
+	client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
+	var user dashboard.CurrentUser
+	if err := ui.RunWithSpinnerErr(ctx, "Resolving organization...", "", func(ctx context.Context) error {
+		var err error
+		user, err = client.CurrentUser(ctx)
+		return err
+	}); err != nil {
+		return dashboard.Organization{}, fmt.Errorf("fetching current user: %w", err)
+	}
+
+	if len(user.Organizations) == 0 {
+		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or check that you're logged into the right account with `infracost login`")
+	}
+
+	if cfg.OrgID != "" {
+		for _, org := range user.Organizations {
+			if org.ID == cfg.OrgID {
+				return org, nil
+			}
+		}
+		return dashboard.Organization{}, fmt.Errorf("organization %q not found — check the value passed to --org", cfg.Org)
+	}
+
+	if len(user.Organizations) == 1 {
+		return user.Organizations[0], nil
+	}
+
+	return dashboard.Organization{}, fmt.Errorf(
+		"you belong to multiple organizations — use --org to select one",
+	)
+}
+
 func CI(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ci",
@@ -165,17 +205,16 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 		return fmt.Errorf("authenticating: %w", err)
 	}
 
-	org, err := selectSetupOrg(ctx, cfg, source)
+	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
 		return err
 	}
-
 	ui.Successf("Infracost org      %s", org.Name)
 
 	// Check if the repo is already connected via the app integration.
 	orgClient := cfg.Dashboard.Client(api.Client(ctx, source, org.ID))
 	var connected bool
-	if err := ui.RunWithSpinnerErr(ctx, "Checking repository...", "Repository checked", func(ctx context.Context) error {
+	if err := ui.RunWithSpinnerErr(ctx, "Checking repository connection...", "", func(ctx context.Context) error {
 		connected, _ = orgClient.HasRepo(ctx, org.ID, repo.slug())
 		return nil
 	}); err != nil {
@@ -247,7 +286,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		return fmt.Errorf("authenticating: %w", err)
 	}
 
-	org, err := selectSetupOrg(ctx, cfg, source)
+	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
 		return err
 	}
