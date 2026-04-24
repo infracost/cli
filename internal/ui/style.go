@@ -71,6 +71,17 @@ func Hintf(indent int, format string, args ...any) {
 	Hint(indent, fmt.Sprintf(format, args...))
 }
 
+// IsInteractive reports whether stdin is a terminal. Interactive prompts
+// (huh selects, confirms, etc.) should be skipped when this returns false
+// to avoid blocking in tests or piped environments.
+func IsInteractive() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
 // PressEnter prints a message and waits for the user to press Enter.
 // Returns true if the user pressed Enter, false on EOF or error (e.g.
 // non-interactive stdin).

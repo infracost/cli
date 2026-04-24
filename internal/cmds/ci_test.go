@@ -61,16 +61,22 @@ func ciTestConfigWithAuthToken(t *testing.T) *config.Config {
 	}
 }
 
-// nonInteractiveStdin replaces os.Stdin with a pipe whose write end is
-// immediately closed, so resolveOrg's TTY check sees no char device and
-// skips the interactive org picker. Without this, `go test` from a real
-// terminal hangs on multi-org prompts.
+// nonInteractiveStdin replaces os.Stdin with the read end of a closed pipe so
+// that:
+//   - os.Stdin.Stat() reports a pipe (not a char device), causing
+//     ui.IsInteractive() to return false and skip huh/bubbletea prompts
+//   - resolveOrg's TTY check likewise sees no char device and skips the
+//     interactive org picker
+//   - any direct reads from stdin get an immediate EOF
+//
+// We cannot use /dev/null because it is a character device on macOS, which
+// would cause IsInteractive() to return true.
 func nonInteractiveStdin(t *testing.T) {
 	t.Helper()
 
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
-	require.NoError(t, w.Close())
+	_ = w.Close() // close write end so reads get EOF
 
 	old := os.Stdin
 	os.Stdin = r

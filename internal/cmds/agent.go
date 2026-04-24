@@ -252,6 +252,10 @@ func agentRemove(cfg *config.Config) *cobra.Command {
 }
 
 func selectAgent(title string, skippable bool) (*agent, error) {
+	if !ui.IsInteractive() {
+		return nil, nil
+	}
+
 	var enabledAgents []agent
 	for _, a := range supportedAgents {
 		if a.enabled {

@@ -90,6 +90,10 @@ func ideSetup(_ *config.Config) *cobra.Command {
 // unified `infracost setup` flow (DEV-230). When skippable is true, a "Skip"
 // option is appended to the selection list.
 func RunIDESetup(skippable bool) error {
+	if !ui.IsInteractive() {
+		return nil
+	}
+
 	var enabledIDEs []ide
 	for _, ide := range supportedIDEs {
 		if ide.enabled {

@@ -67,6 +67,10 @@ func Setup(cfg *config.Config) *cobra.Command {
 // runSetupStep prompts the user with a yes/no question. If they accept, it
 // runs the provided function. If they decline or abort, it skips silently.
 func runSetupStep(title string, fn func() error) error {
+	if !ui.IsInteractive() {
+		return nil
+	}
+
 	fmt.Println()
 
 	var confirm bool
