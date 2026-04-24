@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/infracost/cli/pkg/auth/browser"
 	"github.com/liamg/tml"
 )
 
@@ -74,4 +75,16 @@ func Hintf(indent int, format string, args ...any) {
 func PressEnter(msg string) {
 	fmt.Printf("%s", msg)
 	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+}
+
+// OpenOrContinue displays a URL and prompts the user to press Enter to open
+// it in their browser. The user can press Ctrl+C to skip.
+func OpenOrContinue(url string) {
+	fmt.Printf("  %s\n", url)
+	PressEnter("\nPress Enter to open in your browser...")
+	if err := browser.Open(url); err != nil {
+		Failf("Failed to open browser. Visit the URL manually:\n   %s", url)
+	} else {
+		Successf("Opened %s in your browser.", url)
+	}
 }

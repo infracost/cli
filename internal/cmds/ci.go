@@ -271,19 +271,6 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 
 	ui.Successf("GitHub repository   %s", repo.slug())
 
-	apiKey := os.Getenv("INFRACOST_API_KEY")
-	if apiKey == "" {
-		ui.Fail("Infracost API key   not found")
-		fmt.Println()
-		fmt.Println("CI pipeline setup is currently in early access.")
-		fmt.Println("To get access, please contact a sales representative.")
-		fmt.Println()
-		fmt.Println("Already have a key? Set it as an environment variable:")
-		fmt.Println("  export INFRACOST_API_KEY=<your-key>")
-		return fmt.Errorf("INFRACOST_API_KEY environment variable not set")
-	}
-	ui.Success("Infracost API key   ready (from INFRACOST_API_KEY)")
-
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
 		return fmt.Errorf("authenticating: %w", err)
@@ -294,6 +281,19 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		return err
 	}
 	ui.Successf("Infracost org       %s", org.Name)
+
+	apiKey := os.Getenv("INFRACOST_API_KEY")
+	if apiKey == "" {
+		ui.Fail("Infracost API key   not found")
+		fmt.Println()
+		fmt.Println("To get an API key, visit your organization's CLI tokens page:")
+		ui.OpenOrContinue(fmt.Sprintf("https://dashboard.infracost.io/org/%s/settings/cli-tokens", org.Slug))
+		fmt.Println()
+		fmt.Println("Once you have a key, set it as an environment variable and retry:")
+		fmt.Println("  export INFRACOST_API_KEY=<your-key>")
+		return fmt.Errorf("INFRACOST_API_KEY environment variable not set")
+	}
+	ui.Success("Infracost API key   ready (from INFRACOST_API_KEY)")
 
 	ghPath, _ := exec.LookPath("gh")
 	hasGH := ghPath != ""
