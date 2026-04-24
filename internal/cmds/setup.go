@@ -58,7 +58,7 @@ func Setup(cfg *config.Config) *cobra.Command {
 			}
 
 			fmt.Println()
-			fmt.Println("Setup complete.")
+			ui.Heading("Setup complete.")
 			return nil
 		},
 	}

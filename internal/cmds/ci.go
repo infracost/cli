@@ -155,7 +155,7 @@ func RunCISetup(ctx context.Context, cfg *config.Config, ciPipeline, yes bool) e
 
 func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error {
 	fmt.Println()
-	fmt.Println("Scanning repository")
+	ui.Heading("Scanning repository")
 
 	provider := detectVCSProvider(repo)
 	ui.Successf("%s repository  %s", provider, repo.slug())
@@ -217,7 +217,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 
 func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, repoRoot, defaultBranch string, yes bool) error {
 	fmt.Println()
-	fmt.Println("Scanning repository")
+	ui.Heading("Scanning repository")
 
 	if !repo.isGitHub() {
 		provider := detectVCSProvider(repo)
@@ -276,7 +276,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	}
 
 	fmt.Println()
-	fmt.Println("This will:")
+	ui.Heading("This will:")
 	if writeWorkflows {
 		ui.Step("Create  .github/workflows/infracost-diff.yml")
 		ui.Step("Create  .github/workflows/infracost-scan.yml")
@@ -338,13 +338,13 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 
 	fmt.Println()
 	if writeWorkflows {
-		fmt.Println("Done. Push this commit to see Infracost on your next PR:")
+		ui.Heading("Done. Push this commit to see Infracost on your next PR:")
 		fmt.Println()
 		fmt.Println("  git add .github/workflows/infracost-diff.yml .github/workflows/infracost-scan.yml")
 		fmt.Println("  git commit -m \"chore: add Infracost CI integration\"")
 		fmt.Println("  git push")
 	} else {
-		fmt.Println("Done. The INFRACOST_API_KEY secret has been configured.")
+		ui.Heading("Done. The INFRACOST_API_KEY secret has been configured.")
 	}
 
 	return nil
@@ -380,7 +380,7 @@ func promptExistingWorkflows(yes bool) (bool, error) {
 }
 
 func printManualSecretInstructions(repo repoInfo) {
-	fmt.Println("One manual step remaining:")
+	ui.Heading("One manual step remaining:")
 	fmt.Println("Set the API key as a GitHub secret:")
 	fmt.Println()
 	fmt.Printf("  gh secret set INFRACOST_API_KEY --body \"$INFRACOST_API_KEY\" \\\n")

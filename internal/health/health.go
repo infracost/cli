@@ -160,9 +160,9 @@ func RunFixes(ctx context.Context, w io.Writer, categories []Category, report *R
 			}
 			_, _ = fmt.Fprintf(w, "  Fixing: %s...\n", check.Name)
 			if err := check.Fix(ctx); err != nil {
-				_, _ = fmt.Fprintf(w, "  %s Failed to fix %s: %s\n", tml.Sprintf("<lightred>✗</lightred>"), check.Name, err)
+				_, _ = fmt.Fprintf(w, "  %s  Failed to fix %s: %s\n", tml.Sprintf("<lightred>✗</lightred>"), check.Name, err)
 			} else {
-				_, _ = fmt.Fprintf(w, "  %s Fixed: %s\n", tml.Sprintf("<lightgreen>✔</lightgreen>"), check.Name)
+				_, _ = fmt.Fprintf(w, "  %s  Fixed: %s\n", tml.Sprintf("<lightgreen>✔</lightgreen>"), check.Name)
 			}
 		}
 	}
@@ -191,15 +191,15 @@ func Render(w io.Writer, report *Report, ver string, verbose bool, fix bool) {
 	_, _ = fmt.Fprintf(w, "Infracost Health %s - running %d checks\n", ver, report.Total())
 
 	for _, cat := range report.Categories {
-		_, _ = fmt.Fprintf(w, "\n%s\n", cat.Name)
+		_, _ = fmt.Fprintf(w, "\n%s\n", tml.Sprintf("<bold>%s</bold>", cat.Name))
 		for _, r := range cat.Results {
 			label := r.Label
 			if r.Detail != "" {
 				label += " " + r.Detail
 			}
-			_, _ = fmt.Fprintf(w, "  %s %s\n", statusIcon(r.Status), label)
+			_, _ = fmt.Fprintf(w, "  %s  %s\n", statusIcon(r.Status), label)
 			if r.Hint != "" {
-				_, _ = fmt.Fprintf(w, "    %s %s\n", tml.Sprintf("<lightblue>→</lightblue>"), r.Hint)
+				_, _ = fmt.Fprintf(w, "     %s  %s\n", tml.Sprintf("<lightblue>→</lightblue>"), r.Hint)
 			}
 			if verbose {
 				for _, line := range r.Verbose {
@@ -212,16 +212,16 @@ func Render(w io.Writer, report *Report, ver string, verbose bool, fix bool) {
 	_, _ = fmt.Fprintln(w)
 	var parts []string
 	if n := report.Passed(); n > 0 {
-		parts = append(parts, tml.Sprintf("<lightgreen>✔</lightgreen> %d passed", n))
+		parts = append(parts, tml.Sprintf("<lightgreen>✔</lightgreen>  %d passed", n))
 	}
 	if n := report.Warnings(); n > 0 {
-		parts = append(parts, tml.Sprintf("<lightyellow>!</lightyellow> %d warning", n))
+		parts = append(parts, tml.Sprintf("<lightyellow>!</lightyellow>  %d warning", n))
 	}
 	if n := report.Failed(); n > 0 {
-		parts = append(parts, tml.Sprintf("<lightred>✗</lightred> %d issue", n))
+		parts = append(parts, tml.Sprintf("<lightred>✗</lightred>  %d issue", n))
 	}
 	if n := report.Skipped(); n > 0 {
-		parts = append(parts, tml.Sprintf("<dim>⊘</dim> %d skipped", n))
+		parts = append(parts, tml.Sprintf("<dim>⊘</dim>  %d skipped", n))
 	}
 	_, _ = fmt.Fprintf(w, "  %s\n", strings.Join(parts, "  "))
 

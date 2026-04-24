@@ -69,9 +69,9 @@ func (m spinnerModel) View() string {
 		if m.err != nil {
 			return ""
 		}
-		return tml.Sprintf("<lightgreen>✔</lightgreen>  %s\n", m.doneTitle)
+		return tml.Sprintf("  <lightgreen>✔</lightgreen>  %s\n", m.doneTitle)
 	}
-	return m.spinner.View() + " " + m.title + "\n"
+	return "  " + m.spinner.View() + " " + m.title + "\n"
 }
 
 // RunWithSpinner displays a spinner on stderr with the given title while
