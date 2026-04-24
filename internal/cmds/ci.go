@@ -224,7 +224,8 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 		ui.Success("App integration already connected")
 		fmt.Println()
 		fmt.Println("This repository is already sending PR cost estimates.")
-		fmt.Printf("To manage settings: https://dashboard.infracost.io/org/%s/repos\n", org.Slug)
+		fmt.Println("To manage settings, visit:")
+		fmt.Printf("  https://dashboard.infracost.io/org/%s/repos\n", org.Slug)
 		return nil
 	}
 
@@ -248,7 +249,8 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 	fmt.Println()
 	fmt.Println("Once connected, Infracost will comment on every PR automatically.")
 	fmt.Println()
-	fmt.Println("Need CI pipeline control instead?  infracost ci setup --ci-pipeline")
+	fmt.Println("To use CI pipeline mode instead, run:")
+	fmt.Println("  infracost ci setup --ci-pipeline")
 
 	return nil
 }
@@ -262,7 +264,8 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		ui.Successf("Git repository      %s", repo.slug())
 		ui.Failf("CI provider         %s detected — GitHub Actions only for now", provider)
 		fmt.Println()
-		fmt.Println("Run `infracost ci setup` to use the app integration instead.")
+		fmt.Println("To use the app integration instead, run:")
+		fmt.Println("  infracost ci setup")
 		return fmt.Errorf("%s is not supported for CI pipeline mode", provider)
 	}
 
