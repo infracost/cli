@@ -80,7 +80,7 @@ func Scan(cfg *config.Config) *cobra.Command {
 					} else if uc != nil {
 						for _, org := range uc.Organizations {
 							if org.ID == cfg.OrgID {
-								_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "→ %s (overriding default)\n", org.Slug)
+								ui.Stepf("%s (overriding default)", org.Slug)
 								break
 							}
 						}

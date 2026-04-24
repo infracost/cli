@@ -328,14 +328,14 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 	bin, err := resolveAgentBinary(cfg, a)
 	if err != nil {
 		if a.url != "" {
-			fmt.Printf("!  Could not find a CLI for %s on your PATH.\n", a.name)
+			ui.Warnf("Could not find a CLI for %s on your PATH.", a.name)
 			if a.hint != "" {
 				fmt.Println(a.hint)
 			}
 			if err := browser.Open(a.url); err != nil {
-				fmt.Printf("✗  Failed to open browser. Visit the URL manually:\n   %s\n", a.url)
+				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", a.url)
 			} else {
-				fmt.Printf("✔  Opened %s in your browser.\n", a.url)
+				ui.Successf("Opened %s in your browser.", a.url)
 			}
 			return nil
 		}
@@ -346,7 +346,7 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 		return err
 	}
 
-	fmt.Printf("✔  Infracost skills enabled for %s. Restart your agent to activate.\n", a.name)
+	ui.Successf("Infracost skills enabled for %s. Restart your agent to activate.", a.name)
 	return nil
 }
 
@@ -369,6 +369,6 @@ func removeAgent(cfg *config.Config, a agent, scope string) error {
 		return err
 	}
 
-	fmt.Printf("✔  Infracost skills removed from %s.\n", a.name)
+	ui.Successf("Infracost skills removed from %s.", a.name)
 	return nil
 }

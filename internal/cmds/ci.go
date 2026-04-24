@@ -158,7 +158,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 	fmt.Println("Scanning repository")
 
 	provider := detectVCSProvider(repo)
-	fmt.Printf("✔  %s repository  %s\n", provider, repo.slug())
+	ui.Successf("%s repository  %s", provider, repo.slug())
 
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
@@ -170,7 +170,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 		return err
 	}
 
-	fmt.Printf("✔  Infracost org      %s\n", org.Name)
+	ui.Successf("Infracost org      %s", org.Name)
 
 	// Check if the repo is already connected via the app integration.
 	orgClient := cfg.Dashboard.Client(api.Client(ctx, source, org.ID))
@@ -182,7 +182,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 		return err
 	}
 	if connected {
-		fmt.Println("✔  App integration already connected")
+		ui.Success("App integration already connected")
 		fmt.Println()
 		fmt.Println("This repository is already sending PR cost estimates.")
 		fmt.Printf("To manage settings: https://dashboard.infracost.io/org/%s/repos\n", org.Slug)
@@ -202,9 +202,9 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 	fmt.Println()
 
 	if err := browser.Open(dashboardURL); err != nil {
-		fmt.Println("!  Failed to open browser. Visit the URL above manually.")
+		ui.Warn("Failed to open browser. Visit the URL above manually.")
 	} else {
-		fmt.Println("✔  Browser opened")
+		ui.Success("Browser opened")
 	}
 
 	fmt.Println()
@@ -221,18 +221,18 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 
 	if !repo.isGitHub() {
 		provider := detectVCSProvider(repo)
-		fmt.Printf("✔  Git repository      %s\n", repo.slug())
-		fmt.Printf("✗  CI provider         %s detected — GitHub Actions only for now\n", provider)
+		ui.Successf("Git repository      %s", repo.slug())
+		ui.Failf("CI provider         %s detected — GitHub Actions only for now", provider)
 		fmt.Println()
 		fmt.Println("Run `infracost ci setup` to use the app integration instead.")
 		return fmt.Errorf("%s is not supported for CI pipeline mode", provider)
 	}
 
-	fmt.Printf("✔  GitHub repository   %s\n", repo.slug())
+	ui.Successf("GitHub repository   %s", repo.slug())
 
 	apiKey := os.Getenv("INFRACOST_API_KEY")
 	if apiKey == "" {
-		fmt.Println("✗  Infracost API key   not found")
+		ui.Fail("Infracost API key   not found")
 		fmt.Println()
 		fmt.Println("CI pipeline setup is currently in early access.")
 		fmt.Println("To get access, please contact a sales representative.")
@@ -241,7 +241,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		fmt.Println("  export INFRACOST_API_KEY=<your-key>")
 		return fmt.Errorf("INFRACOST_API_KEY environment variable not set")
 	}
-	fmt.Println("✔  Infracost API key   ready (from INFRACOST_API_KEY)")
+	ui.Success("Infracost API key   ready (from INFRACOST_API_KEY)")
 
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
@@ -252,14 +252,14 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	if err != nil {
 		return err
 	}
-	fmt.Printf("✔  Infracost org       %s\n", org.Name)
+	ui.Successf("Infracost org       %s", org.Name)
 
 	ghPath, _ := exec.LookPath("gh")
 	hasGH := ghPath != ""
 	if hasGH {
-		fmt.Println("✔  gh CLI              available")
+		ui.Success("gh CLI              available")
 	} else {
-		fmt.Println("!  gh CLI              not found — secret will need to be set manually")
+		ui.Warn("gh CLI              not found — secret will need to be set manually")
 	}
 
 	workflowDir := filepath.Join(repoRoot, ".github", "workflows")
@@ -278,11 +278,11 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	fmt.Println()
 	fmt.Println("This will:")
 	if writeWorkflows {
-		fmt.Println("  →  Create  .github/workflows/infracost-diff.yml")
-		fmt.Println("  →  Create  .github/workflows/infracost-scan.yml")
+		ui.Step("Create  .github/workflows/infracost-diff.yml")
+		ui.Step("Create  .github/workflows/infracost-scan.yml")
 	}
 	if hasGH {
-		fmt.Printf("  →  Set     INFRACOST_API_KEY secret on %s\n", repo.slug())
+		ui.Stepf("Set     INFRACOST_API_KEY secret on %s", repo.slug())
 	}
 
 	if !yes {
@@ -312,12 +312,12 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		if err := os.WriteFile(diffPath, []byte(diffWorkflowContent()), 0o600); err != nil {
 			return fmt.Errorf("writing diff workflow: %w", err)
 		}
-		fmt.Println("✔  Created .github/workflows/infracost-diff.yml")
+		ui.Success("Created .github/workflows/infracost-diff.yml")
 
 		if err := os.WriteFile(scanPath, []byte(scanWorkflowContent(defaultBranch)), 0o600); err != nil {
 			return fmt.Errorf("writing scan workflow: %w", err)
 		}
-		fmt.Println("✔  Created .github/workflows/infracost-scan.yml")
+		ui.Success("Created .github/workflows/infracost-scan.yml")
 	}
 
 	if hasGH {
@@ -325,11 +325,11 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 			"--body", apiKey,
 			"--repo", repo.slug())
 		if err := ghCmd.Run(); err != nil {
-			fmt.Println("!  Failed to set INFRACOST_API_KEY secret via gh")
+			ui.Warn("Failed to set INFRACOST_API_KEY secret via gh")
 			fmt.Println()
 			printManualSecretInstructions(repo)
 		} else {
-			fmt.Println("✔  Set INFRACOST_API_KEY secret (via gh secret set)")
+			ui.Success("Set INFRACOST_API_KEY secret (via gh secret set)")
 		}
 	} else {
 		fmt.Println()

@@ -76,7 +76,7 @@ func Update(ctx context.Context) error {
 	}
 
 	latestVersion, _ := semver.NewVersion(info.Latest)
-	fmt.Printf("Updating %s → v%s...\n", version.Version, latestVersion)
+	ui.Stepf("Updating %s → v%s...", version.Version, latestVersion)
 
 	return ui.RunWithSpinnerErr(ctx, "Downloading update...", "Download complete", func(ctx context.Context) error {
 		client := newGitHubClient()

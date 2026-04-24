@@ -155,15 +155,15 @@ func installIDE(i ide) error {
 
 	if i.url != "" {
 		if len(i.binaries) > 0 {
-			fmt.Printf("!  Could not find a CLI for %s on your PATH.\n", i.name)
+			ui.Warnf("Could not find a CLI for %s on your PATH.", i.name)
 		}
 		if i.hint != "" {
 			fmt.Println(i.hint)
 		}
 		if err := browser.Open(i.url); err != nil {
-			fmt.Printf("✗  Failed to open browser. Visit the URL manually:\n   %s\n", i.url)
+			ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", i.url)
 		} else {
-			fmt.Printf("✔  Opened %s in your browser.\n", i.url)
+			ui.Successf("Opened %s in your browser.", i.url)
 		}
 		return nil
 	}

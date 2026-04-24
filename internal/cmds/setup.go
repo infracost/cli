@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,7 @@ func Setup(cfg *config.Config) *cobra.Command {
 			// Step 1: Login
 			ctx := cmd.Context()
 			if ts := cfg.Auth.TokenFromCache(ctx); ts != nil {
-				fmt.Println("✔  Already logged in")
+				ui.Success("Already logged in")
 			} else {
 				if err := RunLogin(ctx, cfg); err != nil {
 					return err
