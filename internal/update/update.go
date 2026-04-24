@@ -18,6 +18,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/google/go-github/v83/github"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/version"
 )
 
@@ -60,8 +61,12 @@ func CheckLatestVersion(ctx context.Context) (VersionInfo, error) {
 }
 
 func Update(ctx context.Context) error {
-	info, err := CheckLatestVersion(ctx)
-	if err != nil {
+	var info VersionInfo
+	if err := ui.RunWithSpinnerErr(ctx, "Checking for updates...", "Update check complete", func(ctx context.Context) error {
+		var err error
+		info, err = CheckLatestVersion(ctx)
+		return err
+	}); err != nil {
 		return err
 	}
 
@@ -73,50 +78,51 @@ func Update(ctx context.Context) error {
 	latestVersion, _ := semver.NewVersion(info.Latest)
 	fmt.Printf("Updating %s → v%s...\n", version.Version, latestVersion)
 
-	client := newGitHubClient()
-	release, _, err := client.Repositories.GetLatestRelease(ctx, repoOwner, repoName)
-	if err != nil {
-		return fmt.Errorf("failed to fetch latest release: %w", err)
-	}
-
-	assetName := expectedAssetName(latestVersion.String())
-	var assetID int64
-	for _, a := range release.Assets {
-		if a.GetName() == assetName {
-			assetID = a.GetID()
-			break
-		}
-	}
-	if assetID == 0 {
-		return fmt.Errorf("no release asset found for %s/%s (expected %s)", runtime.GOOS, runtime.GOARCH, assetName)
-	}
-
-	rc, _, err := client.Repositories.DownloadReleaseAsset(ctx, repoOwner, repoName, assetID, &http.Client{Timeout: 60 * time.Second})
-	if err != nil {
-		return fmt.Errorf("failed to download asset: %w", err)
-	}
-	assetData, err := io.ReadAll(rc)
-	_ = rc.Close()
-	if err != nil {
-		return fmt.Errorf("failed to read asset: %w", err)
-	}
-
-	for _, binaryName := range getBinaryNames() {
-
-		binaryData, err := extractBinary(assetName, assetData, binaryName)
+	return ui.RunWithSpinnerErr(ctx, "Downloading update...", "Download complete", func(ctx context.Context) error {
+		client := newGitHubClient()
+		release, _, err := client.Repositories.GetLatestRelease(ctx, repoOwner, repoName)
 		if err != nil {
-			continue
+			return fmt.Errorf("failed to fetch latest release: %w", err)
 		}
 
-		if err := replaceBinary(binaryData); err != nil {
-			return fmt.Errorf("failed to replace binary: %w", err)
+		assetName := expectedAssetName(latestVersion.String())
+		var assetID int64
+		for _, a := range release.Assets {
+			if a.GetName() == assetName {
+				assetID = a.GetID()
+				break
+			}
+		}
+		if assetID == 0 {
+			return fmt.Errorf("no release asset found for %s/%s (expected %s)", runtime.GOOS, runtime.GOARCH, assetName)
 		}
 
-		fmt.Printf("Updated to v%s.\n", latestVersion)
-		return nil
-	}
+		rc, _, err := client.Repositories.DownloadReleaseAsset(ctx, repoOwner, repoName, assetID, &http.Client{Timeout: 60 * time.Second})
+		if err != nil {
+			return fmt.Errorf("failed to download asset: %w", err)
+		}
+		assetData, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return fmt.Errorf("failed to read asset: %w", err)
+		}
 
-	return fmt.Errorf("no suitable binary found in asset %q", assetName)
+		for _, binaryName := range getBinaryNames() {
+			binaryData, err := extractBinary(assetName, assetData, binaryName)
+			if err != nil {
+				continue
+			}
+
+			if err := replaceBinary(binaryData); err != nil {
+				return fmt.Errorf("failed to replace binary: %w", err)
+			}
+
+			fmt.Printf("Updated to v%s.\n", latestVersion)
+			return nil
+		}
+
+		return fmt.Errorf("no suitable binary found in asset %q", assetName)
+	})
 }
 
 func getBinaryNames() []string {

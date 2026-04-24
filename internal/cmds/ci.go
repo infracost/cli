@@ -14,6 +14,7 @@ import (
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"github.com/spf13/cobra"
@@ -173,7 +174,14 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 
 	// Check if the repo is already connected via the app integration.
 	orgClient := cfg.Dashboard.Client(api.Client(ctx, source, org.ID))
-	if connected, _ := orgClient.HasRepo(ctx, org.ID, repo.slug()); connected {
+	var connected bool
+	if err := ui.RunWithSpinnerErr(ctx, "Checking repository...", "Repository checked", func(ctx context.Context) error {
+		connected, _ = orgClient.HasRepo(ctx, org.ID, repo.slug())
+		return nil
+	}); err != nil {
+		return err
+	}
+	if connected {
 		fmt.Println("✔  App integration already connected")
 		fmt.Println()
 		fmt.Println("This repository is already sending PR cost estimates.")

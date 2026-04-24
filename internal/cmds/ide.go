@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"github.com/spf13/cobra"
 )
@@ -136,15 +137,19 @@ func installIDE(i ide) error {
 			continue
 		}
 
-		fmt.Printf("Installing Infracost extension via %s...\n", bin)
-		cmd := i.installCmd(path)
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("installing extension: %w", err)
+		var actionErr error
+		if err := ui.RunWithSpinner(fmt.Sprintf("Installing Infracost extension via %s...", bin), "Infracost extension installed", func() {
+			cmd := i.installCmd(path)
+			cmd.Stdout = nil
+			cmd.Stderr = nil
+			actionErr = cmd.Run()
+		}); err != nil {
+			return err
+		}
+		if actionErr != nil {
+			return fmt.Errorf("installing extension: %w", actionErr)
 		}
 
-		fmt.Println("✔  Infracost extension installed successfully.")
 		return nil
 	}
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"github.com/spf13/cobra"
 )
@@ -34,17 +35,25 @@ type agent struct {
 }
 
 func pluginSetup(bin, marketplace, plugin, scope string) error {
-	fmt.Println("Adding Infracost skills marketplace...")
-	if err := runAgentBinary(bin, "plugin", "marketplace", "add", marketplace); err != nil {
-		return fmt.Errorf("adding marketplace: %w", err)
-	}
-	fmt.Println("✔  Marketplace added")
+	var actionErr error
 
-	fmt.Println("Installing Infracost plugin...")
-	if err := runAgentBinary(bin, "plugin", "install", "--scope", scope, plugin); err != nil {
-		return fmt.Errorf("installing plugin: %w", err)
+	if err := ui.RunWithSpinner("Adding Infracost skills marketplace...", "Marketplace added", func() {
+		actionErr = runAgentBinary(bin, "plugin", "marketplace", "add", marketplace)
+	}); err != nil {
+		return err
 	}
-	fmt.Println("✔  Plugin installed")
+	if actionErr != nil {
+		return fmt.Errorf("adding marketplace: %w", actionErr)
+	}
+
+	if err := ui.RunWithSpinner("Installing Infracost plugin...", "Plugin installed", func() {
+		actionErr = runAgentBinary(bin, "plugin", "install", "--scope", scope, plugin)
+	}); err != nil {
+		return err
+	}
+	if actionErr != nil {
+		return fmt.Errorf("installing plugin: %w", actionErr)
+	}
 
 	return nil
 }
@@ -62,15 +71,24 @@ func pluginCheck(bin, name string) (bool, error) {
 
 func pluginTeardown(bin, marketplaceName, plugin, scope string) error {
 	var errs []error
+	var actionErr error
 
-	fmt.Println("Uninstalling Infracost plugin...")
-	if err := runAgentBinary(bin, "plugin", "uninstall", "--scope", scope, plugin); err != nil {
-		errs = append(errs, fmt.Errorf("uninstalling plugin: %w", err))
+	if err := ui.RunWithSpinner("Uninstalling Infracost plugin...", "Plugin uninstalled", func() {
+		actionErr = runAgentBinary(bin, "plugin", "uninstall", "--scope", scope, plugin)
+	}); err != nil {
+		return err
+	}
+	if actionErr != nil {
+		errs = append(errs, fmt.Errorf("uninstalling plugin: %w", actionErr))
 	}
 
-	fmt.Println("Removing Infracost skills marketplace...")
-	if err := runAgentBinary(bin, "plugin", "marketplace", "remove", marketplaceName); err != nil {
-		errs = append(errs, fmt.Errorf("removing marketplace: %w", err))
+	if err := ui.RunWithSpinner("Removing Infracost skills marketplace...", "Marketplace removed", func() {
+		actionErr = runAgentBinary(bin, "plugin", "marketplace", "remove", marketplaceName)
+	}); err != nil {
+		return err
+	}
+	if actionErr != nil {
+		errs = append(errs, fmt.Errorf("removing marketplace: %w", actionErr))
 	}
 
 	return errors.Join(errs...)

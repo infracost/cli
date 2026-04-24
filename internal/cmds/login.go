@@ -6,6 +6,7 @@ import (
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
 )
@@ -35,8 +36,13 @@ func RunLogin(ctx context.Context, cfg *config.Config) error {
 	fmt.Println("Retrieved valid access token.")
 
 	// Always fetch fresh user/org data on login, bypassing the staleness check.
-	client := cfg.Dashboard.Client(api.Client(ctx, source, ""))
-	if _, err := fetchAndCacheUser(ctx, cfg, client); err != nil {
+	if err := ui.RunWithSpinnerErr(ctx, "Fetching user data...", "User data loaded", func(ctx context.Context) error {
+		client := cfg.Dashboard.Client(api.Client(ctx, source, ""))
+		if _, err := fetchAndCacheUser(ctx, cfg, client); err != nil {
+			return fmt.Errorf("failed to refresh user cache after login: %w", err)
+		}
+		return nil
+	}); err != nil {
 		logging.WithError(err).Msg("failed to refresh user cache after login")
 	}
 
