@@ -54,47 +54,12 @@ func parseRemoteURL(remoteURL string) (repoInfo, error) {
 	return repoInfo{}, fmt.Errorf("could not parse remote URL %q — expected SSH (git@host:owner/repo.git) or HTTPS (https://host/owner/repo.git) format", remoteURL)
 }
 
-// selectSetupOrg resolves the user's organization for setup commands.
-// It respects the --org flag (via resolveOrg from org.go), auto-selects when
-// there is only one org, and errors when there are multiple without --org set.
+// resolveSetupOrgWithSpinner resolves the user's organization for setup
+// commands, showing a spinner while fetching the org list. The org resolution
+// step (resolveOrg) runs outside the spinner because it may prompt
+// interactively. It respects the --org flag, auto-selects when there is only
+// one org, and errors when there are multiple without --org set.
 // TODO(DEV-232): Replace the multi-org error with an interactive org picker.
-func selectSetupOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) (dashboard.Organization, error) {
-	if err := resolveOrg(ctx, cfg, source); err != nil {
-		return dashboard.Organization{}, err
-	}
-
-	client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
-	user, err := client.CurrentUser(ctx)
-	if err != nil {
-		return dashboard.Organization{}, fmt.Errorf("fetching current user: %w", err)
-	}
-
-	if len(user.Organizations) == 0 {
-		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost login'")
-	}
-
-	// If --org resolved to a specific org ID, find it.
-	if cfg.OrgID != "" {
-		for _, org := range user.Organizations {
-			if org.ID == cfg.OrgID {
-				return org, nil
-			}
-		}
-		return dashboard.Organization{}, fmt.Errorf("organization %q not found — check the value passed to --org", cfg.Org)
-	}
-
-	if len(user.Organizations) == 1 {
-		return user.Organizations[0], nil
-	}
-
-	return dashboard.Organization{}, fmt.Errorf(
-		"you belong to multiple organizations — use --org to select one",
-	)
-}
-
-// resolveSetupOrgWithSpinner is like selectSetupOrg but shows a spinner
-// during the network call to fetch the org list. The org resolution step
-// (resolveOrg) runs outside the spinner because it may prompt interactively.
 func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) (dashboard.Organization, error) {
 	if err := resolveOrg(ctx, cfg, source); err != nil {
 		return dashboard.Organization{}, err
