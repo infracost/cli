@@ -333,11 +333,12 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 				fmt.Println(a.hint)
 			}
 			fmt.Printf("  %s\n", a.url)
-			ui.PressEnter("\nPress Enter to open in your browser...")
-			if err := browser.Open(a.url); err != nil {
-				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", a.url)
-			} else {
-				ui.Successf("Opened %s in your browser.", a.url)
+			if ui.PressEnter("\nPress Enter to open in your browser...") {
+				if err := browser.Open(a.url); err != nil {
+					ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", a.url)
+				} else {
+					ui.Successf("Opened %s in your browser.", a.url)
+				}
 			}
 			return nil
 		}

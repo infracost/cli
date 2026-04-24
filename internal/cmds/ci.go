@@ -70,7 +70,7 @@ func selectSetupOrg(ctx context.Context, cfg *config.Config, source oauth2.Token
 	}
 
 	if len(user.Organizations) == 0 {
-		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or check that you're logged into the right account with `infracost login`")
+		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost login'")
 	}
 
 	// If --org resolved to a specific org ID, find it.
@@ -111,7 +111,7 @@ func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source 
 	}
 
 	if len(user.Organizations) == 0 {
-		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or check that you're logged into the right account with `infracost login`")
+		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost login'")
 	}
 
 	if cfg.OrgID != "" {
@@ -238,12 +238,12 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 
 	dashboardURL := fmt.Sprintf("https://dashboard.infracost.io/org/%s/repos", org.Slug)
 	fmt.Printf("  %s\n", dashboardURL)
-	ui.PressEnter("\nPress Enter to open in your browser...")
-
-	if err := browser.Open(dashboardURL); err != nil {
-		ui.Warn("Failed to open browser. Visit the URL above manually.")
-	} else {
-		ui.Success("Browser opened")
+	if ui.PressEnter("\nPress Enter to open in your browser...") {
+		if err := browser.Open(dashboardURL); err != nil {
+			ui.Warn("Failed to open browser. Visit the URL above manually.")
+		} else {
+			ui.Success("Browser opened")
+		}
 	}
 
 	fmt.Println()

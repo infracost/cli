@@ -15,7 +15,7 @@ import (
 // user identity (for org resolution, etc.) and cannot operate with tokens.
 func requireUserLogin(cfg *config.Config) error {
 	if len(cfg.Auth.AuthenticationToken) > 0 {
-		return fmt.Errorf("setup requires interactive login, it cannot be used with INFRACOST_CLI_AUTHENTICATION_TOKEN\nRun `infracost login` first, then retry")
+		return fmt.Errorf("setup requires interactive login, it cannot be used with INFRACOST_CLI_AUTHENTICATION_TOKEN — run 'infracost login' first, then retry")
 	}
 	return nil
 }

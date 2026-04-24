@@ -72,16 +72,22 @@ func Hintf(indent int, format string, args ...any) {
 }
 
 // PressEnter prints a message and waits for the user to press Enter.
-func PressEnter(msg string) {
+// Returns true if the user pressed Enter, false on EOF or error (e.g.
+// non-interactive stdin).
+func PressEnter(msg string) bool {
 	fmt.Printf("%s", msg)
-	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+	_, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	return err == nil
 }
 
 // OpenOrContinue displays a URL and prompts the user to press Enter to open
-// it in their browser. The user can press Ctrl+C to skip.
+// it in their browser. The user can press Ctrl+C to skip. If stdin is
+// non-interactive (e.g. in tests), the browser is not opened.
 func OpenOrContinue(url string) {
 	fmt.Printf("  %s\n", url)
-	PressEnter("\nPress Enter to open in your browser...")
+	if !PressEnter("\nPress Enter to open in your browser...") {
+		return
+	}
 	if err := browser.Open(url); err != nil {
 		Failf("Failed to open browser. Visit the URL manually:\n   %s", url)
 	} else {

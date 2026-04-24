@@ -10,7 +10,7 @@ import (
 // using the cached user data. Returns the org ID and the org name.
 func ResolveOrgID(orgFlag string, orgs []CachedOrganization) (string, string, error) {
 	if orgFlag == "" {
-		return "", "", fmt.Errorf("--org was passed an empty value. This usually means the environment\n       variable you're referencing isn't set in this pipeline context.\n\n       Set INFRACOST_CLI_ORG or pass --org explicitly:\n         --org <your-org-slug>")
+		return "", "", fmt.Errorf("--org was passed an empty value — set INFRACOST_CLI_ORG or pass '--org <your-org-slug>' explicitly")
 	}
 
 	// Try exact match on slug or ID.
