@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/liamg/tml"
@@ -66,4 +68,10 @@ func Hint(indent int, msg string) {
 // Hintf prints a formatted indented hint.
 func Hintf(indent int, format string, args ...any) {
 	Hint(indent, fmt.Sprintf(format, args...))
+}
+
+// PressEnter prints a message and waits for the user to press Enter.
+func PressEnter(msg string) {
+	fmt.Printf("%s", msg)
+	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 }

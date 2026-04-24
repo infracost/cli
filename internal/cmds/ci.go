@@ -197,9 +197,8 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 	fmt.Println()
 
 	dashboardURL := fmt.Sprintf("https://dashboard.infracost.io/org/%s/repos", org.Slug)
-	fmt.Println("Opening your dashboard to connect this repository:")
 	fmt.Printf("  %s\n", dashboardURL)
-	fmt.Println()
+	ui.PressEnter("\nPress Enter to open in your browser...")
 
 	if err := browser.Open(dashboardURL); err != nil {
 		ui.Warn("Failed to open browser. Visit the URL above manually.")

@@ -160,6 +160,8 @@ func installIDE(i ide) error {
 		if i.hint != "" {
 			fmt.Println(i.hint)
 		}
+		fmt.Printf("  %s\n", i.url)
+		ui.PressEnter("\nPress Enter to open in your browser...")
 		if err := browser.Open(i.url); err != nil {
 			ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", i.url)
 		} else {
