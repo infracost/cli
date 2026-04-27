@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
@@ -35,19 +37,17 @@ func Inspect(cfg *config.Config) *cobra.Command {
 			}
 			return nil
 		},
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			startTime := time.Now()
 			var data *format.Output
 			var err error
 
 			if file != "" {
-				output, ferr := cache.ReadFile(file)
-				if ferr != nil {
-					return ferr
+				data, err = cache.ReadFile(file)
+				if err != nil {
+					return err
 				}
-				return inspect.Run(os.Stdout, output, opts)
-			}
-
-			if len(args) > 0 {
+			} else if len(args) > 0 {
 				absPath, err := filepath.Abs(filepath.Clean(args[0]))
 				if err != nil {
 					return fmt.Errorf("failed to resolve path: %w", err)
@@ -63,7 +63,14 @@ func Inspect(cfg *config.Config) *cobra.Command {
 				}
 			}
 
-			return inspect.Run(os.Stdout, data, opts)
+			if err := inspect.Run(os.Stdout, data, opts); err != nil {
+				return err
+			}
+
+			eventsClient := cfg.Events.Client(api.Client(cmd.Context(), cfg.Auth.TokenFromCache(cmd.Context()), cfg.OrgID))
+			data.TrackRun(cmd.Context(), eventsClient, time.Since(startTime).Seconds(), "inspect", nil)
+
+			return nil
 		},
 	}
 

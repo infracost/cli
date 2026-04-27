@@ -22,7 +22,7 @@ func Price(cfg *config.Config) *cobra.Command {
 		Use:   "price",
 		Short: "Read IaC from stdin, scan it, and print the cost estimate",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) (retErr error) {
 			dir, err := os.MkdirTemp("", "infracost-price-*")
 			if err != nil {
 				return fmt.Errorf("failed to create temporary directory: %w", err)
@@ -48,6 +48,19 @@ func Price(cfg *config.Config) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to log in: %w", err)
 			}
+
+			// Track price failures that occur after authentication succeeds.
+			defer func() {
+				if retErr == nil {
+					return
+				}
+				eventsClient := cfg.Events.Client(api.Client(cmd.Context(), source, cfg.OrgID))
+				msg := retErr.Error()
+				if len(msg) > 500 {
+					msg = msg[:500]
+				}
+				eventsClient.Push(cmd.Context(), "infracost-error", "error", msg)
+			}()
 
 			repositoryURL := vcs.GetRemoteURL(dir)
 			branchName := vcs.GetCurrentBranch(dir)

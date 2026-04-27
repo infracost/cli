@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/events"
@@ -20,11 +21,20 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// runTrackedCommands lists commands that fire their own infracost-run event
+// and should therefore be excluded from the generic infracost-command event.
+var runTrackedCommands = map[string]bool{
+	"scan":    true,
+	"price":   true,
+	"inspect": true,
+}
+
 func main() {
 	os.Exit(run())
 }
 
 func run() (exitCode int) {
+	startTime := time.Now()
 	var diags *diagnostic.Diagnostics
 	cfg := new(config.Config)
 	defer func() {
@@ -85,9 +95,29 @@ func run() (exitCode int) {
 		return 1
 	}
 
-	if err := cmd.Execute(); err != nil {
+	err := cmd.Execute()
+	if err != nil {
 		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_FAILED_OPERATION, err))
 	}
+
+	// Fire a lightweight infracost-command event for commands that don't
+	// already emit their own infracost-run event.
+	if command, ok := events.GetMetadata[string]("command"); ok && !runTrackedCommands[command] {
+		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+		extra := []interface{}{
+			"success", err == nil,
+			"durationSeconds", time.Since(startTime).Seconds(),
+		}
+		if err != nil {
+			msg := err.Error()
+			if len(msg) > 200 {
+				msg = msg[:200]
+			}
+			extra = append(extra, "errorMessage", msg)
+		}
+		client.Push(context.Background(), "infracost-command", extra...)
+	}
+
 	format.Diagnostics(diags)
 	if diags.Critical().Len() > 0 {
 		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
