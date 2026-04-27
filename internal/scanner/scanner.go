@@ -59,7 +59,7 @@ type TaggingPolicy struct {
 	*event.TagPolicy
 }
 
-func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters) ([]FinOpsPolicy, []TaggingPolicy, error) {
+func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters, providers []provider.Provider) ([]FinOpsPolicy, []TaggingPolicy, error) {
 
 	var tagPolicies []*event.TagPolicy
 	var finopsPolicySettings []*event.FinopsPolicySettings
@@ -87,14 +87,30 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		hasRunParameters = true
 	}
 
-	plugins := map[provider.Provider]func(hclog.Level) (provider.ProviderServiceClient, func(), error){
+	pluginLoaders := map[provider.Provider]func(hclog.Level) (provider.ProviderServiceClient, func(), error){
 		provider.Provider_PROVIDER_AWS:     s.plugins.Providers.LoadAWS,
 		provider.Provider_PROVIDER_GOOGLE:  s.plugins.Providers.LoadGoogle,
 		provider.Provider_PROVIDER_AZURERM: s.plugins.Providers.LoadAzurerm,
 	}
 
+	if providers == nil {
+		providers = []provider.Provider{
+			provider.Provider_PROVIDER_AWS,
+			provider.Provider_PROVIDER_GOOGLE,
+			provider.Provider_PROVIDER_AZURERM,
+		}
+	}
+
 	var finOpsPolicies []FinOpsPolicy
-	for prov, pluginLoader := range plugins {
+	for _, prov := range providers {
+		pluginLoader, ok := pluginLoaders[prov]
+		if !ok {
+			continue
+		}
+		if err := s.plugins.EnsureProvider(prov); err != nil {
+			logging.WithError(err).Msgf("failed to ensure provider %s", prov)
+			continue
+		}
 		providerFinopsPolicies, err := s.plugins.Providers.ListFinopsPolicies(ctx, pluginLoader)
 		if err != nil {
 			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", prov)
