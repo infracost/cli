@@ -42,12 +42,13 @@ func Inspect(cfg *config.Config) *cobra.Command {
 			var data *format.Output
 			var err error
 
-			if file != "" {
+			switch {
+			case file != "":
 				data, err = cache.ReadFile(file)
 				if err != nil {
 					return err
 				}
-			} else if len(args) > 0 {
+			case len(args) > 0:
 				absPath, err := filepath.Abs(filepath.Clean(args[0]))
 				if err != nil {
 					return fmt.Errorf("failed to resolve path: %w", err)
@@ -56,7 +57,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("no cached results found, run 'infracost scan %s' first", args[0])
 				}
-			} else {
+			default:
 				data, err = cfg.Cache.Latest(false)
 				if err != nil {
 					return fmt.Errorf("no cached results found, run 'infracost scan <path>' first")

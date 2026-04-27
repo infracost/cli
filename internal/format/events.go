@@ -256,8 +256,8 @@ func trackFinopsDiff(ctx context.Context, client events.Client, p *ProjectOutput
 		current[r.PolicySlug] = addrs
 	}
 
-	repoId, _ := events.GetMetadata[string]("repoId")
-	branchId, _ := events.GetMetadata[string]("branchId")
+	repoID, _ := events.GetMetadata[string]("repoId")
+	branchID, _ := events.GetMetadata[string]("branchId")
 	caller, _ := events.GetMetadata[string]("caller")
 	ciPlatform, _ := events.GetMetadata[string]("ciPlatform")
 	cliPlatform, _ := events.GetMetadata[string]("cliPlatform")
@@ -277,8 +277,8 @@ func trackFinopsDiff(ctx context.Context, client events.Client, p *ProjectOutput
 				"resourceAddress", fr.Name,
 				"pullRequestId", "",
 				"autoFixPullRequest", false,
-				"repoId", repoId,
-				"branchId", branchId,
+				"repoId", repoID,
+				"branchId", branchID,
 				"caller", caller,
 				"ciPlatform", ciPlatform,
 				"cliPlatform", cliPlatform,
@@ -298,8 +298,8 @@ func trackTaggingDiff(ctx context.Context, client events.Client, p *ProjectOutpu
 		current[r.PolicyID] = addrs
 	}
 
-	repoId, _ := events.GetMetadata[string]("repoId")
-	branchId, _ := events.GetMetadata[string]("branchId")
+	repoID, _ := events.GetMetadata[string]("repoId")
+	branchID, _ := events.GetMetadata[string]("branchId")
 	caller, _ := events.GetMetadata[string]("caller")
 	ciPlatform, _ := events.GetMetadata[string]("ciPlatform")
 	cliPlatform, _ := events.GetMetadata[string]("cliPlatform")
@@ -318,8 +318,8 @@ func trackTaggingDiff(ctx context.Context, client events.Client, p *ProjectOutpu
 				"resourceAddress", fr.Address,
 				"pullRequestId", "",
 				"autoFixPullRequest", false,
-				"repoId", repoId,
-				"branchId", branchId,
+				"repoId", repoID,
+				"branchId", branchID,
 				"caller", caller,
 				"ciPlatform", ciPlatform,
 				"cliPlatform", cliPlatform,
