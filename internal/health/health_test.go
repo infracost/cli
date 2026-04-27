@@ -129,9 +129,9 @@ func TestRender_AllPass(t *testing.T) {
 	out := buf.String()
 
 	assert.Contains(t, out, "Infracost Health v1.0.0 - running 2 checks")
-	assert.Contains(t, out, "✓ Check one")
-	assert.Contains(t, out, "✓ Check two")
-	assert.Contains(t, out, "✓ 2 passed")
+	assert.Contains(t, out, "Check one")
+	assert.Contains(t, out, "Check two")
+	assert.Contains(t, out, "2 passed")
 }
 
 func TestRender_FailureWithHint(t *testing.T) {
@@ -144,9 +144,9 @@ func TestRender_FailureWithHint(t *testing.T) {
 	health.Render(&buf, report, "v1.0.0", false, false)
 	out := buf.String()
 
-	assert.Contains(t, out, "✗ No creds")
-	assert.Contains(t, out, "→ fix it")
-	assert.Contains(t, out, "✗ 1 issue")
+	assert.Contains(t, out, "No creds")
+	assert.Contains(t, out, "fix it")
+	assert.Contains(t, out, "1 issue")
 }
 
 func TestRender_SkippedChecks(t *testing.T) {
@@ -165,9 +165,9 @@ func TestRender_SkippedChecks(t *testing.T) {
 	health.Render(&buf, report, "v1.0.0", false, false)
 	out := buf.String()
 
-	assert.Contains(t, out, "⊘ Token valid")
-	assert.Contains(t, out, "→ skipped")
-	assert.Contains(t, out, "⊘ 1 skipped")
+	assert.Contains(t, out, "Token valid")
+	assert.Contains(t, out, "skipped")
+	assert.Contains(t, out, "1 skipped")
 }
 
 func TestRender_VerboseShowsExtraLines(t *testing.T) {
@@ -193,7 +193,7 @@ func TestRender_VerboseShowsExtraLines(t *testing.T) {
 	health.Render(&buf, report, "v1.0.0", true, false)
 	out := buf.String()
 
-	assert.Contains(t, out, "✓ Check with details")
+	assert.Contains(t, out, "Check with details")
 	assert.Contains(t, out, "    detail line 1")
 	assert.Contains(t, out, "    detail line 2")
 }
@@ -221,6 +221,6 @@ func TestRender_NonVerboseHidesExtraLines(t *testing.T) {
 	health.Render(&buf, report, "v1.0.0", false, false)
 	out := buf.String()
 
-	assert.Contains(t, out, "✓ Check with details")
+	assert.Contains(t, out, "Check with details")
 	assert.NotContains(t, out, "secret detail")
 }

@@ -44,7 +44,7 @@ func orgList(cfg *config.Config) *cobra.Command {
 				marker := "  "
 				suffix := ""
 				if strings.EqualFold(org.Slug, currentSlug) {
-					marker = "✓ "
+					marker = "✔ "
 					if source == orgSourceRepo {
 						suffix = "  ← set for this repo"
 					}

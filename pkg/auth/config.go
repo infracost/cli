@@ -203,9 +203,9 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 		caller, _ := events.GetMetadata[string]("caller")
 		switch {
 		case caller != "":
-			return nil, fmt.Errorf("not logged in. Run `infracost login` in your terminal first, then retry")
+			return nil, fmt.Errorf("not logged in — run 'infracost login' in your terminal first, then retry")
 		default:
-			return nil, fmt.Errorf("not logged in. Set INFRACOST_CLI_AUTHENTICATION_TOKEN for non-interactive environments, or run `infracost login` in an interactive terminal first")
+			return nil, fmt.Errorf("not logged in — set INFRACOST_CLI_AUTHENTICATION_TOKEN for non-interactive environments, or run 'infracost login' in an interactive terminal first")
 		}
 	}
 

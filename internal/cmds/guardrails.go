@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
@@ -55,23 +57,29 @@ func Guardrails(cfg *config.Config) *cobra.Command {
 			}
 
 			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-			runParameters, err := client.RunParameters(cmd.Context(), repositoryURL, branchName)
-			if err != nil {
-				return fmt.Errorf("fetching guardrails: %w", err)
-			}
 
-			if cfg.Org == "" {
-				cfg.OrgID = runParameters.OrganizationID
-			}
-
-			pj := protojson.UnmarshalOptions{DiscardUnknown: true}
 			var guardrails []*event.Guardrail
-			for _, raw := range runParameters.Guardrails {
-				g := new(event.Guardrail)
-				if err := pj.Unmarshal(raw, g); err != nil {
-					return fmt.Errorf("failed to unmarshal guardrail: %w", err)
+			if err := ui.RunWithSpinnerErr(cmd.Context(), "Fetching guardrails...", "Guardrails loaded", func(ctx context.Context) error {
+				runParameters, err := client.RunParameters(ctx, repositoryURL, branchName)
+				if err != nil {
+					return fmt.Errorf("fetching guardrails: %w", err)
 				}
-				guardrails = append(guardrails, g)
+
+				if cfg.Org == "" {
+					cfg.OrgID = runParameters.OrganizationID
+				}
+
+				pj := protojson.UnmarshalOptions{DiscardUnknown: true}
+				for _, raw := range runParameters.Guardrails {
+					g := new(event.Guardrail)
+					if err := pj.Unmarshal(raw, g); err != nil {
+						return fmt.Errorf("failed to unmarshal guardrail: %w", err)
+					}
+					guardrails = append(guardrails, g)
+				}
+				return nil
+			}); err != nil {
+				return err
 			}
 
 			fmt.Println()

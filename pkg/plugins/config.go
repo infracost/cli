@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins/parser"
@@ -182,37 +184,42 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 
 	logging.Infof("downloading plugin %q version %s for %s", plugin, wantVersion, platform)
 
-	archivePath, err := downloadAndVerify(artifact.URL, artifact.SHA)
-	if err != nil {
-		return "", fmt.Errorf("failed to download plugin %q: %w", plugin, err)
-	}
-	defer func() { _ = os.Remove(archivePath) }()
+	if err := ui.RunWithSpinnerErr(context.Background(), fmt.Sprintf("Downloading %s %s...", plugin, wantVersion), fmt.Sprintf("Downloaded %s %s", plugin, wantVersion), func(_ context.Context) error {
+		archivePath, err := downloadAndVerify(artifact.URL, artifact.SHA)
+		if err != nil {
+			return fmt.Errorf("failed to download plugin %q: %w", plugin, err)
+		}
+		defer func() { _ = os.Remove(archivePath) }()
 
-	if err := os.MkdirAll(filepath.Dir(binaryPath), 0750); err != nil {
-		return "", fmt.Errorf("failed to create plugin cache directory: %w (use INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY to change the location)", err)
-	}
+		if err := os.MkdirAll(filepath.Dir(binaryPath), 0750); err != nil {
+			return fmt.Errorf("failed to create plugin cache directory: %w (use INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY to change the location)", err)
+		}
 
-	tmpBinary := binaryPath + ".tmp"
-	defer func() { _ = os.Remove(tmpBinary) }()
+		tmpBinary := binaryPath + ".tmp"
+		defer func() { _ = os.Remove(tmpBinary) }()
 
-	switch {
-	case strings.HasSuffix(artifact.Name, ".tar.gz"):
-		err = unpackTarGz(archivePath, tmpBinary, plugin)
-	case strings.HasSuffix(artifact.Name, ".zip"):
-		err = unpackZip(archivePath, tmpBinary, binaryName)
-	default:
-		err = fmt.Errorf("unsupported archive format for %s", artifact.Name)
-	}
-	if err != nil {
-		return "", fmt.Errorf("failed to unpack plugin %q: %w", plugin, err)
-	}
+		switch {
+		case strings.HasSuffix(artifact.Name, ".tar.gz"):
+			err = unpackTarGz(archivePath, tmpBinary, plugin)
+		case strings.HasSuffix(artifact.Name, ".zip"):
+			err = unpackZip(archivePath, tmpBinary, binaryName)
+		default:
+			err = fmt.Errorf("unsupported archive format for %s", artifact.Name)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to unpack plugin %q: %w", plugin, err)
+		}
 
-	if err := os.Chmod(tmpBinary, 0750); err != nil { //nolint:gosec // G302: plugin binary must be executable
-		return "", fmt.Errorf("failed to make plugin binary executable: %w", err)
-	}
+		if err := os.Chmod(tmpBinary, 0750); err != nil { //nolint:gosec // G302: plugin binary must be executable
+			return fmt.Errorf("failed to make plugin binary executable: %w", err)
+		}
 
-	if err := renameWithRetry(tmpBinary, binaryPath); err != nil {
-		return "", fmt.Errorf("failed to install plugin binary: %w", err)
+		if err := renameWithRetry(tmpBinary, binaryPath); err != nil {
+			return fmt.Errorf("failed to install plugin binary: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return "", err
 	}
 
 	logging.Infof("installed plugin %q to %s", plugin, binaryPath)
