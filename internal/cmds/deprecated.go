@@ -14,8 +14,6 @@ import (
 // deprecation error pointing at the replacement; `breakdown` warns and
 // then runs `scan` so existing scripts keep working.
 func Deprecated(cfg *config.Config) []*cobra.Command {
-	cmds := []*cobra.Command{breakdownShim(cfg)}
-
 	removed := []struct{ name, replacement string }{
 		{"diff", "Use `infracost scan` instead."},
 		{"generate", "Use `infracost setup` instead."},
@@ -24,6 +22,9 @@ func Deprecated(cfg *config.Config) []*cobra.Command {
 		{"output", "This command has been removed."},
 		{"upload", "This command has been removed."},
 	}
+
+	cmds := make([]*cobra.Command, 0, 1+len(removed))
+	cmds = append(cmds, breakdownShim(cfg))
 	for _, l := range removed {
 		l := l
 		cmds = append(cmds, &cobra.Command{
