@@ -19,7 +19,7 @@ import (
 )
 
 func Scan(cfg *config.Config) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "scan [path]",
 		Aliases: []string{"analyse"}, // codespell:ignore analyse
 		Short:   "Scan your IaC and derive FinOps costs and policy violations",
@@ -146,4 +146,7 @@ func Scan(cfg *config.Config) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
+
+	return cmd
 }
