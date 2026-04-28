@@ -57,22 +57,38 @@ func run() (exitCode int) {
 		},
 	}
 
-	cmd.AddCommand(cmds.Setup(cfg))
-	cmd.AddCommand(cmds.Scan(cfg))
-	cmd.AddCommand(cmds.Policies(cfg))
-	cmd.AddCommand(cmds.Guardrails(cfg))
-	cmd.AddCommand(cmds.Budgets(cfg))
-	cmd.AddCommand(cmds.CI(cfg))
-	cmd.AddCommand(cmds.Agent(cfg))
-	cmd.AddCommand(cmds.IDE(cfg))
-	cmd.AddCommand(cmds.Inspect(cfg))
-	cmd.AddCommand(cmds.Auth(cfg))
-	cmd.AddCommand(cmds.Org(cfg))
-	cmd.AddCommand(cmds.Price(cfg))
-	cmd.AddCommand(cmds.WhoAmI(cfg))
-	cmd.AddCommand(cmds.Update(cfg))
+	cmd.AddGroup(
+		&cobra.Group{ID: "setup", Title: "Setup & integrations:"},
+		&cobra.Group{ID: "analyze", Title: "Analyze infrastructure:"},
+		&cobra.Group{ID: "workspace", Title: "Manage workspace:"},
+		&cobra.Group{ID: "maintain", Title: "CLI maintenance:"},
+	)
+
+	addCmd := func(c *cobra.Command, groupID string) {
+		c.GroupID = groupID
+		cmd.AddCommand(c)
+	}
+
+	addCmd(cmds.Setup(cfg), "setup")
+	addCmd(cmds.Auth(cfg), "setup")
+	addCmd(cmds.Agent(cfg), "setup")
+	addCmd(cmds.IDE(cfg), "setup")
+	addCmd(cmds.CI(cfg), "setup")
+
+	addCmd(cmds.Scan(cfg), "analyze")
+	addCmd(cmds.Inspect(cfg), "analyze")
+	addCmd(cmds.Price(cfg), "analyze")
+
+	addCmd(cmds.Org(cfg), "workspace")
+	addCmd(cmds.WhoAmI(cfg), "workspace")
+	addCmd(cmds.Policies(cfg), "workspace")
+	addCmd(cmds.Budgets(cfg), "workspace")
+	addCmd(cmds.Guardrails(cfg), "workspace")
+
+	addCmd(cmds.Doctor(cfg), "maintain")
+	addCmd(cmds.Update(cfg), "maintain")
+
 	cmd.AddCommand(cmds.Version(cfg))
-	cmd.AddCommand(cmds.Doctor(cfg))
 
 	for _, c := range cmds.Deprecated(cfg) {
 		cmd.AddCommand(c)

@@ -35,12 +35,19 @@ func ApplyHelpStyles(cmd *cobra.Command) {
 			"Aliases:",
 			"Examples:",
 			"Available Commands:",
+			"Additional Commands:",
 			"Flags:",
 			"Global Flags:",
 			"Additional help topics:",
 		}
 		for _, h := range headings {
 			tmpl = strings.Replace(tmpl, h, tml.Sprintf("<bold>%s</bold>", h), 1)
+		}
+
+		// Bold the title of each command group (rendered as `{{.Title}}` in
+		// cobra's template).
+		for _, g := range cmd.Groups() {
+			g.Title = tml.Sprintf("<bold>%s</bold>", g.Title)
 		}
 	}
 
