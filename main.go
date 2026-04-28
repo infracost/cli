@@ -90,7 +90,8 @@ func run() (exitCode int) {
 		return 1
 	}
 
-	if err := cmd.Execute(); err != nil {
+	err := cmd.Execute()
+	if err != nil {
 		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_FAILED_OPERATION, err))
 	}
 	format.Diagnostics(diags)
@@ -99,6 +100,9 @@ func run() (exitCode int) {
 		for _, diag := range diags.Critical().Unwrap() {
 			client.Push(context.Background(), "infracost-error", "error", diag.String())
 		}
+		return 1
+	}
+	if err != nil {
 		return 1
 	}
 
