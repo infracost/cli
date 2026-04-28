@@ -74,6 +74,8 @@ func run() (exitCode int) {
 	cmd.AddCommand(cmds.Version(cfg))
 	cmd.AddCommand(cmds.Doctor(cfg))
 
+	cmds.ApplyHelpStyles(cmd)
+
 	diags.Merge(process.PreProcess(cfg, cmd.PersistentFlags()))
 	if diags.Critical().Len() > 0 {
 		format.Diagnostics(diags)
