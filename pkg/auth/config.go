@@ -86,7 +86,7 @@ type ExternalConfig struct {
 	UseDeviceFlow bool `env:"INFRACOST_CLI_OAUTH_USE_DEVICE_FLOW"`
 
 	// UseAccessTokenCache indicates whether to use the token cache for authentication.
-	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Save access tokens to a file for convenience"`
+	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Read and save access tokens from a cache file (disable to force a fresh login)"`
 }
 
 func (c *Config) Process() {
