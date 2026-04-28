@@ -76,7 +76,7 @@ func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source 
 	}
 
 	if len(user.Organizations) == 0 {
-		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost login'")
+		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost auth login'")
 	}
 
 	if cfg.OrgID != "" {

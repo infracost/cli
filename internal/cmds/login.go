@@ -21,7 +21,7 @@ func Login(cfg *config.Config) *cobra.Command {
 	}
 }
 
-// RunLogin is the core logic for `infracost login`, callable from the unified
+// RunLogin is the core logic for `infracost auth login`, callable from the unified
 // `infracost setup` flow (DEV-230).
 func RunLogin(ctx context.Context, cfg *config.Config) error {
 	if len(cfg.Auth.AuthenticationToken) > 0 {

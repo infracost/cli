@@ -148,7 +148,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						if ts == nil {
 							return health.Result{
 								Status:  health.StatusFail,
-								Hint:    "Run `infracost login` to authenticate",
+								Hint:    "Run `infracost auth login` to authenticate",
 								Verbose: []string{fmt.Sprintf("token cache: %s", cfg.Auth.TokenCachePath)},
 							}
 						}
@@ -173,7 +173,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 							return health.Result{
 								Status: health.StatusFail,
 								Label:  "Token invalid",
-								Hint:   fmt.Sprintf("Run `infracost login` to re-authenticate (%s)", err),
+								Hint:   fmt.Sprintf("Run `infracost auth login` to re-authenticate (%s)", err),
 							}
 						}
 						var verbose []string
