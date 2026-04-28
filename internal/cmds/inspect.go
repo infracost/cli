@@ -19,6 +19,20 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "inspect [path]",
 		Short: "Inspect cached analysis results with filtering and grouping",
+		Example: `  # Show a summary of the latest scan
+  $ infracost inspect --summary
+
+  # Show the 10 most expensive resources
+  $ infracost inspect --top 10
+
+  # Group results by provider
+  $ infracost inspect --group-by provider
+
+  # Show only failing policies
+  $ infracost inspect --failing
+
+  # Output the results as JSON
+  $ infracost inspect --json`,
 		PreRunE: func(_ *cobra.Command, _ []string) error {
 			count := 0
 			if opts.Policy != "" {

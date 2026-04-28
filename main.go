@@ -38,9 +38,17 @@ func run() (exitCode int) {
 	}()
 
 	cmd := &cobra.Command{
-		Use:           "infracost",
-		Version:       version.Version,
-		Short:         "Cloud cost estimates for IaC in your CLI",
+		Use:     "infracost",
+		Version: version.Version,
+		Short:   "Cloud cost estimates for IaC in your CLI",
+		Example: `  # First-time setup (auth, agents, IDE, CI)
+  $ infracost setup
+
+  # Scan the current directory for costs and policy violations
+  $ infracost scan
+
+  # View a summary of the latest scan results
+  $ infracost inspect --summary`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {

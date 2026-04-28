@@ -28,7 +28,18 @@ func Doctor(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run diagnostic checks on your Infracost installation",
-		Args:  cobra.NoArgs,
+		Example: `  # Run the standard checks
+  $ infracost doctor
+
+  # Show full diagnostic detail for every check
+  $ infracost doctor --verbose
+
+  # Attempt to fix any failing checks
+  $ infracost doctor --fix
+
+  # Generate a support bundle to share with the Infracost team
+  $ infracost doctor --bundle`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if bundle && fix {
 				return fmt.Errorf("--bundle and --fix cannot be used together")

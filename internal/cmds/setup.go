@@ -25,6 +25,8 @@ func Setup(cfg *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Set up Infracost integrations",
 		Long:  "Walk through setting up Infracost for your coding agents, IDE, and CI pipeline",
+		Example: `  # Run the interactive setup walkthrough
+  $ infracost setup`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireUserLogin(cfg); err != nil {
 				return err
