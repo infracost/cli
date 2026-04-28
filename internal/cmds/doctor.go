@@ -222,7 +222,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 								Verbose: []string{fmt.Sprintf("user: %s (%s)", user.Email, user.ID)},
 							}
 						}
-						orgName := user.Organizations[0].Name
+						orgSlug := user.Organizations[0].Slug
 
 						// Build verbose org list, marking the selected org.
 						cached := cacheUser(cfg, user)
@@ -231,7 +231,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 							fmt.Sprintf("user: %s (%s)", user.Email, user.ID),
 						}
 						for _, org := range cached.Organizations {
-							line := fmt.Sprintf("org: %s (%s)", org.Name, org.Slug)
+							line := fmt.Sprintf("org: %s (%s)", org.Slug, org.Name)
 							if org.Slug == selectedSlug {
 								line += "  ← selected"
 							}
@@ -239,7 +239,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						}
 						return doctor.Result{
 							Status:  doctor.StatusPass,
-							Detail:  fmt.Sprintf(`"%s"`, orgName),
+							Detail:  fmt.Sprintf(`"%s"`, orgSlug),
 							Verbose: verbose,
 						}
 					},
@@ -345,12 +345,8 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 							}
 						}
 
-						slug, name, source := currentOrgSlug(cfg, orgs, selectedOrgID)
+						slug, _, source := currentOrgSlug(cfg, orgs, selectedOrgID)
 						if slug != "" {
-							label := name
-							if label == "" {
-								label = slug
-							}
 							var verbose []string
 							switch source {
 							case orgSourceFlag:
@@ -362,7 +358,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 							}
 							return doctor.Result{
 								Status:  doctor.StatusPass,
-								Detail:  fmt.Sprintf("(%s)", label),
+								Detail:  fmt.Sprintf("(%s)", slug),
 								Verbose: verbose,
 							}
 						}
@@ -370,7 +366,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						if len(orgs) == 1 {
 							return doctor.Result{
 								Status: doctor.StatusPass,
-								Detail: fmt.Sprintf("(%s)", orgs[0].Name),
+								Detail: fmt.Sprintf("(%s)", orgs[0].Slug),
 							}
 						}
 

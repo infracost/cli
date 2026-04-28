@@ -61,7 +61,7 @@ func TestHealth_AllPass(t *testing.T) {
 	assert.Contains(t, out, "Infracost Doctor")
 	assert.Contains(t, out, "✔  Credentials found")
 	assert.Contains(t, out, "✔  Token valid")
-	assert.Contains(t, out, `"Acme Corp"`)
+	assert.Contains(t, out, `"acme"`)
 	assert.Contains(t, out, "✔  API reachable")
 	assert.Contains(t, out, "✔  Config file valid")
 
@@ -134,7 +134,7 @@ func TestHealth_AuthenticationToken(t *testing.T) {
 
 	out := stripANSI(buf.String())
 	assert.Contains(t, out, "✔  Credentials found")
-	assert.Contains(t, out, `"Beta Inc"`)
+	assert.Contains(t, out, `"beta"`)
 }
 
 func TestHealth_APIError(t *testing.T) {

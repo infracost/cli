@@ -198,7 +198,7 @@ func TestCISetup_PipelineNoAPIKey(t *testing.T) {
 	require.Error(t, execErr)
 	assert.Contains(t, execErr.Error(), "INFRACOST_API_KEY")
 	assert.Contains(t, output, "✔  GitHub repository   acme-corp/platform-infra")
-	assert.Contains(t, output, "✔  Infracost org       Acme Corp")
+	assert.Contains(t, output, "✔  Infracost org       acme-corp")
 	assert.Contains(t, output, "✗  Infracost API key   not found")
 	assert.Contains(t, output, "To get an API key, visit your organization's CLI tokens page:")
 	assert.Contains(t, output, "https://dashboard.infracost.io/org/acme-corp/settings/cli-tokens")
@@ -262,7 +262,7 @@ func TestCISetup_PipelineSuccess(t *testing.T) {
 	want := `
 Scanning repository
   ✔  GitHub repository   acme-corp/platform-infra
-  ✔  Infracost org       Acme Corp
+  ✔  Infracost org       acme-corp
   ✔  Infracost API key   ready (from INFRACOST_API_KEY)
   !  gh CLI              not found — secret will need to be set manually
 
@@ -409,7 +409,7 @@ func TestCISetup_AppAlreadyConnected(t *testing.T) {
 	want := `
 Scanning repository
   ✔  GitHub repository  acme-corp/platform-infra
-  ✔  Infracost org      Acme Corp
+  ✔  Infracost org      acme-corp
   ✔  App integration already connected
 
 This repository is already sending PR cost estimates.
