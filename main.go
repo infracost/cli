@@ -74,6 +74,10 @@ func run() (exitCode int) {
 	cmd.AddCommand(cmds.Version(cfg))
 	cmd.AddCommand(cmds.Doctor(cfg))
 
+	for _, c := range cmds.Deprecated(cfg) {
+		cmd.AddCommand(c)
+	}
+
 	cmds.ApplyHelpStyles(cmd)
 
 	diags.Merge(process.PreProcess(cfg, cmd.PersistentFlags()))
