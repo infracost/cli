@@ -188,7 +188,7 @@ func statusIcon(s Status) string {
 
 // Render writes the formatted health check report to w.
 func Render(w io.Writer, report *Report, ver string, verbose bool, fix bool) {
-	_, _ = fmt.Fprintf(w, "Infracost Health %s - running %d checks\n", ver, report.Total())
+	_, _ = fmt.Fprintf(w, "Infracost Doctor %s - running %d checks\n", ver, report.Total())
 
 	for _, cat := range report.Categories {
 		_, _ = fmt.Fprintf(w, "\n%s\n", tml.Sprintf("<bold>%s</bold>", cat.Name))
@@ -227,6 +227,6 @@ func Render(w io.Writer, report *Report, ver string, verbose bool, fix bool) {
 
 	if !fix && report.HasFixable() {
 		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "Run infracost health --fix to attempt auto-remediation")
+		_, _ = fmt.Fprintln(w, "Run infracost doctor --fix to attempt auto-remediation")
 	}
 }

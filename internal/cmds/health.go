@@ -21,12 +21,12 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func Health(cfg *config.Config) *cobra.Command {
+func Doctor(cfg *config.Config) *cobra.Command {
 	var verbose, fix, bundle, checkAgents, checkIDE bool
 	var scope string
 
 	cmd := &cobra.Command{
-		Use:   "health",
+		Use:   "doctor",
 		Short: "Run diagnostic checks on your Infracost installation",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

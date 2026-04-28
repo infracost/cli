@@ -128,7 +128,7 @@ func TestRender_AllPass(t *testing.T) {
 	health.Render(&buf, report, "v1.0.0", false, false)
 	out := buf.String()
 
-	assert.Contains(t, out, "Infracost Health v1.0.0 - running 2 checks")
+	assert.Contains(t, out, "Infracost Doctor v1.0.0 - running 2 checks")
 	assert.Contains(t, out, "Check one")
 	assert.Contains(t, out, "Check two")
 	assert.Contains(t, out, "2 passed")
