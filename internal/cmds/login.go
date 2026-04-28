@@ -12,15 +12,13 @@ import (
 )
 
 func Login(cfg *config.Config) *cobra.Command {
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "login",
 		Short: "Log in to Infracost",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return RunLogin(cmd.Context(), cfg)
 		},
 	}
-	cmd.Flags().BoolVar(&cfg.Auth.UseDeviceFlow, "oauth-use-device-flow", false, "Use device flow for authentication instead of PKCE (useful when you don't have access to localhost)")
-	return cmd
 }
 
 // RunLogin is the core logic for `infracost auth login`, callable from the unified
