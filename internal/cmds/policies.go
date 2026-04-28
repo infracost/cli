@@ -29,7 +29,7 @@ func Policies(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "policies",
-		Short: "List all available FinOps + Tagging policies",
+		Short: "List all available FinOps and tagging policies",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 
@@ -204,8 +204,8 @@ func Policies(cfg *config.Config) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVarP(&finopsOnly, "finops-only", "f", false, "only list FinOps policies")
-	cmd.Flags().BoolVarP(&taggingOnly, "tagging-only", "t", false, "only list Tagging policies")
+	cmd.Flags().BoolVarP(&finopsOnly, "finops-only", "f", false, "Only list FinOps policies")
+	cmd.Flags().BoolVarP(&taggingOnly, "tagging-only", "t", false, "Only list tagging policies")
 
 	return cmd
 

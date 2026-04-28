@@ -65,8 +65,8 @@ func Doctor(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show full diagnostic detail for every check")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Attempt auto-remediation for failing checks")
 	cmd.Flags().BoolVar(&bundle, "bundle", false, "Generate a support bundle with full diagnostic output")
-	cmd.Flags().BoolVar(&checkAgents, "check-agents", false, "Check AI coding agent integrations")
-	cmd.Flags().BoolVar(&checkIDE, "check-ide", false, "Check IDE integrations")
+	cmd.Flags().BoolVar(&checkAgents, "check-agents", false, "Include AI coding agent integrations in the checks")
+	cmd.Flags().BoolVar(&checkIDE, "check-ide", false, "Include IDE integrations in the checks")
 	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope for --fix: user (global), project, or local")
 	return cmd
 }

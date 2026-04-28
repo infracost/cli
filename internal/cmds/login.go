@@ -14,7 +14,7 @@ import (
 func Login(cfg *config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "login",
-		Short: "Login to Infracost",
+		Short: "Log in to Infracost",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return RunLogin(cmd.Context(), cfg)
 		},

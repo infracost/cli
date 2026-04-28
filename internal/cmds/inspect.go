@@ -68,7 +68,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&file, "file", "", "Path to JSON file (skips cache)")
-	cmd.Flags().BoolVar(&opts.Summary, "summary", false, "Show summary overview")
+	cmd.Flags().BoolVar(&opts.Summary, "summary", false, "Show a summary view")
 	cmd.Flags().StringSliceVar(&opts.GroupBy, "group-by", nil, "Group by: type, provider, project, policy (comma-separated or repeated)")
 	cmd.Flags().StringVar(&opts.Policy, "policy", "", "Filter by policy name or slug")
 	cmd.Flags().StringVar(&opts.Budget, "budget", "", "Show budget detail by name or ID")
@@ -78,8 +78,8 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Filter by project name")
 	cmd.Flags().BoolVar(&opts.CostsOnly, "costs-only", false, "Hide free resources")
 	cmd.Flags().BoolVar(&opts.Failing, "failing", false, "Only show failing policies")
-	cmd.Flags().IntVar(&opts.Top, "top", 0, "Top N by cost")
-	cmd.Flags().BoolVar(&opts.JSON, "json", false, "JSON output")
+	cmd.Flags().IntVar(&opts.Top, "top", 0, "Show only the top N resources by cost")
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output as JSON")
 
 	return cmd
 }

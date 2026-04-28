@@ -10,7 +10,7 @@ import (
 func Logout(config *config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
-		Short: "Logout of Infracost",
+		Short: "Log out of Infracost",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := config.Auth.ClearCache(); err != nil {
 				return err

@@ -83,10 +83,10 @@ type ExternalConfig struct {
 	AuthenticationToken AuthenticationToken `env:"INFRACOST_CLI_AUTHENTICATION_TOKEN"`
 
 	// UseDeviceFlow indicates whether to use the device flow for authentication.
-	UseDeviceFlow bool `env:"INFRACOST_CLI_OAUTH_USE_DEVICE_FLOW" flag:"oauth-use-device-flow" usage:"Use device flow for authentication instead of PKCE (useful when you don't have access to localhost)."`
+	UseDeviceFlow bool `env:"INFRACOST_CLI_OAUTH_USE_DEVICE_FLOW" flag:"oauth-use-device-flow" usage:"Use device flow for authentication instead of PKCE (useful when you don't have access to localhost)"`
 
 	// UseAccessTokenCache indicates whether to use the token cache for authentication.
-	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Save access tokens to a file for convenience."`
+	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Save access tokens to a file for convenience"`
 }
 
 func (c *Config) Process() {
