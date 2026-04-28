@@ -276,6 +276,7 @@ func selectAgent(title string, skippable bool) (*agent, error) {
 		Title(title).
 		Options(options...).
 		Value(&selected).
+		WithTheme(ui.BrandTheme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -339,7 +340,7 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 			fmt.Printf("  %s\n", a.url)
 			if ui.PressEnter("\nPress Enter to open in your browser...") {
 				if err := browser.Open(a.url); err != nil {
-					ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", a.url)
+					ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Accent(a.url))
 				} else {
 					ui.Successf("Opened %s in your browser.", a.url)
 				}

@@ -9,10 +9,10 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/liamg/tml"
 )
 
-var spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4")) // blue
+// spinnerStyle uses the brand-primary color (#6C70F2).
+var spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6C70F2"))
 
 // isTTY reports whether stderr is a terminal. Spinners are suppressed when
 // output is piped or running in a non-interactive environment.
@@ -69,7 +69,7 @@ func (m spinnerModel) View() string {
 		if m.err != nil || m.doneTitle == "" {
 			return ""
 		}
-		return tml.Sprintf("  <lightgreen>✔</lightgreen>  %s\n", m.doneTitle)
+		return fmt.Sprintf("  %s  %s\n", Positive("✔"), m.doneTitle)
 	}
 	return "  " + m.spinner.View() + " " + m.title + "\n"
 }

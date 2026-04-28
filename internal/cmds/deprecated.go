@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/infracost/cli/internal/config"
-	"github.com/liamg/tml"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -45,7 +45,7 @@ func breakdownShim(cfg *config.Config) *cobra.Command {
 		Hidden:             true,
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), tml.Sprintf("  <lightyellow>!</lightyellow>  `infracost breakdown` is deprecated, running `infracost scan` instead."))
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  %s  `infracost breakdown` is deprecated, running `infracost scan` instead.\n", ui.Caution("!"))
 
 			scan := Scan(cfg)
 			scan.SetContext(cmd.Context())

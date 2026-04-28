@@ -11,6 +11,7 @@ import (
 	"github.com/infracost/cli/internal/cmds"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/stacktrace"
 	"github.com/infracost/cli/version"
@@ -62,6 +63,10 @@ func run() (exitCode int) {
 			}())
 
 			process.Process(cfg) // set defaults and validate values etc
+
+			if cfg.NoColor {
+				ui.DisableColor()
+			}
 		},
 	}
 

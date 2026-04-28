@@ -7,12 +7,11 @@ import (
 	"strings"
 
 	"github.com/infracost/cli/pkg/auth/browser"
-	"github.com/liamg/tml"
 )
 
 // Success prints a green checkmark followed by the message.
 func Success(msg string) {
-	tml.Printf("  <lightgreen>✔</lightgreen>  %s\n", msg)
+	fmt.Printf("  %s  %s\n", Positive("✔"), msg)
 }
 
 // Successf prints a green checkmark followed by a formatted message.
@@ -22,7 +21,7 @@ func Successf(format string, args ...any) {
 
 // Warn prints a yellow warning symbol followed by the message.
 func Warn(msg string) {
-	tml.Printf("  <lightyellow>!</lightyellow>  %s\n", msg)
+	fmt.Printf("  %s  %s\n", Caution("!"), msg)
 }
 
 // Warnf prints a yellow warning symbol followed by a formatted message.
@@ -32,7 +31,7 @@ func Warnf(format string, args ...any) {
 
 // Fail prints a red cross followed by the message.
 func Fail(msg string) {
-	tml.Printf("  <lightred>✗</lightred>  %s\n", msg)
+	fmt.Printf("  %s  %s\n", Danger("✗"), msg)
 }
 
 // Failf prints a red cross followed by a formatted message.
@@ -40,30 +39,30 @@ func Failf(format string, args ...any) {
 	Fail(fmt.Sprintf(format, args...))
 }
 
-// Step prints a blue arrow followed by the message.
+// Step prints an info-colored arrow followed by the message.
 func Step(msg string) {
-	tml.Printf("  <lightblue>→</lightblue>  %s\n", msg)
+	fmt.Printf("  %s  %s\n", Info("→"), msg)
 }
 
-// Stepf prints a blue arrow followed by a formatted message.
+// Stepf prints an info-colored arrow followed by a formatted message.
 func Stepf(format string, args ...any) {
 	Step(fmt.Sprintf(format, args...))
 }
 
-// Heading prints a bold section heading.
+// Heading prints a bold brand-colored section heading.
 func Heading(msg string) {
-	tml.Printf("<bold>%s</bold>\n", msg)
+	fmt.Printf("%s\n", Bold(Brand(msg)))
 }
 
-// Headingf prints a bold formatted section heading.
+// Headingf prints a bold brand-colored formatted section heading.
 func Headingf(format string, args ...any) {
 	Heading(fmt.Sprintf(format, args...))
 }
 
-// Hint prints an indented hint line with a blue arrow.
+// Hint prints an indented hint line with an info-colored arrow.
 // indent is the number of leading spaces before the arrow.
 func Hint(indent int, msg string) {
-	tml.Printf("%s<lightblue>→</lightblue>  %s\n", strings.Repeat(" ", indent), msg)
+	fmt.Printf("%s%s  %s\n", strings.Repeat(" ", indent), Info("→"), msg)
 }
 
 // Hintf prints a formatted indented hint.
@@ -95,13 +94,13 @@ func PressEnter(msg string) bool {
 // it in their browser. The user can press Ctrl+C to skip. If stdin is
 // non-interactive (e.g. in tests), the browser is not opened.
 func OpenOrContinue(url string) {
-	fmt.Printf("  %s\n", url)
+	fmt.Printf("  %s\n", Accent(url))
 	if !PressEnter("\nPress Enter to open in your browser...") {
 		return
 	}
 	if err := browser.Open(url); err != nil {
-		Failf("Failed to open browser. Visit the URL manually:\n   %s", url)
+		Failf("Failed to open browser. Visit the URL manually:\n   %s", Accent(url))
 	} else {
-		Successf("Opened %s in your browser.", url)
+		Successf("Opened %s in your browser.", Accent(url))
 	}
 }

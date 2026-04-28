@@ -10,7 +10,6 @@ import (
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
-	"github.com/liamg/tml"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -59,12 +58,13 @@ func Budgets(cfg *config.Config) *cobra.Command {
 			fmt.Println()
 
 			if len(budgets) == 0 {
-				tml.Println("<dim>No budgets configured for this organization.</dim>")
+				fmt.Println(ui.Muted("No budgets configured for this organization."))
 				fmt.Println()
 				return nil
 			}
 
-			tml.Printf("<bold><blue><underline>Cost Budgets</underline></blue></bold>\n\n")
+			ui.Heading("Cost Budgets")
+			fmt.Println()
 
 			for _, b := range budgets {
 				printBudget(b)
@@ -76,28 +76,28 @@ func Budgets(cfg *config.Config) *cobra.Command {
 }
 
 func printBudget(b *event.Budget) {
-	tml.Printf("<bold>%s</bold>  <dim>(%s)</dim>\n", b.Name, b.Id)
+	fmt.Printf("%s  %s\n", ui.Bold(ui.Accent(b.Name)), ui.Mutedf("(%s)", b.Id))
 
 	if b.CustomOverrunMessage != "" {
 		fmt.Printf("  %s\n", b.CustomOverrunMessage)
 	}
 
-	tml.Printf("\n  <underline>Budget</underline>\n")
-	tml.Printf("    - Amount: <yellow>$%s</yellow>\n", formatThreshold(b.Amount))
+	fmt.Printf("\n  %s\n", ui.Bold(ui.Muted("Budget")))
+	fmt.Printf("    - Amount: %s\n", ui.Cautionf("$%s", formatThreshold(b.Amount)))
 
 	if b.CurrentCost != nil {
 		current := rat.FromProto(b.CurrentCost)
 		amount := rat.FromProto(b.Amount)
 		spend := fmt.Sprintf("$%s", formatThreshold(b.CurrentCost))
 		if current != nil && amount != nil && current.GreaterThan(amount) {
-			tml.Printf("    - Current spend: <red>%s</red> <dim>(over budget)</dim>\n", spend)
+			fmt.Printf("    - Current spend: %s %s\n", ui.Danger(spend), ui.Muted("(over budget)"))
 		} else {
-			tml.Printf("    - Current spend: <green>%s</green>\n", spend)
+			fmt.Printf("    - Current spend: %s\n", ui.Positive(spend))
 		}
 	}
 
 	if b.StartedAt != nil || b.EndedAt != nil {
-		tml.Printf("\n  <underline>Period</underline>\n")
+		fmt.Printf("\n  %s\n", ui.Bold(ui.Muted("Period")))
 		start := "—"
 		if b.StartedAt != nil {
 			start = b.StartedAt.AsTime().Format("2006-01-02")
@@ -106,25 +106,25 @@ func printBudget(b *event.Budget) {
 		if b.EndedAt != nil {
 			end = b.EndedAt.AsTime().Format("2006-01-02")
 		}
-		tml.Printf("    - %s → %s\n", start, end)
+		fmt.Printf("    - %s → %s\n", start, end)
 	}
 
-	tml.Printf("\n  <underline>Applies to</underline>\n")
+	fmt.Printf("\n  %s\n", ui.Bold(ui.Muted("Applies to")))
 	if len(b.Tags) == 0 {
-		tml.Printf("    - All resources\n")
+		fmt.Println("    - All resources")
 	} else {
 		parts := make([]string, 0, len(b.Tags))
 		for _, t := range b.Tags {
 			parts = append(parts, fmt.Sprintf("%s=%s", t.Key, t.Value))
 		}
-		tml.Printf("    - Resources tagged %s\n", strings.Join(parts, ", "))
+		fmt.Printf("    - Resources tagged %s\n", strings.Join(parts, ", "))
 	}
 
-	tml.Printf("\n  <underline>Actions</underline>\n")
+	fmt.Printf("\n  %s\n", ui.Bold(ui.Muted("Actions")))
 	if b.PrComment {
-		tml.Printf("    PR comment\n")
+		fmt.Println("    PR comment")
 	} else {
-		tml.Printf("    Alert only\n")
+		fmt.Println("    Alert only")
 	}
 
 	fmt.Println()
