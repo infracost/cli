@@ -17,6 +17,7 @@ import (
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
+	"github.com/infracost/proto/gen/go/infracost/provider"
 	"github.com/liamg/tml"
 	"github.com/spf13/cobra"
 	"golang.org/x/text/cases"
@@ -26,6 +27,7 @@ import (
 func Policies(cfg *config.Config) *cobra.Command {
 
 	var finopsOnly, taggingOnly bool
+	var providerFilter []string
 
 	cmd := &cobra.Command{
 		Use:   "policies",
@@ -35,6 +37,11 @@ func Policies(cfg *config.Config) *cobra.Command {
 
 			if finopsOnly && taggingOnly {
 				return fmt.Errorf("cannot specify both --finops-only and --tagging-only")
+			}
+
+			providers, err := resolveProviderFilter(providerFilter, taggingOnly)
+			if err != nil {
+				return err
 			}
 
 			source, err := cfg.Auth.Token(cmd.Context())
@@ -87,7 +94,7 @@ func Policies(cfg *config.Config) *cobra.Command {
 
 				s := scanner.NewScanner(cfg)
 				var listErr error
-				finopsPolicies, taggingPolicies, listErr = s.ListPolicies(ctx, runParameters)
+				finopsPolicies, taggingPolicies, listErr = s.ListPolicies(ctx, runParameters, providers)
 				if listErr != nil {
 					return fmt.Errorf("failed to list policies: %w", listErr)
 				}
@@ -206,9 +213,38 @@ func Policies(cfg *config.Config) *cobra.Command {
 
 	cmd.Flags().BoolVarP(&finopsOnly, "finops-only", "f", false, "Only list FinOps policies")
 	cmd.Flags().BoolVarP(&taggingOnly, "tagging-only", "t", false, "Only list tagging policies")
+	cmd.Flags().StringSliceVarP(&providerFilter, "providers", "p", nil, "Limit FinOps policy lookup to the given providers (aws, azure, google); reduces which provider plugins are downloaded")
 
 	return cmd
 
+}
+
+func resolveProviderFilter(names []string, taggingOnly bool) ([]provider.Provider, error) {
+	if taggingOnly {
+		return []provider.Provider{}, nil
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	mapping := map[string]provider.Provider{
+		"aws":    provider.Provider_PROVIDER_AWS,
+		"azure":  provider.Provider_PROVIDER_AZURERM,
+		"google": provider.Provider_PROVIDER_GOOGLE,
+	}
+	out := make([]provider.Provider, 0, len(names))
+	seen := map[provider.Provider]bool{}
+	for _, name := range names {
+		p, ok := mapping[strings.ToLower(strings.TrimSpace(name))]
+		if !ok {
+			return nil, fmt.Errorf("unknown provider %q (must be one of: aws, azure, google)", name)
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 func mapFilterToHumanReadableString(plural, requirement string, f *event.MapFilter) string {

@@ -149,7 +149,7 @@ func TestListPolicies(t *testing.T) {
 			},
 		})
 
-		finops, tags, err := s.ListPolicies(context.Background(), nil)
+		finops, tags, err := s.ListPolicies(context.Background(), nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -185,7 +185,7 @@ func TestListPolicies(t *testing.T) {
 			FinopsPolicies: []json.RawMessage{settingsJSON},
 		}
 
-		finops, _, err := s.ListPolicies(context.Background(), runParams)
+		finops, _, err := s.ListPolicies(context.Background(), runParams, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func TestListPolicies(t *testing.T) {
 			TagPolicies: []json.RawMessage{tagJSON},
 		}
 
-		_, tags, err := s.ListPolicies(context.Background(), runParams)
+		_, tags, err := s.ListPolicies(context.Background(), runParams, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestListPolicies(t *testing.T) {
 			TagPolicies: rawTags,
 		}
 
-		_, result, err := s.ListPolicies(context.Background(), runParams)
+		_, result, err := s.ListPolicies(context.Background(), runParams, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
