@@ -42,7 +42,7 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 						break
 					}
 				}
-				fmt.Printf("  - %s %s\n", ui.Accent(org.Name), ui.Mutedf("(%s)", role))
+				fmt.Printf("  - %s %s\n", ui.Accent(org.Slug), ui.Mutedf("(%s)", role))
 			}
 
 			return nil

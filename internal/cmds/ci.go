@@ -179,7 +179,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 	if err != nil {
 		return err
 	}
-	ui.Successf("Infracost org      %s", org.Name)
+	ui.Successf("Infracost org      %s", org.Slug)
 
 	// Check if the repo is already connected via the app integration.
 	orgClient := cfg.Dashboard.Client(api.Client(ctx, source, org.ID))
@@ -250,7 +250,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	if err != nil {
 		return err
 	}
-	ui.Successf("Infracost org       %s", org.Name)
+	ui.Successf("Infracost org       %s", org.Slug)
 
 	apiKey := os.Getenv("INFRACOST_API_KEY")
 	if apiKey == "" {
