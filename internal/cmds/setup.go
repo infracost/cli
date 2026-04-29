@@ -15,7 +15,7 @@ import (
 // user identity (for org resolution, etc.) and cannot operate with tokens.
 func requireUserLogin(cfg *config.Config) error {
 	if len(cfg.Auth.AuthenticationToken) > 0 {
-		return fmt.Errorf("setup requires interactive login, it cannot be used with INFRACOST_CLI_AUTHENTICATION_TOKEN — run 'infracost login' first, then retry")
+		return fmt.Errorf("setup requires interactive login, it cannot be used with INFRACOST_CLI_AUTHENTICATION_TOKEN — run 'infracost auth login' first, then retry")
 	}
 	return nil
 }
@@ -24,7 +24,9 @@ func Setup(cfg *config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
 		Short: "Set up Infracost integrations",
-		Long:  "Walk through setting up Infracost for your coding agents, IDE, and CI pipeline.",
+		Long:  "Walk through setting up Infracost for your coding agents, IDE, and CI pipeline",
+		Example: `  # Run the interactive setup walkthrough
+  $ infracost setup`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireUserLogin(cfg); err != nil {
 				return err

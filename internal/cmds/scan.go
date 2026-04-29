@@ -19,11 +19,19 @@ import (
 )
 
 func Scan(cfg *config.Config) *cobra.Command {
-	return &cobra.Command{
-		Use:     "scan",
+	cmd := &cobra.Command{
+		Use:     "scan [path]",
 		Aliases: []string{"analyse"}, // codespell:ignore analyse
 		Short:   "Scan your IaC and derive FinOps costs and policy violations",
-		Args:    cobra.MaximumNArgs(1),
+		Example: `  # Scan the current directory
+  $ infracost scan
+
+  # Scan a specific project path
+  $ infracost scan ./terraform
+
+  # Scan against a different organization's policies & prices
+  $ infracost scan --org acme`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 
 			source, err := cfg.Auth.Token(cmd.Context())
@@ -138,4 +146,7 @@ func Scan(cfg *config.Config) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
+
+	return cmd
 }

@@ -76,7 +76,7 @@ func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source 
 	}
 
 	if len(user.Organizations) == 0 {
-		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost login'")
+		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost auth login'")
 	}
 
 	if cfg.OrgID != "" {
@@ -113,6 +113,11 @@ func ciSetup(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Set up Infracost CI integration for this repository",
+		Example: `  # Connect this repo to the Infracost app integration (recommended)
+  $ infracost ci setup
+
+  # Generate a GitHub Actions workflow instead
+  $ infracost ci setup --ci-pipeline`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireUserLogin(cfg); err != nil {
 				return err

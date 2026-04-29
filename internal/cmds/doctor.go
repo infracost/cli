@@ -13,7 +13,7 @@ import (
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
-	"github.com/infracost/cli/internal/health"
+	"github.com/infracost/cli/internal/doctor"
 	"github.com/infracost/cli/internal/update"
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/version"
@@ -21,14 +21,25 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func Health(cfg *config.Config) *cobra.Command {
+func Doctor(cfg *config.Config) *cobra.Command {
 	var verbose, fix, bundle, checkAgents, checkIDE bool
 	var scope string
 
 	cmd := &cobra.Command{
-		Use:   "health",
+		Use:   "doctor",
 		Short: "Run diagnostic checks on your Infracost installation",
-		Args:  cobra.NoArgs,
+		Example: `  # Run the standard checks
+  $ infracost doctor
+
+  # Show full diagnostic detail for every check
+  $ infracost doctor --verbose
+
+  # Attempt to fix any failing checks
+  $ infracost doctor --fix
+
+  # Generate a support bundle to share with the Infracost team
+  $ infracost doctor --bundle`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if bundle && fix {
 				return fmt.Errorf("--bundle and --fix cannot be used together")
@@ -43,12 +54,12 @@ func Health(cfg *config.Config) *cobra.Command {
 			}
 
 			categories := buildCategories(cmd.Context(), cfg, checkAgents, checkIDE, scope)
-			report := health.RunChecks(cmd.Context(), categories)
-			health.Render(w, report, version.Version, verbose, fix)
+			report := doctor.RunChecks(cmd.Context(), categories)
+			doctor.Render(w, report, version.Version, verbose, fix)
 
 			if fix && report.HasFixable() {
-				report = health.RunFixes(cmd.Context(), w, categories, report)
-				health.Render(w, report, version.Version, verbose, fix)
+				report = doctor.RunFixes(cmd.Context(), w, categories, report)
+				doctor.Render(w, report, version.Version, verbose, fix)
 			}
 
 			if bundle {
@@ -65,8 +76,8 @@ func Health(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show full diagnostic detail for every check")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Attempt auto-remediation for failing checks")
 	cmd.Flags().BoolVar(&bundle, "bundle", false, "Generate a support bundle with full diagnostic output")
-	cmd.Flags().BoolVar(&checkAgents, "check-agents", false, "Check AI coding agent integrations")
-	cmd.Flags().BoolVar(&checkIDE, "check-ide", false, "Check IDE integrations")
+	cmd.Flags().BoolVar(&checkAgents, "check-agents", false, "Include AI coding agent integrations in the checks")
+	cmd.Flags().BoolVar(&checkIDE, "check-ide", false, "Include IDE integrations in the checks")
 	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope for --fix: user (global), project, or local")
 	return cmd
 }
@@ -120,41 +131,41 @@ func fileStatus(path string) string {
 	return "exists"
 }
 
-func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, checkIDE bool, scope string) []health.Category {
+func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, checkIDE bool, scope string) []doctor.Category {
 	// Shared state across auth checks.
 	var tokenSource oauth2.TokenSource
 	var apiUser dashboard.CurrentUser
 	var apiElapsed time.Duration
 
-	categories := []health.Category{
+	categories := []doctor.Category{
 		{
 			Name: "Authentication",
-			Checks: []health.Check{
+			Checks: []doctor.Check{
 				{
 					Name:     "Credentials found",
 					FailName: "No credentials found",
 					Fix: func(ctx context.Context) error {
 						return RunLogin(ctx, cfg)
 					},
-					Run: func(_ context.Context) health.Result {
+					Run: func(_ context.Context) doctor.Result {
 						if len(cfg.Auth.AuthenticationToken) > 0 {
 							tokenSource = cfg.Auth.AuthenticationToken
-							return health.Result{
-								Status:  health.StatusPass,
+							return doctor.Result{
+								Status:  doctor.StatusPass,
 								Verbose: []string{"source: INFRACOST_CLI_AUTHENTICATION_TOKEN"},
 							}
 						}
 						ts := cfg.Auth.TokenFromCache(ctx)
 						if ts == nil {
-							return health.Result{
-								Status:  health.StatusFail,
-								Hint:    "Run `infracost login` to authenticate",
+							return doctor.Result{
+								Status:  doctor.StatusFail,
+								Hint:    "Run `infracost auth login` to authenticate",
 								Verbose: []string{fmt.Sprintf("token cache: %s", cfg.Auth.TokenCachePath)},
 							}
 						}
 						tokenSource = ts
-						return health.Result{
-							Status:  health.StatusPass,
+						return doctor.Result{
+							Status:  doctor.StatusPass,
 							Verbose: []string{fmt.Sprintf("token cache: %s", cfg.Auth.TokenCachePath)},
 						}
 					},
@@ -165,23 +176,23 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 					Fix: func(ctx context.Context) error {
 						return RunLogin(ctx, cfg)
 					},
-					Run: func(_ context.Context) health.Result {
+					Run: func(_ context.Context) doctor.Result {
 						// TokenFromCache already validates the JWT. If we
 						// reached here the token parsed and is not expired.
 						tok, err := tokenSource.Token()
 						if err != nil {
-							return health.Result{
-								Status: health.StatusFail,
+							return doctor.Result{
+								Status: doctor.StatusFail,
 								Label:  "Token invalid",
-								Hint:   fmt.Sprintf("Run `infracost login` to re-authenticate (%s)", err),
+								Hint:   fmt.Sprintf("Run `infracost auth login` to re-authenticate (%s)", err),
 							}
 						}
 						var verbose []string
 						if !tok.Expiry.IsZero() {
 							verbose = append(verbose, fmt.Sprintf("expires: %s", tok.Expiry.Format(time.RFC3339)))
 						}
-						return health.Result{
-							Status:  health.StatusPass,
+						return doctor.Result{
+							Status:  doctor.StatusPass,
 							Verbose: verbose,
 						}
 					},
@@ -190,7 +201,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 					Name:      "Organization accessible",
 					FailName:  "Organization not accessible",
 					DependsOn: []int{0},
-					Run: func(ctx context.Context) health.Result {
+					Run: func(ctx context.Context) doctor.Result {
 						client := cfg.Dashboard.Client(
 							api.Client(ctx, tokenSource, cfg.OrgID),
 						)
@@ -198,15 +209,15 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						user, err := client.CurrentUser(ctx)
 						apiElapsed = time.Since(start)
 						if err != nil {
-							return health.Result{
-								Status: health.StatusFail,
+							return doctor.Result{
+								Status: doctor.StatusFail,
 								Hint:   fmt.Sprintf("API error: %s", err),
 							}
 						}
 						apiUser = user
 						if len(user.Organizations) == 0 {
-							return health.Result{
-								Status:  health.StatusFail,
+							return doctor.Result{
+								Status:  doctor.StatusFail,
 								Hint:    "No organizations found. Create one at https://dashboard.infracost.io",
 								Verbose: []string{fmt.Sprintf("user: %s (%s)", user.Email, user.ID)},
 							}
@@ -226,8 +237,8 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 							}
 							verbose = append(verbose, line)
 						}
-						return health.Result{
-							Status:  health.StatusPass,
+						return doctor.Result{
+							Status:  doctor.StatusPass,
 							Detail:  fmt.Sprintf(`"%s"`, orgName),
 							Verbose: verbose,
 						}
@@ -236,9 +247,9 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 				{
 					Name:      "API reachable",
 					DependsOn: []int{2},
-					Run: func(_ context.Context) health.Result {
-						return health.Result{
-							Status:  health.StatusPass,
+					Run: func(_ context.Context) doctor.Result {
+						return doctor.Result{
+							Status:  doctor.StatusPass,
 							Detail:  fmt.Sprintf("(%d ms)", apiElapsed.Milliseconds()),
 							Verbose: []string{fmt.Sprintf("endpoint: %s", cfg.Dashboard.Endpoint)},
 						}
@@ -248,28 +259,28 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 		},
 		{
 			Name: "CLI",
-			Checks: []health.Check{
+			Checks: []doctor.Check{
 				{
 					Name: "Version",
 					Fix:  update.Update,
-					Run: func(ctx context.Context) health.Result {
+					Run: func(ctx context.Context) doctor.Result {
 						info, err := update.CheckLatestVersion(ctx)
 						if err != nil {
-							return health.Result{
-								Status:  health.StatusWarning,
+							return doctor.Result{
+								Status:  doctor.StatusWarning,
 								Label:   fmt.Sprintf("Version %s", version.Version),
 								Detail:  "(unable to check for updates)",
 								Hint:    err.Error(),
 							}
 						}
 						if info.UpToDate {
-							return health.Result{
-								Status: health.StatusPass,
+							return doctor.Result{
+								Status: doctor.StatusPass,
 								Label:  fmt.Sprintf("Version %s (latest)", info.Current),
 							}
 						}
-						return health.Result{
-							Status: health.StatusWarning,
+						return doctor.Result{
+							Status: doctor.StatusWarning,
 							Label:  fmt.Sprintf("Version %s (latest is %s)", info.Current, info.Latest),
 							Hint:   "Run `infracost update` to upgrade",
 						}
@@ -279,10 +290,10 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 		},
 		{
 			Name: "Configuration",
-			Checks: []health.Check{
+			Checks: []doctor.Check{
 				{
 					Name: "Config file valid",
-					Run: func(_ context.Context) health.Result {
+					Run: func(_ context.Context) doctor.Result {
 						// Config was already parsed and processed by
 						// PersistentPreRun. If we reached the health command
 						// it loaded successfully.
@@ -291,8 +302,8 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 							verbose = append(verbose, fmt.Sprintf("currency: %s", cfg.Currency))
 						}
 						verbose = append(verbose, fmt.Sprintf("pricing endpoint: %s", cfg.PricingEndpoint))
-						return health.Result{
-							Status:  health.StatusPass,
+						return doctor.Result{
+							Status:  doctor.StatusPass,
 							Verbose: verbose,
 						}
 					},
@@ -307,7 +318,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						}
 						return resolveOrg(ctx, cfg, source)
 					},
-					Run: func(_ context.Context) health.Result {
+					Run: func(_ context.Context) doctor.Result {
 						// Try to resolve org non-interactively.
 						var orgs []auth.CachedOrganization
 						var selectedOrgID string
@@ -328,8 +339,8 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						}
 
 						if len(orgs) == 0 {
-							return health.Result{
-								Status: health.StatusWarning,
+							return doctor.Result{
+								Status: doctor.StatusWarning,
 								Hint:   "No organization data available",
 							}
 						}
@@ -349,22 +360,22 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 							case orgSourceGlobal:
 								verbose = append(verbose, "source: infracost org switch")
 							}
-							return health.Result{
-								Status:  health.StatusPass,
+							return doctor.Result{
+								Status:  doctor.StatusPass,
 								Detail:  fmt.Sprintf("(%s)", label),
 								Verbose: verbose,
 							}
 						}
 
 						if len(orgs) == 1 {
-							return health.Result{
-								Status: health.StatusPass,
+							return doctor.Result{
+								Status: doctor.StatusPass,
 								Detail: fmt.Sprintf("(%s)", orgs[0].Name),
 							}
 						}
 
-						return health.Result{
-							Status: health.StatusFail,
+						return doctor.Result{
+							Status: doctor.StatusFail,
 							Hint:   "Run `infracost org switch` to select an organization",
 						}
 					},
@@ -383,43 +394,43 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 	return categories
 }
 
-func buildAgentChecks(cfg *config.Config, scope string) health.Category {
-	var checks []health.Check
+func buildAgentChecks(cfg *config.Config, scope string) doctor.Category {
+	var checks []doctor.Check
 	for _, a := range supportedAgents {
 		if !a.enabled || a.check == nil {
 			continue
 		}
 		a := a // capture loop variable
-		checks = append(checks, health.Check{
+		checks = append(checks, doctor.Check{
 			Name: a.name,
 			Fix: func(_ context.Context) error {
 				return setupAgent(cfg, a, scope)
 			},
-			Run: func(_ context.Context) health.Result {
+			Run: func(_ context.Context) doctor.Result {
 				bin, err := resolveAgentBinary(cfg, a)
 				if err != nil {
-					return health.Result{
-						Status: health.StatusSkipped,
+					return doctor.Result{
+						Status: doctor.StatusSkipped,
 						Hint:   "binary not found on PATH",
 					}
 				}
 				installed, err := a.check(bin)
 				if err != nil {
-					return health.Result{
-						Status:  health.StatusWarning,
+					return doctor.Result{
+						Status:  doctor.StatusWarning,
 						Hint:    fmt.Sprintf("could not verify skills: %s", err),
 						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
 					}
 				}
 				if installed {
-					return health.Result{
-						Status:  health.StatusPass,
+					return doctor.Result{
+						Status:  doctor.StatusPass,
 						Detail:  "(skills installed)",
 						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
 					}
 				}
-				return health.Result{
-					Status:  health.StatusWarning,
+				return doctor.Result{
+					Status:  doctor.StatusWarning,
 					Detail:  "(skills not installed)",
 					Hint:    fmt.Sprintf("Run `infracost agent setup` to install skills for %s", a.name),
 					Verbose: []string{fmt.Sprintf("binary: %s", bin)},
@@ -427,22 +438,22 @@ func buildAgentChecks(cfg *config.Config, scope string) health.Category {
 			},
 		})
 	}
-	return health.Category{Name: "AI Agents", Checks: checks}
+	return doctor.Category{Name: "AI Agents", Checks: checks}
 }
 
-func buildIDEChecks() health.Category {
-	var checks []health.Check
+func buildIDEChecks() doctor.Category {
+	var checks []doctor.Check
 	for _, ide := range supportedIDEs {
 		if !ide.enabled || ide.check == nil {
 			continue
 		}
 		ide := ide // capture loop variable
-		checks = append(checks, health.Check{
+		checks = append(checks, doctor.Check{
 			Name: ide.name,
 			Fix: func(_ context.Context) error {
 				return installIDE(ide)
 			},
-			Run: func(_ context.Context) health.Result {
+			Run: func(_ context.Context) doctor.Result {
 				var bin string
 				for _, b := range ide.binaries {
 					if path, err := exec.LookPath(b); err == nil {
@@ -451,28 +462,28 @@ func buildIDEChecks() health.Category {
 					}
 				}
 				if bin == "" {
-					return health.Result{
-						Status: health.StatusSkipped,
+					return doctor.Result{
+						Status: doctor.StatusSkipped,
 						Hint:   "binary not found on PATH",
 					}
 				}
 				installed, err := ide.check(bin)
 				if err != nil {
-					return health.Result{
-						Status:  health.StatusWarning,
+					return doctor.Result{
+						Status:  doctor.StatusWarning,
 						Hint:    fmt.Sprintf("could not verify extension: %s", err),
 						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
 					}
 				}
 				if installed {
-					return health.Result{
-						Status:  health.StatusPass,
+					return doctor.Result{
+						Status:  doctor.StatusPass,
 						Detail:  "(extension installed)",
 						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
 					}
 				}
-				return health.Result{
-					Status:  health.StatusWarning,
+				return doctor.Result{
+					Status:  doctor.StatusWarning,
 					Detail:  "(extension not installed)",
 					Hint:    "Run `infracost ide setup` to install the extension",
 					Verbose: []string{fmt.Sprintf("binary: %s", bin)},
@@ -480,5 +491,5 @@ func buildIDEChecks() health.Category {
 			},
 		})
 	}
-	return health.Category{Name: "IDE Integrations", Checks: checks}
+	return doctor.Category{Name: "IDE Integrations", Checks: checks}
 }

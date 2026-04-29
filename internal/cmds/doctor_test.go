@@ -46,7 +46,7 @@ func TestHealth_AllPass(t *testing.T) {
 		}, nil)
 
 	cfg := healthTestConfig(t, mockClient)
-	cmd := cmds.Health(cfg)
+	cmd := cmds.Doctor(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -58,7 +58,7 @@ func TestHealth_AllPass(t *testing.T) {
 	// Version check may warn (running "dev"), but auth and config should pass.
 	// We don't assert no error since the version check hitting GitHub may fail in CI.
 	out := stripANSI(buf.String())
-	assert.Contains(t, out, "Infracost Health")
+	assert.Contains(t, out, "Infracost Doctor")
 	assert.Contains(t, out, "✔  Credentials found")
 	assert.Contains(t, out, "✔  Token valid")
 	assert.Contains(t, out, `"Acme Corp"`)
@@ -79,7 +79,7 @@ func TestHealth_NoCredentials(t *testing.T) {
 	}
 	// No token source set, no AuthenticationToken — no credentials.
 
-	cmd := cmds.Health(cfg)
+	cmd := cmds.Doctor(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -123,7 +123,7 @@ func TestHealth_AuthenticationToken(t *testing.T) {
 		},
 	}
 
-	cmd := cmds.Health(cfg)
+	cmd := cmds.Doctor(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -144,7 +144,7 @@ func TestHealth_APIError(t *testing.T) {
 		Return(dashboard.CurrentUser{}, assert.AnError)
 
 	cfg := healthTestConfig(t, mockClient)
-	cmd := cmds.Health(cfg)
+	cmd := cmds.Doctor(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
