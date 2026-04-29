@@ -81,6 +81,7 @@ func runSetupStep(title string, fn func() error) error {
 		Affirmative("Yes").
 		Negative("Skip").
 		Value(&confirm).
+		WithTheme(ui.BrandTheme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -26,10 +27,13 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 
 			cacheUser(cfg, user)
 
-			fmt.Printf("Name:  %s\n", user.Name)
-			fmt.Printf("Email: %s\n", user.Email)
 			fmt.Println()
-			fmt.Println("Organizations:")
+			fmt.Printf("  %s  %s\n", ui.Muted("Name:"), user.Name)
+			fmt.Printf("  %s %s\n", ui.Muted("Email:"), user.Email)
+
+			fmt.Println()
+			ui.Heading("Organizations")
+			fmt.Println()
 			for _, org := range user.Organizations {
 				role := "member"
 				for _, r := range org.Roles {
@@ -38,7 +42,7 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 						break
 					}
 				}
-				fmt.Printf("  - %s (%s)\n", org.Name, role)
+				fmt.Printf("  - %s %s\n", ui.Accent(org.Name), ui.Mutedf("(%s)", role))
 			}
 
 			return nil

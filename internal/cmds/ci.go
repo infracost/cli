@@ -195,7 +195,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 		fmt.Println()
 		fmt.Println("This repository is already sending PR cost estimates.")
 		fmt.Println("To manage settings, visit:")
-		fmt.Printf("  https://dashboard.infracost.io/org/%s/repos\n", org.Slug)
+		fmt.Printf("  %s\n", ui.Accentf("https://dashboard.infracost.io/org/%s/repos", org.Slug))
 		return nil
 	}
 
@@ -207,7 +207,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 	fmt.Println()
 
 	dashboardURL := fmt.Sprintf("https://dashboard.infracost.io/org/%s/repos", org.Slug)
-	fmt.Printf("  %s\n", dashboardURL)
+	fmt.Printf("  %s\n", ui.Accent(dashboardURL))
 	if ui.PressEnter("\nPress Enter to open in your browser...") {
 		if err := browser.Open(dashboardURL); err != nil {
 			ui.Warn("Failed to open browser. Visit the URL above manually.")
@@ -303,6 +303,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 			Affirmative("Yes").
 			Negative("No").
 			Value(&confirm).
+			WithTheme(ui.BrandTheme()).
 			Run()
 		if err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
@@ -379,6 +380,7 @@ func promptExistingWorkflows(yes bool) (bool, error) {
 			huh.NewOption[int]("Cancel", optionCancel),
 		).
 		Value(&selected).
+		WithTheme(ui.BrandTheme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {

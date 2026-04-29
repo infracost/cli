@@ -114,6 +114,7 @@ func RunIDESetup(skippable bool) error {
 		Title("Which IDE do you use?").
 		Options(options...).
 		Value(&selected).
+		WithTheme(ui.BrandTheme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -167,7 +168,7 @@ func installIDE(i ide) error {
 		fmt.Printf("  %s\n", i.url)
 		if ui.PressEnter("\nPress Enter to open in your browser...") {
 			if err := browser.Open(i.url); err != nil {
-				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", i.url)
+				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Accent(i.url))
 			} else {
 				ui.Successf("Opened %s in your browser.", i.url)
 			}
