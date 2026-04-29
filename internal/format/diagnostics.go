@@ -1,11 +1,11 @@
 package format
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
 	"github.com/infracost/go-proto/pkg/diagnostic"
+	"github.com/liamg/tml"
 )
 
 // Diagnostics prints the diagnostics to stderr.
@@ -26,5 +26,5 @@ func Diagnostic(diag *diagnostic.Diagnostic) {
 			prefix = "Error"
 		}
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "%s: %s\n", prefix, diag.Error)
+	_ = tml.Fprintf(os.Stderr, "<lightred>%s:</lightred> %s\n", prefix, diag.Error)
 }

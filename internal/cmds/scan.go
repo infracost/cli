@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,17 +12,26 @@ import (
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/scanner"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
 )
 
 func Scan(cfg *config.Config) *cobra.Command {
-	return &cobra.Command{
-		Use:     "scan",
+	cmd := &cobra.Command{
+		Use:     "scan [path]",
 		Aliases: []string{"analyse"}, // codespell:ignore analyse
 		Short:   "Scan your IaC and derive FinOps costs and policy violations",
-		Args:    cobra.MaximumNArgs(1),
+		Example: `  # Scan the current directory
+  $ infracost scan
+
+  # Scan a specific project path
+  $ infracost scan ./terraform
+
+  # Scan against a different organization's policies & prices
+  $ infracost scan --org acme`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 
 			source, err := cfg.Auth.Token(cmd.Context())
@@ -58,39 +68,48 @@ func Scan(cfg *config.Config) *cobra.Command {
 			}
 
 			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-			runParameters, err := client.RunParameters(cmd.Context(), repositoryURL, branchName)
-			if err != nil {
-				return fmt.Errorf("failed to retrieve run parameters: %w", err)
-			}
 
-			// If --org was not provided, use the org from RunParameters.
-			// If --org was provided, show a message when it overrides the default.
-			if cfg.Org == "" {
-				cfg.OrgID = runParameters.OrganizationID
-			} else if runParameters.OrganizationID != "" && cfg.OrgID != runParameters.OrganizationID {
-				if uc, ucErr := cfg.Auth.LoadUserCache(); ucErr != nil {
-					logging.WithError(ucErr).Msg("failed to load user cache for override message")
-				} else if uc != nil {
-					for _, org := range uc.Organizations {
-						if org.ID == cfg.OrgID {
-							_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "→ %s (overriding default)\n", org.Slug)
-							break
+			var result *format.Result
+			var runSeconds float64
+
+			if err := ui.RunWithSpinnerErr(cmd.Context(), "Scanning...", "Scan complete", func(ctx context.Context) error {
+				runParameters, err := client.RunParameters(ctx, repositoryURL, branchName)
+				if err != nil {
+					return fmt.Errorf("failed to retrieve run parameters: %w", err)
+				}
+
+				// If --org was not provided, use the org from RunParameters.
+				// If --org was provided, show a message when it overrides the default.
+				if cfg.Org == "" {
+					cfg.OrgID = runParameters.OrganizationID
+				} else if runParameters.OrganizationID != "" && cfg.OrgID != runParameters.OrganizationID {
+					if uc, ucErr := cfg.Auth.LoadUserCache(); ucErr != nil {
+						logging.WithError(ucErr).Msg("failed to load user cache for override message")
+					} else if uc != nil {
+						for _, org := range uc.Organizations {
+							if org.ID == cfg.OrgID {
+								ui.Stepf("%s (overriding default)", org.Slug)
+								break
+							}
 						}
 					}
 				}
-			}
 
-			events.RegisterMetadata("orgId", cfg.OrgID)
-			events.RegisterMetadata("repoId", repositoryURL)
-			events.RegisterMetadata("branchId", branchName)
+				events.RegisterMetadata("orgId", cfg.OrgID)
+				events.RegisterMetadata("repoId", repositoryURL)
+				events.RegisterMetadata("branchId", branchName)
 
-			scanner := scanner.NewScanner(cfg)
-			startTime := time.Now()
-			result, err := scanner.Scan(cmd.Context(), runParameters, absoluteDirectory, branchName, source)
-			if err != nil {
-				return fmt.Errorf("failed to scan target: %w", err)
+				s := scanner.NewScanner(cfg)
+				startTime := time.Now()
+				result, err = s.Scan(ctx, runParameters, absoluteDirectory, branchName, source)
+				if err != nil {
+					return fmt.Errorf("failed to scan target: %w", err)
+				}
+				runSeconds = time.Since(startTime).Seconds()
+				return nil
+			}); err != nil {
+				return err
 			}
-			runSeconds := time.Since(startTime).Seconds()
 
 			output := format.ToOutput(result)
 
@@ -127,4 +146,7 @@ func Scan(cfg *config.Config) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
+
+	return cmd
 }

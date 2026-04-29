@@ -44,7 +44,7 @@ func orgList(cfg *config.Config) *cobra.Command {
 				marker := "  "
 				suffix := ""
 				if strings.EqualFold(org.Slug, currentSlug) {
-					marker = "✓ "
+					marker = "✔ "
 					if source == orgSourceRepo {
 						suffix = "  ← set for this repo"
 					}
@@ -63,7 +63,15 @@ func orgSwitch(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "switch [org-slug]",
 		Short: "Switch the active organization",
-		Args:  cobra.MaximumNArgs(1),
+		Example: `  # Pick from a list of your organizations
+  $ infracost org switch
+
+  # Switch to a specific organization globally
+  $ infracost org switch acme
+
+  # Pin the active organization for this repository only
+  $ infracost org switch acme --repo`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			uc, err := ensureOrgCache(cmd, cfg)
 			if err != nil {

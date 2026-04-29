@@ -19,7 +19,7 @@ var (
 
 type Config struct {
 	WriteLevel string `env:"INFRACOST_CLI_LOG_LEVEL" default:"warn"`
-	JSON       bool   `env:"INFRACOST_CLI_LOG_JSON" flag:"json" default:"false"`
+	JSON       bool   `env:"INFRACOST_CLI_LOG_JSON" flag:"json" default:"false" usage:"Logging output as JSON"`
 }
 
 // ToHCLogLevel converts the WriteLevel to an hclog.Level for use in logging outputs from the

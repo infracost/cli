@@ -1,11 +1,13 @@
 package cmds
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
 	"github.com/liamg/tml"
@@ -29,23 +31,29 @@ func Budgets(cfg *config.Config) *cobra.Command {
 			}
 
 			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-			runParameters, err := client.RunParameters(cmd.Context(), "", "")
-			if err != nil {
-				return fmt.Errorf("fetching budgets: %w", err)
-			}
 
-			if cfg.Org == "" {
-				cfg.OrgID = runParameters.OrganizationID
-			}
-
-			pj := protojson.UnmarshalOptions{DiscardUnknown: true}
 			var budgets []*event.Budget
-			for _, raw := range runParameters.Budgets {
-				b := new(event.Budget)
-				if err := pj.Unmarshal(raw, b); err != nil {
-					return fmt.Errorf("failed to unmarshal budget: %w", err)
+			if err := ui.RunWithSpinnerErr(cmd.Context(), "Fetching budgets...", "Budgets loaded", func(ctx context.Context) error {
+				runParameters, err := client.RunParameters(ctx, "", "")
+				if err != nil {
+					return fmt.Errorf("fetching budgets: %w", err)
 				}
-				budgets = append(budgets, b)
+
+				if cfg.Org == "" {
+					cfg.OrgID = runParameters.OrganizationID
+				}
+
+				pj := protojson.UnmarshalOptions{DiscardUnknown: true}
+				for _, raw := range runParameters.Budgets {
+					b := new(event.Budget)
+					if err := pj.Unmarshal(raw, b); err != nil {
+						return fmt.Errorf("failed to unmarshal budget: %w", err)
+					}
+					budgets = append(budgets, b)
+				}
+				return nil
+			}); err != nil {
+				return err
 			}
 
 			fmt.Println()

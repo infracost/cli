@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/scanner"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
@@ -29,7 +31,7 @@ func Policies(cfg *config.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "policies",
-		Short: "List all available FinOps + Tagging policies",
+		Short: "List all available FinOps and tagging policies",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 
@@ -77,19 +79,28 @@ func Policies(cfg *config.Config) *cobra.Command {
 
 			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
 			var runParameters *dashboard.RunParameters
-			if rp, err := client.RunParameters(cmd.Context(), repositoryURL, branchName); err != nil {
-				logging.Warnf("Failed to fetch runParameters, gathering policies without them: %s", err.Error())
-			} else {
-				if cfg.Org == "" {
-					cfg.OrgID = rp.OrganizationID
-				}
-				runParameters = &rp
-			}
+			var finopsPolicies []scanner.FinOpsPolicy
+			var taggingPolicies []scanner.TaggingPolicy
 
-			scanner := scanner.NewScanner(cfg)
-			finopsPolicies, taggingPolicies, err := scanner.ListPolicies(cmd.Context(), runParameters, providers)
-			if err != nil {
-				return fmt.Errorf("failed to list policies: %w", err)
+			if err := ui.RunWithSpinnerErr(cmd.Context(), "Loading policies...", "Policies loaded", func(ctx context.Context) error {
+				if rp, err := client.RunParameters(ctx, repositoryURL, branchName); err != nil {
+					logging.Warnf("Failed to fetch runParameters, gathering policies without them: %s", err.Error())
+				} else {
+					if cfg.Org == "" {
+						cfg.OrgID = rp.OrganizationID
+					}
+					runParameters = &rp
+				}
+
+				s := scanner.NewScanner(cfg)
+				var listErr error
+				finopsPolicies, taggingPolicies, listErr = s.ListPolicies(ctx, runParameters, providers)
+				if listErr != nil {
+					return fmt.Errorf("failed to list policies: %w", listErr)
+				}
+				return nil
+			}); err != nil {
+				return err
 			}
 
 			// clean separation from log lines
@@ -200,9 +211,9 @@ func Policies(cfg *config.Config) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVarP(&finopsOnly, "finops-only", "f", false, "only list FinOps policies")
-	cmd.Flags().BoolVarP(&taggingOnly, "tagging-only", "t", false, "only list Tagging policies")
-	cmd.Flags().StringSliceVarP(&providerFilter, "providers", "p", nil, "limit FinOps policy lookup to the given providers (aws, azure, google); reduces which provider plugins are downloaded")
+	cmd.Flags().BoolVarP(&finopsOnly, "finops-only", "f", false, "Only list FinOps policies")
+	cmd.Flags().BoolVarP(&taggingOnly, "tagging-only", "t", false, "Only list tagging policies")
+	cmd.Flags().StringSliceVarP(&providerFilter, "providers", "p", nil, "Limit FinOps policy lookup to the given providers (aws, azure, google); reduces which provider plugins are downloaded")
 
 	return cmd
 

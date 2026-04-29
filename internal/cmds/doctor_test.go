@@ -46,7 +46,7 @@ func TestHealth_AllPass(t *testing.T) {
 		}, nil)
 
 	cfg := healthTestConfig(t, mockClient)
-	cmd := cmds.Health(cfg)
+	cmd := cmds.Doctor(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -57,13 +57,13 @@ func TestHealth_AllPass(t *testing.T) {
 
 	// Version check may warn (running "dev"), but auth and config should pass.
 	// We don't assert no error since the version check hitting GitHub may fail in CI.
-	out := buf.String()
-	assert.Contains(t, out, "Infracost Health")
-	assert.Contains(t, out, "✓ Credentials found")
-	assert.Contains(t, out, "✓ Token valid")
+	out := stripANSI(buf.String())
+	assert.Contains(t, out, "Infracost Doctor")
+	assert.Contains(t, out, "✔  Credentials found")
+	assert.Contains(t, out, "✔  Token valid")
 	assert.Contains(t, out, `"Acme Corp"`)
-	assert.Contains(t, out, "✓ API reachable")
-	assert.Contains(t, out, "✓ Config file valid")
+	assert.Contains(t, out, "✔  API reachable")
+	assert.Contains(t, out, "✔  Config file valid")
 
 	_ = err // version check may cause a warning or failure depending on network
 }
@@ -79,7 +79,7 @@ func TestHealth_NoCredentials(t *testing.T) {
 	}
 	// No token source set, no AuthenticationToken — no credentials.
 
-	cmd := cmds.Health(cfg)
+	cmd := cmds.Doctor(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -89,11 +89,11 @@ func TestHealth_NoCredentials(t *testing.T) {
 	err := cmd.Execute()
 
 	require.Error(t, err)
-	out := buf.String()
-	assert.Contains(t, out, "✗ No credentials found")
-	assert.Contains(t, out, "⊘ Token valid")
-	assert.Contains(t, out, "⊘ Organization accessible")
-	assert.Contains(t, out, "⊘ API reachable")
+	out := stripANSI(buf.String())
+	assert.Contains(t, out, "✗  No credentials found")
+	assert.Contains(t, out, "⊘  Token valid")
+	assert.Contains(t, out, "⊘  Organization accessible")
+	assert.Contains(t, out, "⊘  API reachable")
 }
 
 func TestHealth_AuthenticationToken(t *testing.T) {
@@ -123,7 +123,7 @@ func TestHealth_AuthenticationToken(t *testing.T) {
 		},
 	}
 
-	cmd := cmds.Health(cfg)
+	cmd := cmds.Doctor(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -132,8 +132,8 @@ func TestHealth_AuthenticationToken(t *testing.T) {
 	cmd.SetOut(&buf)
 	_ = cmd.Execute()
 
-	out := buf.String()
-	assert.Contains(t, out, "✓ Credentials found")
+	out := stripANSI(buf.String())
+	assert.Contains(t, out, "✔  Credentials found")
 	assert.Contains(t, out, `"Beta Inc"`)
 }
 
@@ -144,7 +144,7 @@ func TestHealth_APIError(t *testing.T) {
 		Return(dashboard.CurrentUser{}, assert.AnError)
 
 	cfg := healthTestConfig(t, mockClient)
-	cmd := cmds.Health(cfg)
+	cmd := cmds.Doctor(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -154,8 +154,8 @@ func TestHealth_APIError(t *testing.T) {
 	err := cmd.Execute()
 
 	require.Error(t, err)
-	out := buf.String()
-	assert.Contains(t, out, "✓ Credentials found")
-	assert.Contains(t, out, "✗ Organization not accessible")
-	assert.Contains(t, out, "⊘ API reachable")
+	out := stripANSI(buf.String())
+	assert.Contains(t, out, "✔  Credentials found")
+	assert.Contains(t, out, "✗  Organization not accessible")
+	assert.Contains(t, out, "⊘  API reachable")
 }

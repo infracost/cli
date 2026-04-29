@@ -103,5 +103,6 @@ func Price(cfg *config.Config) *cobra.Command {
 		},
 	}
 	cmd.Hidden = true
+	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
 	return cmd
 }
