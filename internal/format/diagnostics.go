@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 )
 
@@ -26,5 +27,9 @@ func Diagnostic(diag *diagnostic.Diagnostic) {
 			prefix = "Error"
 		}
 	}
-	_, _ = fmt.Fprintf(os.Stderr, "%s: %s\n", prefix, diag.Error)
+	colorize := ui.Danger
+	if diag.Warning {
+		colorize = ui.Caution
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "%s %s\n", colorize(prefix+":"), diag.Error)
 }

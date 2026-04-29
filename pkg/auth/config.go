@@ -83,10 +83,10 @@ type ExternalConfig struct {
 	AuthenticationToken AuthenticationToken `env:"INFRACOST_CLI_AUTHENTICATION_TOKEN"`
 
 	// UseDeviceFlow indicates whether to use the device flow for authentication.
-	UseDeviceFlow bool `env:"INFRACOST_CLI_OAUTH_USE_DEVICE_FLOW" flag:"oauth-use-device-flow" usage:"Use device flow for authentication instead of PKCE (useful when you don't have access to localhost)."`
+	UseDeviceFlow bool `env:"INFRACOST_CLI_OAUTH_USE_DEVICE_FLOW" flag:"oauth-use-device-flow" usage:"Use device flow for authentication instead of PKCE (useful when you don't have access to localhost)"`
 
 	// UseAccessTokenCache indicates whether to use the token cache for authentication.
-	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Save access tokens to a file for convenience."`
+	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Read and save access tokens from a cache file (disable to force a fresh login)"`
 }
 
 func (c *Config) Process() {
@@ -203,9 +203,9 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 		caller, _ := events.GetMetadata[string]("caller")
 		switch {
 		case caller != "":
-			return nil, fmt.Errorf("not logged in. Run `infracost login` in your terminal first, then retry")
+			return nil, fmt.Errorf("not logged in — run 'infracost auth login' in your terminal first, then retry")
 		default:
-			return nil, fmt.Errorf("not logged in. Set INFRACOST_CLI_AUTHENTICATION_TOKEN for non-interactive environments, or run `infracost login` in an interactive terminal first")
+			return nil, fmt.Errorf("not logged in — set INFRACOST_CLI_AUTHENTICATION_TOKEN for non-interactive environments, or run 'infracost auth login' in an interactive terminal first")
 		}
 	}
 

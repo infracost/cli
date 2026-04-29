@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,14 @@ import (
 	"github.com/infracost/cli/pkg/auth"
 	"golang.org/x/oauth2"
 )
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// stripANSI removes ANSI escape codes from s so test assertions can match
+// plain text regardless of terminal coloring.
+func stripANSI(s string) string {
+	return ansiRe.ReplaceAllString(s, "")
+}
 
 // ciTestConfig returns a config that authenticates via a pre-set token source
 // (not AuthenticationToken), since ci setup blocks authentication tokens.
@@ -52,16 +61,22 @@ func ciTestConfigWithAuthToken(t *testing.T) *config.Config {
 	}
 }
 
-// nonInteractiveStdin replaces os.Stdin with a pipe whose write end is
-// immediately closed, so resolveOrg's TTY check sees no char device and
-// skips the interactive org picker. Without this, `go test` from a real
-// terminal hangs on multi-org prompts.
+// nonInteractiveStdin replaces os.Stdin with the read end of a closed pipe so
+// that:
+//   - os.Stdin.Stat() reports a pipe (not a char device), causing
+//     ui.IsInteractive() to return false and skip huh/bubbletea prompts
+//   - resolveOrg's TTY check likewise sees no char device and skips the
+//     interactive org picker
+//   - any direct reads from stdin get an immediate EOF
+//
+// We cannot use /dev/null because it is a character device on macOS, which
+// would cause IsInteractive() to return true.
 func nonInteractiveStdin(t *testing.T) {
 	t.Helper()
 
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
-	require.NoError(t, w.Close())
+	_ = w.Close() // close write end so reads get EOF
 
 	old := os.Stdin
 	os.Stdin = r
@@ -112,7 +127,7 @@ func captureOutput(t *testing.T, fn func()) string {
 	_, err = io.Copy(&buf, r)
 	require.NoError(t, err)
 
-	return buf.String()
+	return stripANSI(buf.String())
 }
 
 // restrictPATH sets PATH to only include git, ensuring tools like gh are not found.
@@ -163,7 +178,12 @@ func TestCISetup_PipelineNoAPIKey(t *testing.T) {
 	chdir(t, dir)
 	t.Setenv("INFRACOST_API_KEY", "")
 
-	cfg := ciTestConfig(t,mocks.NewMockClient(t))
+	mockClient := mocks.NewMockClient(t)
+	mockClient.EXPECT().
+		CurrentUser(mock.Anything).
+		Return(singleOrgUser(), nil)
+
+	cfg := ciTestConfig(t, mockClient)
 	cmd := cmds.CI(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
@@ -177,19 +197,12 @@ func TestCISetup_PipelineNoAPIKey(t *testing.T) {
 
 	require.Error(t, execErr)
 	assert.Contains(t, execErr.Error(), "INFRACOST_API_KEY")
-
-	want := `
-Scanning repository
-✔  GitHub repository   acme-corp/platform-infra
-✗  Infracost API key   not found
-
-CI pipeline setup is currently in early access.
-To get access, please contact a sales representative.
-
-Already have a key? Set it as an environment variable:
-  export INFRACOST_API_KEY=<your-key>
-`
-	assert.Equal(t, want, output)
+	assert.Contains(t, output, "✔  GitHub repository   acme-corp/platform-infra")
+	assert.Contains(t, output, "✔  Infracost org       Acme Corp")
+	assert.Contains(t, output, "✗  Infracost API key   not found")
+	assert.Contains(t, output, "To get an API key, visit your organization's CLI tokens page:")
+	assert.Contains(t, output, "https://dashboard.infracost.io/org/acme-corp/settings/cli-tokens")
+	assert.Contains(t, output, "export INFRACOST_API_KEY=<your-key>")
 }
 
 func TestCISetup_PipelineNonGitHub(t *testing.T) {
@@ -213,10 +226,11 @@ func TestCISetup_PipelineNonGitHub(t *testing.T) {
 	assert.Contains(t, execErr.Error(), "GitLab")
 
 	want := "\nScanning repository\n" +
-		"✔  Git repository      acme-corp/platform-infra\n" +
-		"✗  CI provider         GitLab detected — GitHub Actions only for now\n" +
+		"  ✔  Git repository      acme-corp/platform-infra\n" +
+		"  ✗  CI provider         GitLab detected — GitHub Actions only for now\n" +
 		"\n" +
-		"Run `infracost ci setup` to use the app integration instead.\n"
+		"To use the app integration instead, run:\n" +
+		"  infracost ci setup\n"
 	assert.Equal(t, want, output)
 }
 
@@ -247,16 +261,16 @@ func TestCISetup_PipelineSuccess(t *testing.T) {
 
 	want := `
 Scanning repository
-✔  GitHub repository   acme-corp/platform-infra
-✔  Infracost API key   ready (from INFRACOST_API_KEY)
-✔  Infracost org       Acme Corp
-!  gh CLI              not found — secret will need to be set manually
+  ✔  GitHub repository   acme-corp/platform-infra
+  ✔  Infracost org       Acme Corp
+  ✔  Infracost API key   ready (from INFRACOST_API_KEY)
+  !  gh CLI              not found — secret will need to be set manually
 
 This will:
   →  Create  .github/workflows/infracost-diff.yml
   →  Create  .github/workflows/infracost-scan.yml
-✔  Created .github/workflows/infracost-diff.yml
-✔  Created .github/workflows/infracost-scan.yml
+  ✔  Created .github/workflows/infracost-diff.yml
+  ✔  Created .github/workflows/infracost-scan.yml
 
 One manual step remaining:
 Set the API key as a GitHub secret:
@@ -362,12 +376,8 @@ func TestCISetup_PipelineMultipleOrgs(t *testing.T) {
 	require.Error(t, execErr)
 	assert.Contains(t, execErr.Error(), "multiple organizations")
 
-	want := `
-Scanning repository
-✔  GitHub repository   acme-corp/platform-infra
-✔  Infracost API key   ready (from INFRACOST_API_KEY)
-`
-	assert.Equal(t, want, output)
+	assert.Contains(t, output, "✔  GitHub repository   acme-corp/platform-infra")
+	assert.NotContains(t, output, "Infracost API key")
 }
 
 func TestCISetup_AppAlreadyConnected(t *testing.T) {
@@ -398,12 +408,13 @@ func TestCISetup_AppAlreadyConnected(t *testing.T) {
 
 	want := `
 Scanning repository
-✔  GitHub repository  acme-corp/platform-infra
-✔  Infracost org      Acme Corp
-✔  App integration already connected
+  ✔  GitHub repository  acme-corp/platform-infra
+  ✔  Infracost org      Acme Corp
+  ✔  App integration already connected
 
 This repository is already sending PR cost estimates.
-To manage settings: https://dashboard.infracost.io/org/acme-corp/repos
+To manage settings, visit:
+  https://dashboard.infracost.io/org/acme-corp/repos
 `
 	assert.Equal(t, want, output)
 }

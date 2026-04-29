@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"github.com/spf13/cobra"
 )
@@ -34,17 +35,25 @@ type agent struct {
 }
 
 func pluginSetup(bin, marketplace, plugin, scope string) error {
-	fmt.Println("Adding Infracost skills marketplace...")
-	if err := runAgentBinary(bin, "plugin", "marketplace", "add", marketplace); err != nil {
-		return fmt.Errorf("adding marketplace: %w", err)
-	}
-	fmt.Println("✔  Marketplace added")
+	var actionErr error
 
-	fmt.Println("Installing Infracost plugin...")
-	if err := runAgentBinary(bin, "plugin", "install", "--scope", scope, plugin); err != nil {
-		return fmt.Errorf("installing plugin: %w", err)
+	if err := ui.RunWithSpinner("Adding Infracost skills marketplace...", "Marketplace added", func() {
+		actionErr = runAgentBinary(bin, "plugin", "marketplace", "add", marketplace)
+	}); err != nil {
+		return err
 	}
-	fmt.Println("✔  Plugin installed")
+	if actionErr != nil {
+		return fmt.Errorf("adding marketplace: %w", actionErr)
+	}
+
+	if err := ui.RunWithSpinner("Installing Infracost plugin...", "Plugin installed", func() {
+		actionErr = runAgentBinary(bin, "plugin", "install", "--scope", scope, plugin)
+	}); err != nil {
+		return err
+	}
+	if actionErr != nil {
+		return fmt.Errorf("installing plugin: %w", actionErr)
+	}
 
 	return nil
 }
@@ -62,15 +71,24 @@ func pluginCheck(bin, name string) (bool, error) {
 
 func pluginTeardown(bin, marketplaceName, plugin, scope string) error {
 	var errs []error
+	var actionErr error
 
-	fmt.Println("Uninstalling Infracost plugin...")
-	if err := runAgentBinary(bin, "plugin", "uninstall", "--scope", scope, plugin); err != nil {
-		errs = append(errs, fmt.Errorf("uninstalling plugin: %w", err))
+	if err := ui.RunWithSpinner("Uninstalling Infracost plugin...", "Plugin uninstalled", func() {
+		actionErr = runAgentBinary(bin, "plugin", "uninstall", "--scope", scope, plugin)
+	}); err != nil {
+		return err
+	}
+	if actionErr != nil {
+		errs = append(errs, fmt.Errorf("uninstalling plugin: %w", actionErr))
 	}
 
-	fmt.Println("Removing Infracost skills marketplace...")
-	if err := runAgentBinary(bin, "plugin", "marketplace", "remove", marketplaceName); err != nil {
-		errs = append(errs, fmt.Errorf("removing marketplace: %w", err))
+	if err := ui.RunWithSpinner("Removing Infracost skills marketplace...", "Marketplace removed", func() {
+		actionErr = runAgentBinary(bin, "plugin", "marketplace", "remove", marketplaceName)
+	}); err != nil {
+		return err
+	}
+	if actionErr != nil {
+		errs = append(errs, fmt.Errorf("removing marketplace: %w", actionErr))
 	}
 
 	return errors.Join(errs...)
@@ -234,6 +252,10 @@ func agentRemove(cfg *config.Config) *cobra.Command {
 }
 
 func selectAgent(title string, skippable bool) (*agent, error) {
+	if !ui.IsInteractive() {
+		return nil, nil
+	}
+
 	var enabledAgents []agent
 	for _, a := range supportedAgents {
 		if a.enabled {
@@ -254,6 +276,7 @@ func selectAgent(title string, skippable bool) (*agent, error) {
 		Title(title).
 		Options(options...).
 		Value(&selected).
+		WithTheme(ui.BrandTheme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -310,14 +333,17 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 	bin, err := resolveAgentBinary(cfg, a)
 	if err != nil {
 		if a.url != "" {
-			fmt.Printf("!  Could not find a CLI for %s on your PATH.\n", a.name)
+			ui.Warnf("Could not find a CLI for %s on your PATH.", a.name)
 			if a.hint != "" {
 				fmt.Println(a.hint)
 			}
-			if err := browser.Open(a.url); err != nil {
-				fmt.Printf("✗  Failed to open browser. Visit the URL manually:\n   %s\n", a.url)
-			} else {
-				fmt.Printf("✔  Opened %s in your browser.\n", a.url)
+			fmt.Printf("  %s\n", a.url)
+			if ui.PressEnter("\nPress Enter to open in your browser...") {
+				if err := browser.Open(a.url); err != nil {
+					ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Accent(a.url))
+				} else {
+					ui.Successf("Opened %s in your browser.", a.url)
+				}
 			}
 			return nil
 		}
@@ -328,7 +354,7 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 		return err
 	}
 
-	fmt.Printf("✔  Infracost skills enabled for %s. Restart your agent to activate.\n", a.name)
+	ui.Successf("Infracost skills enabled for %s. Restart your agent to activate.", a.name)
 	return nil
 }
 
@@ -351,6 +377,6 @@ func removeAgent(cfg *config.Config, a agent, scope string) error {
 		return err
 	}
 
-	fmt.Printf("✔  Infracost skills removed from %s.\n", a.name)
+	ui.Successf("Infracost skills removed from %s.", a.name)
 	return nil
 }

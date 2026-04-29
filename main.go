@@ -12,6 +12,7 @@ import (
 	"github.com/infracost/cli/internal/cmds"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/stacktrace"
 	"github.com/infracost/cli/version"
@@ -48,9 +49,17 @@ func run() (exitCode int) {
 	}()
 
 	cmd := &cobra.Command{
-		Use:           "infracost",
-		Version:       version.Version,
-		Short:         "Cloud cost estimates for IaC in your CLI",
+		Use:     "infracost",
+		Version: version.Version,
+		Short:   "Cloud cost estimates for IaC in your CLI",
+		Example: `  # First-time setup (auth, agents, IDE, CI)
+  $ infracost setup
+
+  # Scan the current directory for costs and policy violations
+  $ infracost scan
+
+  # View a summary of the latest scan results
+  $ infracost inspect --summary`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
@@ -64,26 +73,51 @@ func run() (exitCode int) {
 			}())
 
 			process.Process(cfg) // set defaults and validate values etc
+
+			if cfg.NoColor {
+				ui.DisableColor()
+			}
 		},
 	}
 
-	cmd.AddCommand(cmds.Setup(cfg))
-	cmd.AddCommand(cmds.Scan(cfg))
-	cmd.AddCommand(cmds.Policies(cfg))
-	cmd.AddCommand(cmds.Guardrails(cfg))
-	cmd.AddCommand(cmds.Budgets(cfg))
-	cmd.AddCommand(cmds.CI(cfg))
-	cmd.AddCommand(cmds.Agent(cfg))
-	cmd.AddCommand(cmds.IDE(cfg))
-	cmd.AddCommand(cmds.Inspect(cfg))
-	cmd.AddCommand(cmds.Login(cfg))
-	cmd.AddCommand(cmds.Logout(cfg))
-	cmd.AddCommand(cmds.Org(cfg))
-	cmd.AddCommand(cmds.Price(cfg))
-	cmd.AddCommand(cmds.WhoAmI(cfg))
-	cmd.AddCommand(cmds.Update(cfg))
+	cmd.AddGroup(
+		&cobra.Group{ID: "setup", Title: "Setup & integrations:"},
+		&cobra.Group{ID: "analyze", Title: "Analyze infrastructure:"},
+		&cobra.Group{ID: "workspace", Title: "Manage workspace:"},
+		&cobra.Group{ID: "maintain", Title: "CLI maintenance:"},
+	)
+
+	addCmd := func(c *cobra.Command, groupID string) {
+		c.GroupID = groupID
+		cmd.AddCommand(c)
+	}
+
+	addCmd(cmds.Setup(cfg), "setup")
+	addCmd(cmds.Auth(cfg), "setup")
+	addCmd(cmds.Agent(cfg), "setup")
+	addCmd(cmds.IDE(cfg), "setup")
+	addCmd(cmds.CI(cfg), "setup")
+
+	addCmd(cmds.Scan(cfg), "analyze")
+	addCmd(cmds.Inspect(cfg), "analyze")
+	addCmd(cmds.Price(cfg), "analyze")
+
+	addCmd(cmds.Org(cfg), "workspace")
+	addCmd(cmds.WhoAmI(cfg), "workspace")
+	addCmd(cmds.Policies(cfg), "workspace")
+	addCmd(cmds.Budgets(cfg), "workspace")
+	addCmd(cmds.Guardrails(cfg), "workspace")
+
+	addCmd(cmds.Doctor(cfg), "maintain")
+	addCmd(cmds.Update(cfg), "maintain")
+
 	cmd.AddCommand(cmds.Version(cfg))
-	cmd.AddCommand(cmds.Health(cfg))
+
+	for _, c := range cmds.Deprecated(cfg) {
+		cmd.AddCommand(c)
+	}
+
+	cmds.ApplyHelpStyles(cmd)
 
 	diags.Merge(process.PreProcess(cfg, cmd.PersistentFlags()))
 	if diags.Critical().Len() > 0 {
@@ -124,6 +158,9 @@ func run() (exitCode int) {
 		for _, diag := range diags.Critical().Unwrap() {
 			client.Push(context.Background(), "infracost-error", "error", diag.String())
 		}
+		return 1
+	}
+	if err != nil {
 		return 1
 	}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
@@ -40,16 +41,24 @@ func orgList(cfg *config.Config) *cobra.Command {
 
 			currentSlug, _, source := currentOrgSlug(cfg, uc.Organizations, uc.SelectedOrgID)
 
+			fmt.Println()
+			ui.Heading("Organizations")
+			fmt.Println()
+
 			for _, org := range uc.Organizations {
-				marker := "  "
-				suffix := ""
+				var marker string
+				var suffix string
 				if strings.EqualFold(org.Slug, currentSlug) {
-					marker = "✓ "
+					marker = "  " + ui.Positive("✔") + "  "
 					if source == orgSourceRepo {
-						suffix = "  ← set for this repo"
+						suffix = "  " + ui.Muted("← set for this repo")
 					}
+				} else {
+					marker = "     " // align with "  ✔  "
 				}
-				fmt.Printf("%s%-20s (%s)%s\n", marker, org.Slug, orgRole(org), suffix)
+				slug := ui.Accent(fmt.Sprintf("%-20s", org.Slug))
+				role := ui.Muted(fmt.Sprintf("(%s)", orgRole(org)))
+				fmt.Printf("%s%s %s%s\n", marker, slug, role, suffix)
 			}
 
 			return nil
@@ -63,7 +72,15 @@ func orgSwitch(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "switch [org-slug]",
 		Short: "Switch the active organization",
-		Args:  cobra.MaximumNArgs(1),
+		Example: `  # Pick from a list of your organizations
+  $ infracost org switch
+
+  # Switch to a specific organization globally
+  $ infracost org switch acme
+
+  # Pin the active organization for this repository only
+  $ infracost org switch acme --repo`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			uc, err := ensureOrgCache(cmd, cfg)
 			if err != nil {
@@ -234,6 +251,7 @@ func pickOrg(orgs []auth.CachedOrganization, cfg *config.Config, selectedOrgID s
 		Title(title).
 		Options(options...).
 		Value(&selected).
+		WithTheme(ui.BrandTheme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {

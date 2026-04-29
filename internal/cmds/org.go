@@ -95,7 +95,9 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	}
 
 	fmt.Fprintf(os.Stderr, "warning: you belong to %d organizations but none are selected.\n", len(uc.Organizations))
-	fmt.Fprintf(os.Stderr, "         Run 'infracost org switch' to select one, or set INFRACOST_CLI_ORG.\n")
+	fmt.Fprintf(os.Stderr, "         To select one, run:\n")
+	fmt.Fprintf(os.Stderr, "           infracost org switch\n")
+	fmt.Fprintf(os.Stderr, "         Or set the INFRACOST_CLI_ORG environment variable.\n")
 
 	return nil
 }

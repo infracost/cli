@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"github.com/spf13/cobra"
 )
@@ -89,6 +90,10 @@ func ideSetup(_ *config.Config) *cobra.Command {
 // unified `infracost setup` flow (DEV-230). When skippable is true, a "Skip"
 // option is appended to the selection list.
 func RunIDESetup(skippable bool) error {
+	if !ui.IsInteractive() {
+		return nil
+	}
+
 	var enabledIDEs []ide
 	for _, ide := range supportedIDEs {
 		if ide.enabled {
@@ -109,6 +114,7 @@ func RunIDESetup(skippable bool) error {
 		Title("Which IDE do you use?").
 		Options(options...).
 		Value(&selected).
+		WithTheme(ui.BrandTheme()).
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
@@ -136,29 +142,36 @@ func installIDE(i ide) error {
 			continue
 		}
 
-		fmt.Printf("Installing Infracost extension via %s...\n", bin)
-		cmd := i.installCmd(path)
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("installing extension: %w", err)
+		var actionErr error
+		if err := ui.RunWithSpinner(fmt.Sprintf("Installing Infracost extension via %s...", bin), "Infracost extension installed", func() {
+			cmd := i.installCmd(path)
+			cmd.Stdout = nil
+			cmd.Stderr = nil
+			actionErr = cmd.Run()
+		}); err != nil {
+			return err
+		}
+		if actionErr != nil {
+			return fmt.Errorf("installing extension: %w", actionErr)
 		}
 
-		fmt.Println("✔  Infracost extension installed successfully.")
 		return nil
 	}
 
 	if i.url != "" {
 		if len(i.binaries) > 0 {
-			fmt.Printf("!  Could not find a CLI for %s on your PATH.\n", i.name)
+			ui.Warnf("Could not find a CLI for %s on your PATH.", i.name)
 		}
 		if i.hint != "" {
 			fmt.Println(i.hint)
 		}
-		if err := browser.Open(i.url); err != nil {
-			fmt.Printf("✗  Failed to open browser. Visit the URL manually:\n   %s\n", i.url)
-		} else {
-			fmt.Printf("✔  Opened %s in your browser.\n", i.url)
+		fmt.Printf("  %s\n", i.url)
+		if ui.PressEnter("\nPress Enter to open in your browser...") {
+			if err := browser.Open(i.url); err != nil {
+				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Accent(i.url))
+			} else {
+				ui.Successf("Opened %s in your browser.", i.url)
+			}
 		}
 		return nil
 	}

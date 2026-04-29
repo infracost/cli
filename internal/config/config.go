@@ -24,7 +24,7 @@ type Config struct {
 	Environment environment.Environment `flag:"environment;hidden" usage:"The environment to use for authentication" default:"prod"`
 
 	// Currency is the currency to use for prices. Defaults to USD.
-	Currency string `env:"INFRACOST_CLI_CURRENCY" flag:"currency" usage:"The currency to use for prices" default:""`
+	Currency string `env:"INFRACOST_CLI_CURRENCY" default:""`
 
 	// PricingEndpoint is the endpoint to use for prices. Defaults to https://pricing.api.infracost.io.
 	PricingEndpoint string `env:"INFRACOST_CLI_PRICING_ENDPOINT" flag:"pricing-endpoint;hidden" usage:"The pricing endpoint to use for prices" default:"https://pricing.api.infracost.io"`
@@ -37,6 +37,10 @@ type Config struct {
 
 	// ClaudePath is the path to the Claude CLI binary. Defaults to "claude" (looked up on PATH).
 	ClaudePath string `env:"INFRACOST_CLI_CLAUDE_PATH" flag:"claude-path;hidden" usage:"Path to the Claude CLI binary"`
+
+	// NoColor disables all colored output. NO_COLOR env var (any non-empty value)
+	// is honored separately at startup; see internal/ui/colors.go.
+	NoColor bool `flag:"no-color" usage:"Disable colored output"`
 
 	// Logging contains the configuration for logging.
 	// keep logging above other structs, so it gets processed first and others can log in their process functions.

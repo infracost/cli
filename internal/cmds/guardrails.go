@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,11 +9,11 @@ import (
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
 	rational "github.com/infracost/proto/gen/go/infracost/rational"
-	"github.com/liamg/tml"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -55,34 +56,41 @@ func Guardrails(cfg *config.Config) *cobra.Command {
 			}
 
 			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-			runParameters, err := client.RunParameters(cmd.Context(), repositoryURL, branchName)
-			if err != nil {
-				return fmt.Errorf("fetching guardrails: %w", err)
-			}
 
-			if cfg.Org == "" {
-				cfg.OrgID = runParameters.OrganizationID
-			}
-
-			pj := protojson.UnmarshalOptions{DiscardUnknown: true}
 			var guardrails []*event.Guardrail
-			for _, raw := range runParameters.Guardrails {
-				g := new(event.Guardrail)
-				if err := pj.Unmarshal(raw, g); err != nil {
-					return fmt.Errorf("failed to unmarshal guardrail: %w", err)
+			if err := ui.RunWithSpinnerErr(cmd.Context(), "Fetching guardrails...", "Guardrails loaded", func(ctx context.Context) error {
+				runParameters, err := client.RunParameters(ctx, repositoryURL, branchName)
+				if err != nil {
+					return fmt.Errorf("fetching guardrails: %w", err)
 				}
-				guardrails = append(guardrails, g)
+
+				if cfg.Org == "" {
+					cfg.OrgID = runParameters.OrganizationID
+				}
+
+				pj := protojson.UnmarshalOptions{DiscardUnknown: true}
+				for _, raw := range runParameters.Guardrails {
+					g := new(event.Guardrail)
+					if err := pj.Unmarshal(raw, g); err != nil {
+						return fmt.Errorf("failed to unmarshal guardrail: %w", err)
+					}
+					guardrails = append(guardrails, g)
+				}
+				return nil
+			}); err != nil {
+				return err
 			}
 
 			fmt.Println()
 
 			if len(guardrails) == 0 {
-				tml.Println("<dim>No guardrails configured for this repository.</dim>")
+				fmt.Println(ui.Muted("No guardrails configured for this repository."))
 				fmt.Println()
 				return nil
 			}
 
-			tml.Printf("<bold><blue><underline>Cost Guardrails</underline></blue></bold>\n\n")
+			ui.Heading("Cost Guardrails")
+			fmt.Println()
 
 			for _, g := range guardrails {
 				printGuardrail(g)
@@ -99,24 +107,24 @@ func printGuardrail(g *event.Guardrail) {
 		scope = "project"
 	}
 
-	tml.Printf("<bold>%s</bold>  <dim>(%s, %s-level)</dim>\n", g.Name, g.Id, scope)
+	fmt.Printf("%s  %s\n", ui.Bold(ui.Accent(g.Name)), ui.Mutedf("(%s, %s-level)", g.Id, scope))
 
 	if g.Message != "" {
 		fmt.Printf("  %s\n", g.Message)
 	}
 
-	tml.Printf("\n  <underline>Thresholds</underline>\n")
+	fmt.Printf("\n  %s\n", ui.Bold(ui.Muted("Thresholds")))
 	if g.TotalThreshold != nil {
-		tml.Printf("    - Total monthly cost exceeds <yellow>$%s</yellow>\n", formatThreshold(g.TotalThreshold))
+		fmt.Printf("    - Total monthly cost exceeds %s\n", ui.Cautionf("$%s", formatThreshold(g.TotalThreshold)))
 	}
 	if g.IncreaseThreshold != nil {
-		tml.Printf("    - Cost increase exceeds <yellow>$%s</yellow>\n", formatThreshold(g.IncreaseThreshold))
+		fmt.Printf("    - Cost increase exceeds %s\n", ui.Cautionf("$%s", formatThreshold(g.IncreaseThreshold)))
 	}
 	if g.IncreasePercentThreshold != nil {
-		tml.Printf("    - Cost increase exceeds <yellow>%s%%</yellow>\n", formatThreshold(g.IncreasePercentThreshold))
+		fmt.Printf("    - Cost increase exceeds %s\n", ui.Cautionf("%s%%", formatThreshold(g.IncreasePercentThreshold)))
 	}
 
-	tml.Printf("\n  <underline>Actions</underline>\n")
+	fmt.Printf("\n  %s\n", ui.Bold(ui.Muted("Actions")))
 	var actions []string
 	if g.PrComment {
 		actions = append(actions, "PR comment")
@@ -127,11 +135,11 @@ func printGuardrail(g *event.Guardrail) {
 	if len(actions) == 0 {
 		actions = append(actions, "Alert only")
 	}
-	tml.Printf("    %s\n", strings.Join(actions, ", "))
+	fmt.Printf("    %s\n", strings.Join(actions, ", "))
 
 	if g.Scope == event.Guardrail_PROJECT && g.ProjectFilter != nil {
-		tml.Printf("\n  <underline>Applies to</underline>\n")
-		tml.Printf("    - %s\n", filterToHumanReadableString("projects", g.ProjectFilter))
+		fmt.Printf("\n  %s\n", ui.Bold(ui.Muted("Applies to")))
+		fmt.Printf("    - %s\n", filterToHumanReadableString("projects", g.ProjectFilter))
 	}
 
 	fmt.Println()

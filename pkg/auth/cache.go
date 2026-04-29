@@ -32,7 +32,7 @@ func (c *Config) LoadCache(ctx context.Context) (oauth2.TokenSource, *oauth2.Tok
 
 	var token oauth2.Token
 	if err := json.NewDecoder(f).Decode(&token); err != nil {
-		return nil, nil, fmt.Errorf("failed to decode token cache at %s: %w (the file may be corrupted, try deleting it and running `infracost login` again)", path, err)
+		return nil, nil, fmt.Errorf("failed to decode token cache at %s: %w (the file may be corrupted, try deleting it and running `infracost auth login` again)", path, err)
 	}
 
 	ts := c.OAuth2Config().TokenSource(ctx, &token)
