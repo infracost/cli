@@ -22,25 +22,12 @@ func Scan(cfg *config.Config) *cobra.Command {
 		Aliases: []string{"analyse"}, // codespell:ignore analyse
 		Short:   "Scan your IaC and derive FinOps costs and policy violations",
 		Args:    cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 
 			source, err := cfg.Auth.Token(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("failed to log in: %w", err)
 			}
-
-			// Track scan failures that occur after authentication succeeds.
-			defer func() {
-				if retErr == nil {
-					return
-				}
-				eventsClient := cfg.Events.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-				msg := retErr.Error()
-				if len(msg) > 500 {
-					msg = msg[:500]
-				}
-				eventsClient.Push(cmd.Context(), "infracost-error", "error", msg)
-			}()
 
 			// default to current working dir
 			target := "."
