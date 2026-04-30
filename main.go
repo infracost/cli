@@ -51,7 +51,7 @@ func run() (exitCode int) {
 	cmd := &cobra.Command{
 		Use:     "infracost",
 		Version: version.Version,
-		Short:   "Cloud cost estimates for IaC in your CLI",
+		Short:   "Shift FinOps Left: Prevent cloud waste and budget overruns before every deploy",
 		Example: `  # First-time setup (auth, agents, IDE, CI)
   $ infracost setup
 
