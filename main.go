@@ -83,7 +83,7 @@ func run() (exitCode int) {
 	cmd.AddGroup(
 		&cobra.Group{ID: "setup", Title: "Setup & integrations:"},
 		&cobra.Group{ID: "analyze", Title: "Analyze infrastructure:"},
-		&cobra.Group{ID: "workspace", Title: "Manage workspace:"},
+		&cobra.Group{ID: "workspace", Title: "Organization settings:"},
 		&cobra.Group{ID: "maintain", Title: "CLI maintenance:"},
 	)
 
@@ -94,6 +94,7 @@ func run() (exitCode int) {
 
 	addCmd(cmds.Setup(cfg), "setup")
 	addCmd(cmds.Auth(cfg), "setup")
+	addCmd(cmds.Org(cfg), "setup")
 	addCmd(cmds.Agent(cfg), "setup")
 	addCmd(cmds.IDE(cfg), "setup")
 	addCmd(cmds.CI(cfg), "setup")
@@ -102,8 +103,6 @@ func run() (exitCode int) {
 	addCmd(cmds.Inspect(cfg), "analyze")
 	addCmd(cmds.Price(cfg), "analyze")
 
-	addCmd(cmds.Org(cfg), "workspace")
-	addCmd(cmds.WhoAmI(cfg), "workspace")
 	addCmd(cmds.Policies(cfg), "workspace")
 	addCmd(cmds.Budgets(cfg), "workspace")
 	addCmd(cmds.Guardrails(cfg), "workspace")
