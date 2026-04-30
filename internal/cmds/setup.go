@@ -3,10 +3,14 @@ package cmds
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/ui"
+	"github.com/infracost/cli/version"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +35,25 @@ func Setup(cfg *config.Config) *cobra.Command {
 			if err := requireUserLogin(cfg); err != nil {
 				return err
 			}
+
+			fmt.Println()
+			fmt.Print(ui.Banner(version.Version))
+			fmt.Println()
+
+			// On Ctrl+C anywhere in the setup flow, print a branded goodbye
+			// and exit cleanly. huh's per-prompt abort handling continues to
+			// work for navigating to "Skip" inside individual menus; this
+			// catches the case where the user wants to bail out entirely.
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-sigCh
+				fmt.Println()
+				fmt.Println()
+				fmt.Println("  " + ui.Gradient("Setup cancelled. Goodbye!"))
+				os.Exit(0)
+			}()
+			defer signal.Stop(sigCh)
 
 			// Step 1: Login
 			ctx := cmd.Context()
@@ -60,7 +83,7 @@ func Setup(cfg *config.Config) *cobra.Command {
 			}
 
 			fmt.Println()
-			ui.Heading("Setup complete.")
+			fmt.Println(ui.Bold(ui.Gradient("Setup complete.")))
 			return nil
 		},
 	}
