@@ -42,6 +42,10 @@ type Config struct {
 	// is honored separately at startup; see internal/ui/colors.go.
 	NoColor bool `flag:"no-color" usage:"Disable colored output"`
 
+	// JSON toggles JSON output for both logs and command results. Shared with
+	// any sub-config that registers `flagvalue:"json"` (e.g. logging).
+	JSON process.BoolFlag `env:"INFRACOST_CLI_LOG_JSON" flag:"json" usage:"Output logs and command results as JSON"`
+
 	// Logging contains the configuration for logging.
 	// keep logging above other structs, so it gets processed first and others can log in their process functions.
 	Logging logging.Config

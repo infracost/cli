@@ -1,0 +1,42 @@
+{
+  "projects": 2,
+  "projects_with_errors": 1,
+  "project_details": [
+    {
+      "name": "web-app",
+      "path": "/web",
+      "resources": 4,
+      "monthly_cost": "60",
+      "finops_policies": 1,
+      "finops_failing_policies": 1,
+      "tagging_policies": 1,
+      "tagging_failing_policies": 1,
+      "has_errors": true
+    },
+    {
+      "name": "api-service",
+      "path": "/api",
+      "resources": 1,
+      "monthly_cost": "5",
+      "finops_policies": 0,
+      "finops_failing_policies": 0,
+      "tagging_policies": 0,
+      "tagging_failing_policies": 0,
+      "has_errors": false
+    }
+  ],
+  "resources": 5,
+  "costed_resources": 4,
+  "free_resources": 1,
+  "monthly_cost": "65",
+  "finops_policies": 1,
+  "failing_policies": 1,
+  "tagging_policies": 1,
+  "failing_tagging_policies": 1,
+  "guardrails": 1,
+  "triggered_guardrails": 1,
+  "budgets": 2,
+  "over_budget": 1,
+  "critical_diagnostics": 1,
+  "warning_diagnostics": 0
+}

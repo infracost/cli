@@ -136,20 +136,27 @@ func preprocess(v reflect.Value, flags *pflag.FlagSet) *diagnostic.Diagnostics {
 				panic(fmt.Sprintf("flagvalue %q references flag that has not been registered", flagTargetName))
 			}
 
-			sf, ok := existing.Value.(SharedFlag)
-			if !ok {
-				panic(fmt.Sprintf("flagvalue %q references flag that does not implement SharedFlag", flagTargetName))
+			switch fieldValue.Kind() {
+			case reflect.String:
+				sf, ok := existing.Value.(SharedFlag)
+				if !ok {
+					panic(fmt.Sprintf("flagvalue %q references flag that does not implement SharedFlag", flagTargetName))
+				}
+				target := fieldValue.Addr().Interface().(*string)
+				if existing.DefValue != "" {
+					*target = existing.DefValue
+				}
+				sf.AddTarget(target)
+			case reflect.Bool:
+				sf, ok := existing.Value.(SharedBoolFlag)
+				if !ok {
+					panic(fmt.Sprintf("flagvalue %q references flag that does not implement SharedBoolFlag", flagTargetName))
+				}
+				target := fieldValue.Addr().Interface().(*bool)
+				sf.AddBoolTarget(target)
+			default:
+				panic(fmt.Sprintf("flagvalue %q can only be used on string or bool fields", flagTargetName))
 			}
-
-			if fieldValue.Kind() != reflect.String {
-				panic(fmt.Sprintf("flagvalue %q can only be used on string fields", flagTargetName))
-			}
-
-			target := fieldValue.Addr().Interface().(*string)
-			if existing.DefValue != "" {
-				*target = existing.DefValue
-			}
-			sf.AddTarget(target)
 		}
 
 	}

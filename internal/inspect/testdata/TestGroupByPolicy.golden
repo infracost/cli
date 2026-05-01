@@ -1,0 +1,4 @@
+Policy         Kind     Resource             File                        Message
+─              ─        ─                    ─                           ─  
+Required Tags  tagging  aws_instance.web     modules/compute/main.tf:42  All resources must have required tags
+Use GP3        finops   aws_ebs_volume.data                              Consider using GP3 volumes

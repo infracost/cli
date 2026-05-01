@@ -1,0 +1,19 @@
+Budget: Production budget
+Scope: env=production
+Limit: $1000.00
+Actual spend: $500.00
+Status: $500.00 remaining (50.0% left)
+
+Resources in this scan matching budget tags:
+Type                     Count  Monthly Cost
+─                        ─      ─  
+aws_instance             1      $20.00
+aws_s3_bucket            1      $0.00
+aws_ebs_volume           1      $10.00
+google_compute_instance  1      $30.00
+
+FinOps policy violations on matching resources:
+  Use GP3: up to $5.00/mo (1 resource)
+
+Actual spend is based on cloud billing data for all resources
+matching this budget's tags across the organization.

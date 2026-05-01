@@ -10,33 +10,35 @@ import (
 )
 
 type projectSummary struct {
-	Name                  string   `json:"name"`
-	Path                  string   `json:"path"`
-	Resources             int      `json:"resources"`
-	MonthlyCost           *rat.Rat `json:"monthly_cost"`
-	FinopsPolicies        int      `json:"finops_policies"`
-	FinopsFailingPolicies int      `json:"finops_failing_policies"`
-	TaggingPolicies       int      `json:"tagging_policies"`
-	HasErrors             bool     `json:"has_errors"`
+	Name                   string   `json:"name"`
+	Path                   string   `json:"path"`
+	Resources              int      `json:"resources"`
+	MonthlyCost            *rat.Rat `json:"monthly_cost"`
+	FinopsPolicies         int      `json:"finops_policies"`
+	FinopsFailingPolicies  int      `json:"finops_failing_policies"`
+	TaggingPolicies        int      `json:"tagging_policies"`
+	TaggingFailingPolicies int      `json:"tagging_failing_policies"`
+	HasErrors              bool     `json:"has_errors"`
 }
 
 type summaryData struct {
-	Projects          int              `json:"projects"`
-	ProjectsWithError int              `json:"projects_with_errors"`
-	ProjectDetails    []projectSummary `json:"project_details"`
-	Resources         int              `json:"resources"`
-	CostedResources   int              `json:"costed_resources"`
-	FreeResources     int              `json:"free_resources"`
-	MonthlyCost       *rat.Rat         `json:"monthly_cost"`
-	FinopsPolicies    int              `json:"finops_policies"`
-	FailingPolicies   int              `json:"failing_policies"`
-	TaggingPolicies   int              `json:"tagging_policies"`
-	Guardrails          int              `json:"guardrails"`
-	TriggeredGuardrails int              `json:"triggered_guardrails"`
-	Budgets             int              `json:"budgets"`
-	OverBudget          int              `json:"over_budget"`
-	CriticalDiags     int              `json:"critical_diagnostics"`
-	WarningDiags      int              `json:"warning_diagnostics"`
+	Projects               int              `json:"projects"`
+	ProjectsWithError      int              `json:"projects_with_errors"`
+	ProjectDetails         []projectSummary `json:"project_details"`
+	Resources              int              `json:"resources"`
+	CostedResources        int              `json:"costed_resources"`
+	FreeResources          int              `json:"free_resources"`
+	MonthlyCost            *rat.Rat         `json:"monthly_cost"`
+	FinopsPolicies         int              `json:"finops_policies"`
+	FailingPolicies        int              `json:"failing_policies"`
+	TaggingPolicies        int              `json:"tagging_policies"`
+	FailingTaggingPolicies int              `json:"failing_tagging_policies"`
+	Guardrails             int              `json:"guardrails"`
+	TriggeredGuardrails    int              `json:"triggered_guardrails"`
+	Budgets                int              `json:"budgets"`
+	OverBudget             int              `json:"over_budget"`
+	CriticalDiags          int              `json:"critical_diagnostics"`
+	WarningDiags           int              `json:"warning_diagnostics"`
 }
 
 func ResourceCost(r *format.ResourceOutput) *rat.Rat {
@@ -81,12 +83,16 @@ func WriteSummary(w io.Writer, data *format.Output, asJSON bool) error {
 			if ps.FinopsFailingPolicies > 0 {
 				finops += fmt.Sprintf(" (%d failing)", ps.FinopsFailingPolicies)
 			}
+			tagging := fmt.Sprintf("%d", ps.TaggingPolicies)
+			if ps.TaggingFailingPolicies > 0 {
+				tagging += fmt.Sprintf(" (%d failing)", ps.TaggingFailingPolicies)
+			}
 			add([]string{
 				name,
 				fmt.Sprintf("%d", ps.Resources),
 				"$" + ps.MonthlyCost.StringFixed(2),
 				finops,
-				fmt.Sprintf("%d", ps.TaggingPolicies),
+				tagging,
 			})
 		}
 	}); err != nil {
@@ -103,7 +109,7 @@ func WriteSummary(w io.Writer, data *format.Output, asJSON bool) error {
 	_, _ = fmt.Fprintf(w, "Monthly cost: $%s\n", s.MonthlyCost.StringFixed(2))
 
 	_, _ = fmt.Fprintf(w, "FinOps policies: %d (%d failing)\n", s.FinopsPolicies, s.FailingPolicies)
-	_, _ = fmt.Fprintf(w, "Tagging policies: %d\n", s.TaggingPolicies)
+	_, _ = fmt.Fprintf(w, "Tagging policies: %d (%d failing)\n", s.TaggingPolicies, s.FailingTaggingPolicies)
 	_, _ = fmt.Fprintf(w, "Guardrails: %d (%d triggered)\n", s.Guardrails, s.TriggeredGuardrails)
 	_, _ = fmt.Fprintf(w, "Budgets: %d (%d over)\n", s.Budgets, s.OverBudget)
 
@@ -170,8 +176,14 @@ func buildSummary(data *format.Output) summaryData {
 			}
 		}
 
-		ps.TaggingPolicies = len(p.TaggingResults)
-		s.TaggingPolicies += ps.TaggingPolicies
+		for _, t := range p.TaggingResults {
+			s.TaggingPolicies++
+			ps.TaggingPolicies++
+			if len(t.FailingResources) > 0 {
+				s.FailingTaggingPolicies++
+				ps.TaggingFailingPolicies++
+			}
+		}
 
 		s.ProjectDetails = append(s.ProjectDetails, ps)
 	}

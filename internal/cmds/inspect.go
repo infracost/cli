@@ -49,7 +49,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 			if count > 1 {
 				return fmt.Errorf("--policy, --budget, and --guardrail are mutually exclusive")
 			}
-			return nil
+			return inspect.ValidateGroupBy(opts.GroupBy)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			startTime := time.Now()
@@ -78,6 +78,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 				}
 			}
 
+			opts.JSON = cfg.JSON.Value
 			if err := inspect.Run(os.Stdout, data, opts); err != nil {
 				return err
 			}
@@ -91,7 +92,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 
 	cmd.Flags().StringVar(&file, "file", "", "Path to JSON file (skips cache)")
 	cmd.Flags().BoolVar(&opts.Summary, "summary", false, "Show a summary view")
-	cmd.Flags().StringSliceVar(&opts.GroupBy, "group-by", nil, "Group by: type, provider, project, policy (comma-separated or repeated)")
+	cmd.Flags().StringSliceVar(&opts.GroupBy, "group-by", nil, "Group by: "+inspect.GroupByOptionsHelp()+" (comma-separated or repeated)")
 	cmd.Flags().StringVar(&opts.Policy, "policy", "", "Filter by policy name or slug")
 	cmd.Flags().StringVar(&opts.Budget, "budget", "", "Show budget detail by name or ID")
 	cmd.Flags().StringVar(&opts.Guardrail, "guardrail", "", "Show guardrail detail by name or ID")
@@ -101,7 +102,6 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.CostsOnly, "costs-only", false, "Hide free resources")
 	cmd.Flags().BoolVar(&opts.Failing, "failing", false, "Only show failing policies")
 	cmd.Flags().IntVar(&opts.Top, "top", 0, "Show only the top N resources by cost")
-	cmd.Flags().BoolVar(&opts.JSON, "json", false, "Output as JSON")
 
 	return cmd
 }
