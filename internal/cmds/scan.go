@@ -11,6 +11,7 @@ import (
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/inspect"
 	"github.com/infracost/cli/internal/scanner"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
@@ -20,9 +21,8 @@ import (
 
 func Scan(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "scan [path]",
-		Aliases: []string{"analyse"}, // codespell:ignore analyse
-		Short:   "Scan your IaC and derive FinOps costs and policy violations",
+		Use:   "scan [path]",
+		Short: "Scan your IaC and derive FinOps costs and policy violations",
 		Example: `  # Scan the current directory
   $ infracost scan
 
@@ -136,12 +136,24 @@ func Scan(cfg *config.Config) *cobra.Command {
 				logging.Warn("failed to cache results: " + err.Error())
 			}
 
-			output.TrackRun(cmd.Context(), eventsClient, runSeconds, "json", prevForDir)
-
-			if err := output.ToJSON(os.Stdout); err != nil {
-				return fmt.Errorf("failed to write JSON output: %w", err)
+			outputFormat := "text"
+			if cfg.JSON.Value {
+				outputFormat = "json"
 			}
-			fmt.Println() // add newline after JSON output
+			output.TrackRun(cmd.Context(), eventsClient, runSeconds, outputFormat, prevForDir)
+
+			if cfg.JSON.Value {
+				if err := output.ToJSON(os.Stdout); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
+				fmt.Println() // add newline after JSON output
+				return nil
+			}
+
+			if err := inspect.Run(os.Stdout, &output, inspect.Options{}); err != nil {
+				return err
+			}
+			printInspectHints(&output)
 			return nil
 		},
 	}

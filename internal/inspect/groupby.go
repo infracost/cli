@@ -23,12 +23,12 @@ type tableRow struct {
 	Count   int               `json:"count,omitempty"`
 }
 
-var detailColumns = []string{"kind", "resource", "file", "message"}
+var detailColumns = []string{"kind", string(GroupByResource), string(GroupByFile), "message"}
 
 func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
-	hasPolicyDim := slices.Contains(opts.GroupBy, "policy")
-	hasBudgetDim := slices.Contains(opts.GroupBy, "budget")
-	hasGuardrailDim := slices.Contains(opts.GroupBy, "guardrail")
+	hasPolicyDim := slices.Contains(opts.GroupBy, string(GroupByPolicy))
+	hasBudgetDim := slices.Contains(opts.GroupBy, string(GroupByBudget))
+	hasGuardrailDim := slices.Contains(opts.GroupBy, string(GroupByGuardrail))
 
 	var rows []tableRow
 	switch {
@@ -154,11 +154,11 @@ func collectResourceRows(data *format.Output) []tableRow {
 		for _, r := range p.Resources {
 			rows = append(rows, tableRow{
 				Columns: map[string]string{
-					"project":  p.ProjectName,
-					"type":     r.Type,
-					"provider": InferProvider(r.Type),
-					"resource": r.Name,
-					"file":     formatFileLoc(r.Metadata.Filename, r.Metadata.StartLine),
+					string(GroupByProject):  p.ProjectName,
+					string(GroupByType):     r.Type,
+					string(GroupByProvider): InferProvider(r.Type),
+					string(GroupByResource): r.Name,
+					string(GroupByFile):     formatFileLoc(r.Metadata.Filename, r.Metadata.StartLine),
 				},
 				Cost: ResourceCost(&r),
 			})
@@ -180,14 +180,14 @@ func collectPolicyRows(data *format.Output) []tableRow {
 				meta := metaByName[fr.Name]
 				rows = append(rows, tableRow{
 					Columns: map[string]string{
-						"project":  p.ProjectName,
-						"policy":   f.PolicyName,
-						"kind":     "finops",
-						"type":     resourceTypeFromAddress(fr.Name),
-						"provider": InferProvider(resourceTypeFromAddress(fr.Name)),
-						"resource": fr.Name,
-						"file":     formatFileLoc(meta.Filename, meta.StartLine),
-						"message":  f.PolicyMessage,
+						string(GroupByProject):  p.ProjectName,
+						string(GroupByPolicy):   f.PolicyName,
+						"kind":                  "finops",
+						string(GroupByType):     resourceTypeFromAddress(fr.Name),
+						string(GroupByProvider): InferProvider(resourceTypeFromAddress(fr.Name)),
+						string(GroupByResource): fr.Name,
+						string(GroupByFile):     formatFileLoc(meta.Filename, meta.StartLine),
+						"message":               f.PolicyMessage,
 					},
 				})
 			}
@@ -196,14 +196,14 @@ func collectPolicyRows(data *format.Output) []tableRow {
 			for _, tr := range t.FailingResources {
 				rows = append(rows, tableRow{
 					Columns: map[string]string{
-						"project":  p.ProjectName,
-						"policy":   t.PolicyName,
-						"kind":     "tagging",
-						"type":     tr.ResourceType,
-						"provider": InferProvider(tr.ResourceType),
-						"resource": tr.Address,
-						"file":     formatFileLoc(tr.Path, tr.Line),
-						"message":  t.Message,
+						string(GroupByProject):  p.ProjectName,
+						string(GroupByPolicy):   t.PolicyName,
+						"kind":                  "tagging",
+						string(GroupByType):     tr.ResourceType,
+						string(GroupByProvider): InferProvider(tr.ResourceType),
+						string(GroupByResource): tr.Address,
+						string(GroupByFile):     formatFileLoc(tr.Path, tr.Line),
+						"message":               t.Message,
 					},
 				})
 			}
@@ -222,8 +222,8 @@ func collectGuardrailRows(data *format.Output) []tableRow {
 		}
 		rows = append(rows, tableRow{
 			Columns: map[string]string{
-				"guardrail": gr.GuardrailName,
-				"status":    status,
+				string(GroupByGuardrail): gr.GuardrailName,
+				"status":                 status,
 			},
 			Cost: gr.TotalMonthlyCost,
 		})
@@ -240,10 +240,10 @@ func collectBudgetRows(data *format.Output) []tableRow {
 		}
 		row := tableRow{
 			Columns: map[string]string{
-				"budget":       br.BudgetName,
-				"status":       status,
-				"limit":        "$" + br.Amount.StringFixed(2),
-				"actual spend": "$" + br.CurrentCost.StringFixed(2),
+				string(GroupByBudget): br.BudgetName,
+				"status":              status,
+				"limit":               "$" + br.Amount.StringFixed(2),
+				"actual spend":        "$" + br.CurrentCost.StringFixed(2),
 			},
 			Cost: br.CurrentCost,
 		}
@@ -266,7 +266,7 @@ func formatBudgetTagScope(tags []format.BudgetTagOutput) string {
 func filterRowsByResource(rows []tableRow, resource string) []tableRow {
 	var filtered []tableRow
 	for _, r := range rows {
-		if strings.HasSuffix(r.Columns["resource"], resource) {
+		if strings.HasSuffix(r.Columns[string(GroupByResource)], resource) {
 			filtered = append(filtered, r)
 		}
 	}

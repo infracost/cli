@@ -1,0 +1,5 @@
+Policy: Required Tags — All resources must have required tags
+
+Project  Resource          File                        Issues
+─        ─                 ─                           ─  
+web-app  aws_instance.web  modules/compute/main.tf:42  3 issues

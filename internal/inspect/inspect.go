@@ -8,7 +8,7 @@ import (
 
 type Options struct {
 	Summary   bool
-	GroupBy   []string // type, provider, project, policy, budget, guardrail
+	GroupBy   []string // any of ValidGroupByOptions; validated by ValidateGroupBy
 	Policy    string   // filter to a specific policy name/slug
 	Budget    string   // filter to a specific budget name/id
 	Guardrail string   // filter to a specific guardrail name/id
@@ -39,9 +39,9 @@ func Run(w io.Writer, data *format.Output, opts Options) error {
 	if len(opts.GroupBy) == 0 {
 		switch {
 		case opts.Resource != "":
-			opts.GroupBy = []string{"policy"}
+			opts.GroupBy = []string{string(GroupByPolicy)}
 		case opts.Provider != "" || opts.Top > 0 || opts.CostsOnly:
-			opts.GroupBy = []string{"type"}
+			opts.GroupBy = []string{string(GroupByType)}
 		}
 	}
 

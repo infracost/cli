@@ -1,0 +1,7 @@
+Provider  Type                     Count  Monthly Cost
+─         ─                        ─      ─  
+google    google_compute_instance  1      $30.00
+aws       aws_instance             1      $20.00
+aws       aws_ebs_volume           1      $10.00
+aws       aws_lambda_function      1      $5.00
+aws       aws_s3_bucket            1      $0.00

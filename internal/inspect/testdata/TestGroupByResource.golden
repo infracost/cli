@@ -1,0 +1,7 @@
+Resource                     Count  Monthly Cost
+─                            ─      ─  
+google_compute_instance.api  1      $30.00
+aws_instance.web             1      $20.00
+aws_ebs_volume.data          1      $10.00
+aws_lambda_function.handler  1      $5.00
+aws_s3_bucket.logs           1      $0.00

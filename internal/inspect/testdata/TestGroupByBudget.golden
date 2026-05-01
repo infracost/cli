@@ -1,0 +1,4 @@
+Budget             Status  Actual Spend  Limit     Message
+─                  ─       ─             ─         ─  
+Production budget  under   $500.00       $1000.00  
+Frontend Q2        OVER    $400.00       $300.00   Notify #frontend-costs
