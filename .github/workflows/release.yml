@@ -98,7 +98,7 @@ jobs:
           if [ "$GOOS" = "windows" ]; then
             SUFFIX=".exe"
           fi
-          go build -ldflags "-X github.com/infracost/cli/version.Version=${VERSION}" -o "bin/infracost-preview${SUFFIX}" main.go
+          go build -ldflags "-X github.com/infracost/cli/version.Version=${VERSION}" -o "bin/infracost${SUFFIX}" main.go
 
       - name: Package
         env:
@@ -106,12 +106,12 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          ARCHIVE="infracost-preview_${VERSION}_${GOOS}_${GOARCH}"
+          ARCHIVE="infracost_${VERSION}_${GOOS}_${GOARCH}"
           mkdir -p dist
           if [ "$GOOS" = "windows" ]; then
-            (cd bin && zip -r "../dist/${ARCHIVE}.zip" "infracost-preview.exe")
+            (cd bin && zip -r "../dist/${ARCHIVE}.zip" "infracost.exe")
           else
-            tar -czf "dist/${ARCHIVE}.tar.gz" -C bin infracost-preview
+            tar -czf "dist/${ARCHIVE}.tar.gz" -C bin infracost
           fi
 
       - name: Upload
@@ -137,3 +137,25 @@ jobs:
           gh release edit "$VERSION" \
             --repo "${{ github.repository }}" \
             --draft=false
+
+  trigger-chocolatey:
+    if: ${{ !contains(needs.version.outputs.version, '-alpha') && !contains(needs.version.outputs.version, '-beta') }}
+    name: Trigger Chocolatey publish
+    runs-on: ubuntu-24.04
+    needs: [version, publish-release]
+    steps:
+      - uses: infracost/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.INFRACOST_CI_APP_ID }}
+          private-key: ${{ secrets.INFRACOST_CI_APP_PRIVATE_KEY }}
+          owner: infracost
+          repositories: chocolatey-packages
+          permission-contents: write
+
+      - name: Dispatch chocolatey build
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api repos/infracost/chocolatey-packages/dispatches \
+            -f event_type=infracost2_choco
