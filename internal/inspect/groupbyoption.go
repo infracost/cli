@@ -35,7 +35,7 @@ var ValidGroupByOptions = []GroupByOption{
 	GroupByBudget,
 }
 
-// ValidateGroupBy returns an error if any value is not a recognised
+// ValidateGroupBy returns an error if any value is not a recognized
 // GroupByOption, or if combinations of values are not compatible.
 func ValidateGroupBy(values []string) error {
 	for _, v := range values {
