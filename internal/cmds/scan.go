@@ -21,9 +21,8 @@ import (
 
 func Scan(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "scan [path]",
-		Aliases: []string{"analyse"}, // codespell:ignore analyse
-		Short:   "Scan your IaC and derive FinOps costs and policy violations",
+		Use:   "scan [path]",
+		Short: "Scan your IaC and derive FinOps costs and policy violations",
 		Example: `  # Scan the current directory
   $ infracost scan
 
