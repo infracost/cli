@@ -97,7 +97,7 @@ func TestUpdate_NewerVersionAvailable(t *testing.T) {
 
 	binaryContent := []byte("new-binary-content")
 	assetName := expectedAssetName("1.0.0")
-	archive := buildTarGz(t, "infracost-preview", binaryContent)
+	archive := buildTarGz(t, "infracost", binaryContent)
 	if runtime.GOOS == "windows" {
 		t.Skip("tar.gz test not applicable on windows")
 	}
@@ -171,7 +171,7 @@ func TestUpdate_DevVersionAlwaysUpdates(t *testing.T) {
 
 	binaryContent := []byte("dev-update-binary")
 	assetName := expectedAssetName("0.0.1")
-	archive := buildTarGz(t, "infracost-preview", binaryContent)
+	archive := buildTarGz(t, "infracost", binaryContent)
 	if runtime.GOOS == "windows" {
 		t.Skip("tar.gz test not applicable on windows")
 	}
