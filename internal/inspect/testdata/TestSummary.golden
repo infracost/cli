@@ -1,14 +1,24 @@
-Projects: 2 (1 with errors)
-
-Project      Resources  Monthly Cost  FinOps         Tagging
-─            ─          ─             ─              ─  
-web-app (!)  4          $60.00        1 (1 failing)  1 (1 failing)
-api-service  1          $5.00         0              0
-
-Resources: 5 (4 costed, 1 free)
-Monthly cost: $65.00
-FinOps policies: 1 (1 failing)
-Tagging policies: 1 (1 failing)
-Guardrails: 1 (1 triggered)
-Budgets: 2 (1 over)
-Diagnostics: 1 critical
+╭──────────────────────────────────────────────────────────────────╮
+│                                                                  │
+│   Scan Summary                                                   │
+│                                                                  │
+│   Projects:      2 (❗ x1)                                       │
+│   Resources:     5 (4 costed, 1 free)                            │
+│   Monthly cost:  $65                                             │
+│                                                                  │
+│   FinOps:        1 (⚠️ x1)                                       │
+│   Tagging:       1 (⚠️ x1)                                       │
+│   Guardrails:    1 (🛑 x1)                                       │
+│   Budgets:       2 (💸 x1)                                       │
+│   Diagnostics:   ❗ x1                                           │
+│                                                                  │
+│   Project      Resources  Monthly Cost  FinOps     Tagging       │
+│   web-app ❗           4           $60  1 (⚠️ x1)  1 (⚠️ x1)     │
+│   api-service          1            $5  0          0             │
+│                                                                  │
+│   ⚠️  = failing policy                                           │
+│   🛑  = triggered guardrail                                      │
+│   💸  = over budget                                              │
+│   ❗  = scan error; results for this project may be incomplete   │
+│                                                                  │
+╰──────────────────────────────────────────────────────────────────╯

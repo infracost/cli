@@ -1,12 +1,33 @@
 package inspect
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/go-proto/pkg/rat"
+)
+
+// Symbols used in the summary, each tied to a distinct category. All render
+// at 2 cells in modern terminals.
+//   warnEmoji  (U+26A0 + VS-16) — failing FinOps/Tagging policy. The VS-16 is
+//                                 required to force 2-cell emoji presentation.
+//   stopEmoji  (U+1F6D1) — triggered guardrail (hard cost-control rule fired).
+//   moneyEmoji (U+1F4B8) — over budget.
+//   critEmoji  (U+2757)  — critical scan diagnostic (project couldn't be fully
+//                          scanned; results may be incomplete).
+// Adding VS-16 to the wide-by-default emojis (stop, money, crit) would cause
+// PrintableWidth to over-count.
+const (
+	warnEmoji  = "⚠️"
+	stopEmoji  = "🛑"
+	moneyEmoji = "💸"
+	critEmoji  = "❗"
 )
 
 type projectSummary struct {
@@ -66,64 +87,216 @@ func WriteSummary(w io.Writer, data *format.Output, asJSON bool) error {
 		return err
 	}
 
-	projectLine := fmt.Sprintf("Projects: %d", s.Projects)
-	if s.ProjectsWithError > 0 {
-		projectLine += fmt.Sprintf(" (%d with errors)", s.ProjectsWithError)
-	}
-	_, _ = fmt.Fprintln(w, projectLine)
+	var inner bytes.Buffer
+	fmt.Fprintln(&inner, ui.Bold("Scan Summary"))
+	fmt.Fprintln(&inner)
 
-	_, _ = fmt.Fprintln(w)
-	if err := writeTable(w, []string{"Project", "Resources", "Monthly Cost", "FinOps", "Tagging"}, func(add func(row []string)) {
-		for _, ps := range s.ProjectDetails {
-			name := ps.Name
-			if ps.HasErrors {
-				name += " (!)"
-			}
-			finops := fmt.Sprintf("%d", ps.FinopsPolicies)
-			if ps.FinopsFailingPolicies > 0 {
-				finops += fmt.Sprintf(" (%d failing)", ps.FinopsFailingPolicies)
-			}
-			tagging := fmt.Sprintf("%d", ps.TaggingPolicies)
-			if ps.TaggingFailingPolicies > 0 {
-				tagging += fmt.Sprintf(" (%d failing)", ps.TaggingFailingPolicies)
-			}
-			add([]string{
-				name,
-				fmt.Sprintf("%d", ps.Resources),
-				"$" + ps.MonthlyCost.StringFixed(2),
-				finops,
-				tagging,
-			})
+	rows := []kvRow{}
+	if s.Projects > 1 {
+		v := humanInt(s.Projects)
+		if s.ProjectsWithError > 0 {
+			v += " " + ui.Danger(critMark(s.ProjectsWithError))
 		}
-	}); err != nil {
-		return err
+		rows = append(rows, kvRow{"Projects", v})
 	}
-	_, _ = fmt.Fprintln(w)
-
-	resourceLine := fmt.Sprintf("Resources: %d", s.Resources)
+	resourceVal := humanInt(s.Resources)
 	if s.CostedResources > 0 || s.FreeResources > 0 {
-		resourceLine += fmt.Sprintf(" (%d costed, %d free)", s.CostedResources, s.FreeResources)
+		resourceVal += ui.Muted(fmt.Sprintf(" (%s costed, %s free)", humanInt(s.CostedResources), humanInt(s.FreeResources)))
 	}
-	_, _ = fmt.Fprintln(w, resourceLine)
+	rows = append(rows,
+		kvRow{"Resources", resourceVal},
+		kvRow{"Monthly cost", humanDollar(s.MonthlyCost)},
+		kvRow{},
+		kvRow{"FinOps", flagCount(s.FinopsPolicies, s.FailingPolicies, warnEmoji)},
+		kvRow{"Tagging", flagCount(s.TaggingPolicies, s.FailingTaggingPolicies, warnEmoji)},
+		kvRow{"Guardrails", flagCount(s.Guardrails, s.TriggeredGuardrails, stopEmoji)},
+		kvRow{"Budgets", flagCount(s.Budgets, s.OverBudget, moneyEmoji)},
+	)
+	if s.CriticalDiags > 0 || s.WarningDiags > 0 {
+		rows = append(rows, kvRow{"Diagnostics", diagnosticsValue(s.CriticalDiags, s.WarningDiags)})
+	}
+	writeKV(&inner, rows)
 
-	_, _ = fmt.Fprintf(w, "Monthly cost: $%s\n", s.MonthlyCost.StringFixed(2))
+	usesWarn := s.FailingPolicies > 0 || s.FailingTaggingPolicies > 0
+	usesStop := s.TriggeredGuardrails > 0
+	usesMoney := s.OverBudget > 0
+	usesCrit := s.CriticalDiags > 0
 
-	_, _ = fmt.Fprintf(w, "FinOps policies: %d (%d failing)\n", s.FinopsPolicies, s.FailingPolicies)
-	_, _ = fmt.Fprintf(w, "Tagging policies: %d (%d failing)\n", s.TaggingPolicies, s.FailingTaggingPolicies)
-	_, _ = fmt.Fprintf(w, "Guardrails: %d (%d triggered)\n", s.Guardrails, s.TriggeredGuardrails)
-	_, _ = fmt.Fprintf(w, "Budgets: %d (%d over)\n", s.Budgets, s.OverBudget)
+	if s.Projects > 1 {
+		fmt.Fprintln(&inner)
+		writeProjectTable(&inner, s.ProjectDetails)
+	}
 
-	if s.CriticalDiags > 0 {
-		_, _ = fmt.Fprintf(w, "Diagnostics: %d critical", s.CriticalDiags)
-		if s.WarningDiags > 0 {
-			_, _ = fmt.Fprintf(w, ", %d warning", s.WarningDiags)
+	if usesWarn || usesStop || usesMoney || usesCrit {
+		fmt.Fprintln(&inner)
+		if usesWarn {
+			fmt.Fprintln(&inner, ui.Muted(warnEmoji+"  = failing policy"))
 		}
-		_, _ = fmt.Fprintln(w)
-	} else if s.WarningDiags > 0 {
-		_, _ = fmt.Fprintf(w, "Diagnostics: %d warning\n", s.WarningDiags)
+		if usesStop {
+			fmt.Fprintln(&inner, ui.Muted(stopEmoji+"  = triggered guardrail"))
+		}
+		if usesMoney {
+			fmt.Fprintln(&inner, ui.Muted(moneyEmoji+"  = over budget"))
+		}
+		if usesCrit {
+			fmt.Fprintln(&inner, ui.Muted(critEmoji+"  = scan error; results for this project may be incomplete"))
+		}
 	}
 
-	return nil
+	_, err := fmt.Fprint(w, ui.Box(inner.String()))
+	return err
+}
+
+type kvRow struct {
+	label, value string
+}
+
+func writeKV(w io.Writer, rows []kvRow) {
+	maxLabel := 0
+	for _, r := range rows {
+		maxLabel = max(maxLabel, len(r.label))
+	}
+	for _, r := range rows {
+		if r.label == "" && r.value == "" {
+			fmt.Fprintln(w)
+			continue
+		}
+		gap := strings.Repeat(" ", maxLabel-len(r.label))
+		fmt.Fprintf(w, "%s:%s  %s\n", ui.Accent(r.label), gap, r.value)
+	}
+}
+
+// flagCount renders "<total>" when nothing is flagged, otherwise
+// "<total> (<symbol> xN)" with the parenthetical highlighted. Caller passes
+// the symbol so each row can use its own (⚠️ failing, 🛑 triggered, 💸 over).
+func flagCount(total, flagged int, symbol string) string {
+	if flagged == 0 {
+		return humanInt(total)
+	}
+	return fmt.Sprintf("%s %s", humanInt(total), ui.Caution(flagMark(flagged, symbol)))
+}
+
+func flagMark(n int, symbol string) string {
+	return fmt.Sprintf("(%s x%s)", symbol, humanInt(n))
+}
+
+func critMark(n int) string {
+	return fmt.Sprintf("(%s x%s)", critEmoji, humanInt(n))
+}
+
+// diagnosticsValue formats the Diagnostics row. There's no overall total to
+// anchor against — the value is just severity counts. Critical uses the bare
+// "❗ xN" form (no parens) so it doesn't read as a parenthetical orphan.
+func diagnosticsValue(critical, warning int) string {
+	parts := []string{}
+	if critical > 0 {
+		parts = append(parts, ui.Danger(fmt.Sprintf("%s x%s", critEmoji, humanInt(critical))))
+	}
+	if warning > 0 {
+		parts = append(parts, ui.Caution(fmt.Sprintf("%s warning", humanInt(warning))))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// writeProjectTable renders the per-project breakdown using an ANSI-aware,
+// per-column-aligned renderer (text/tabwriter measures by raw byte count and
+// can't handle colored cells correctly).
+func writeProjectTable(w io.Writer, projects []projectSummary) {
+	cols := []tableCol{
+		{header: "Project", right: false},
+		{header: "Resources", right: true},
+		{header: "Monthly Cost", right: true},
+		{header: "FinOps", right: false},
+		{header: "Tagging", right: false},
+	}
+	rows := make([][]string, 0, len(projects))
+	for _, ps := range projects {
+		name := ps.Name
+		if ps.HasErrors {
+			name += " " + ui.Danger(critEmoji)
+		}
+		rows = append(rows, []string{
+			name,
+			humanInt(ps.Resources),
+			humanDollar(ps.MonthlyCost),
+			flagCount(ps.FinopsPolicies, ps.FinopsFailingPolicies, warnEmoji),
+			flagCount(ps.TaggingPolicies, ps.TaggingFailingPolicies, warnEmoji),
+		})
+	}
+	renderTable(w, cols, rows)
+}
+
+type tableCol struct {
+	header string
+	right  bool
+}
+
+func renderTable(w io.Writer, cols []tableCol, rows [][]string) {
+	widths := make([]int, len(cols))
+	for i, c := range cols {
+		widths[i] = ui.PrintableWidth(c.header)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			widths[i] = max(widths[i], ui.PrintableWidth(cell))
+		}
+	}
+
+	const sep = "  "
+	headerCells := make([]string, len(cols))
+	for i, c := range cols {
+		headerCells[i] = ui.Muted(padCell(c.header, widths[i], c.right))
+	}
+	fmt.Fprintln(w, strings.Join(headerCells, sep))
+
+	for _, row := range rows {
+		cells := make([]string, len(cols))
+		for i, cell := range row {
+			cells[i] = padCell(cell, widths[i], cols[i].right)
+		}
+		fmt.Fprintln(w, strings.Join(cells, sep))
+	}
+}
+
+func padCell(cell string, width int, right bool) string {
+	gap := max(0, width-ui.PrintableWidth(cell))
+	if right {
+		return strings.Repeat(" ", gap) + cell
+	}
+	return cell + strings.Repeat(" ", gap)
+}
+
+// humanInt formats n with thousands separators (e.g. 29318 → "29,318").
+func humanInt(n int) string {
+	if n < 0 {
+		return "-" + humanInt(-n)
+	}
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	pre := len(s) % 3
+	if pre == 0 {
+		pre = 3
+	}
+	var b strings.Builder
+	b.WriteString(s[:pre])
+	for i := pre; i < len(s); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i:i+3])
+	}
+	return b.String()
+}
+
+// humanDollar rounds the rat to the nearest dollar and adds thousands
+// separators (e.g. 29318.42 → "$29,318").
+func humanDollar(r *rat.Rat) string {
+	rounded := r.StringFixed(0)
+	n, err := strconv.Atoi(rounded)
+	if err != nil {
+		return "$" + rounded
+	}
+	return "$" + humanInt(n)
 }
 
 func buildSummary(data *format.Output) summaryData {
