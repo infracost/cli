@@ -5,29 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/go-proto/pkg/rat"
-)
-
-// Symbols used in the summary, each tied to a distinct category. All render
-// at 2 cells in modern terminals.
-//   warnEmoji  (U+26A0 + VS-16) — failing FinOps/Tagging policy. The VS-16 is
-//                                 required to force 2-cell emoji presentation.
-//   stopEmoji  (U+1F6D1) — triggered guardrail (hard cost-control rule fired).
-//   moneyEmoji (U+1F4B8) — over budget.
-//   critEmoji  (U+2757)  — critical scan diagnostic (project couldn't be fully
-//                          scanned; results may be incomplete).
-// Adding VS-16 to the wide-by-default emojis (stop, money, crit) would cause
-// PrintableWidth to over-count.
-const (
-	warnEmoji  = "⚠️"
-	stopEmoji  = "🛑"
-	moneyEmoji = "💸"
-	critEmoji  = "❗"
 )
 
 type projectSummary struct {
@@ -60,6 +42,27 @@ type summaryData struct {
 	OverBudget             int              `json:"over_budget"`
 	CriticalDiags          int              `json:"critical_diagnostics"`
 	WarningDiags           int              `json:"warning_diagnostics"`
+
+	// Detail lists for `inspect --json` consumers (LLMs, scripts) that need
+	// to act on the failures. The aggregate counts above stay as-is so
+	// existing consumers keep working.
+	FailingPolicyList     []failingPolicyEntry      `json:"failing_policy_list,omitempty"`
+	TriggeredGuardrailList []format.GuardrailOutput `json:"triggered_guardrail_list,omitempty"`
+	OverBudgetList        []format.BudgetOutput     `json:"over_budget_list,omitempty"`
+}
+
+// failingPolicyEntry is one failing policy + its failing resources, used in
+// the enriched summary JSON. Per-resource detail (issues / missing+invalid
+// tags) lives at the resource level so downstream consumers don't need a
+// separate drill-in call.
+type failingPolicyEntry struct {
+	Kind             string                                `json:"kind"`
+	Name             string                                `json:"name"`
+	Slug             string                                `json:"slug,omitempty"`
+	Message          string                                `json:"message,omitempty"`
+	Project          string                                `json:"project"`
+	FailingFinops    []format.FinopsFailingResourceOutput  `json:"failing_finops,omitempty"`
+	FailingTagging   []format.FailingTaggingResourceOutput `json:"failing_tagging,omitempty"`
 }
 
 func ResourceCost(r *format.ResourceOutput) *rat.Rat {
@@ -147,25 +150,6 @@ func WriteSummary(w io.Writer, data *format.Output, asJSON bool) error {
 	return err
 }
 
-type kvRow struct {
-	label, value string
-}
-
-func writeKV(w io.Writer, rows []kvRow) {
-	maxLabel := 0
-	for _, r := range rows {
-		maxLabel = max(maxLabel, len(r.label))
-	}
-	for _, r := range rows {
-		if r.label == "" && r.value == "" {
-			fmt.Fprintln(w)
-			continue
-		}
-		gap := strings.Repeat(" ", maxLabel-len(r.label))
-		fmt.Fprintf(w, "%s:%s  %s\n", ui.Accent(r.label), gap, r.value)
-	}
-}
-
 // flagCount renders "<total>" when nothing is flagged, otherwise
 // "<total> (<symbol> xN)" with the parenthetical highlighted. Caller passes
 // the symbol so each row can use its own (⚠️ failing, 🛑 triggered, 💸 over).
@@ -223,80 +207,7 @@ func writeProjectTable(w io.Writer, projects []projectSummary) {
 			flagCount(ps.TaggingPolicies, ps.TaggingFailingPolicies, warnEmoji),
 		})
 	}
-	renderTable(w, cols, rows)
-}
-
-type tableCol struct {
-	header string
-	right  bool
-}
-
-func renderTable(w io.Writer, cols []tableCol, rows [][]string) {
-	widths := make([]int, len(cols))
-	for i, c := range cols {
-		widths[i] = ui.PrintableWidth(c.header)
-	}
-	for _, row := range rows {
-		for i, cell := range row {
-			widths[i] = max(widths[i], ui.PrintableWidth(cell))
-		}
-	}
-
-	const sep = "  "
-	headerCells := make([]string, len(cols))
-	for i, c := range cols {
-		headerCells[i] = ui.Muted(padCell(c.header, widths[i], c.right))
-	}
-	fmt.Fprintln(w, strings.Join(headerCells, sep))
-
-	for _, row := range rows {
-		cells := make([]string, len(cols))
-		for i, cell := range row {
-			cells[i] = padCell(cell, widths[i], cols[i].right)
-		}
-		fmt.Fprintln(w, strings.Join(cells, sep))
-	}
-}
-
-func padCell(cell string, width int, right bool) string {
-	gap := max(0, width-ui.PrintableWidth(cell))
-	if right {
-		return strings.Repeat(" ", gap) + cell
-	}
-	return cell + strings.Repeat(" ", gap)
-}
-
-// humanInt formats n with thousands separators (e.g. 29318 → "29,318").
-func humanInt(n int) string {
-	if n < 0 {
-		return "-" + humanInt(-n)
-	}
-	s := strconv.Itoa(n)
-	if len(s) <= 3 {
-		return s
-	}
-	pre := len(s) % 3
-	if pre == 0 {
-		pre = 3
-	}
-	var b strings.Builder
-	b.WriteString(s[:pre])
-	for i := pre; i < len(s); i += 3 {
-		b.WriteByte(',')
-		b.WriteString(s[i:i+3])
-	}
-	return b.String()
-}
-
-// humanDollar rounds the rat to the nearest dollar and adds thousands
-// separators (e.g. 29318.42 → "$29,318").
-func humanDollar(r *rat.Rat) string {
-	rounded := r.StringFixed(0)
-	n, err := strconv.Atoi(rounded)
-	if err != nil {
-		return "$" + rounded
-	}
-	return "$" + humanInt(n)
+	renderTable(w, cols, rows, ui.ContentWidth())
 }
 
 func buildSummary(data *format.Output) summaryData {
@@ -346,6 +257,14 @@ func buildSummary(data *format.Output) summaryData {
 			if len(f.FailingResources) > 0 {
 				s.FailingPolicies++
 				ps.FinopsFailingPolicies++
+				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
+					Kind:          "finops",
+					Name:          f.PolicyName,
+					Slug:          f.PolicySlug,
+					Message:       f.PolicyMessage,
+					Project:       p.ProjectName,
+					FailingFinops: f.FailingResources,
+				})
 			}
 		}
 
@@ -355,6 +274,13 @@ func buildSummary(data *format.Output) summaryData {
 			if len(t.FailingResources) > 0 {
 				s.FailingTaggingPolicies++
 				ps.TaggingFailingPolicies++
+				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
+					Kind:           "tagging",
+					Name:           t.PolicyName,
+					Message:        t.Message,
+					Project:        p.ProjectName,
+					FailingTagging: t.FailingResources,
+				})
 			}
 		}
 
@@ -365,6 +291,7 @@ func buildSummary(data *format.Output) summaryData {
 		s.Guardrails++
 		if gr.Triggered {
 			s.TriggeredGuardrails++
+			s.TriggeredGuardrailList = append(s.TriggeredGuardrailList, gr)
 		}
 	}
 
@@ -372,6 +299,7 @@ func buildSummary(data *format.Output) summaryData {
 		s.Budgets++
 		if br.OverBudget {
 			s.OverBudget++
+			s.OverBudgetList = append(s.OverBudgetList, br)
 		}
 	}
 

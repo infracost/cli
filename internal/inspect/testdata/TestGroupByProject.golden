@@ -1,4 +1,3 @@
 Project      Count  Monthly Cost
-─            ─      ─  
-web-app      4      $60.00
-api-service  1      $5.00
+web-app          4           $60
+api-service      1            $5

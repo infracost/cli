@@ -229,6 +229,15 @@ func registerFlag(v reflect.Value, flags *pflag.FlagSet, name string, usage stri
 	if isPflagValue {
 		pv := v.Interface().(pflag.Value)
 		flags.Var(pv, name, usage)
+
+		// pflag's BoolVar auto-sets NoOptDefVal so `--flag` alone parses as
+		// `--flag=true` and the next arg stays positional. flags.Var doesn't
+		// do that even when the value implements IsBoolFlag, so set it
+		// manually for our SharedBoolFlag types — otherwise `--json /path`
+		// tries to parse "/path" as the bool value.
+		if bf, ok := pv.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+			flags.Lookup(name).NoOptDefVal = "true"
+		}
 	} else {
 		switch v.Type().Elem().Kind() {
 		case reflect.String:

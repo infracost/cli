@@ -1,14 +1,19 @@
-Budget: Frontend Q2
-Scope: team=frontend
-Limit: $300.00
-Actual spend: $400.00
-Status: OVER by $100.00
-Message: Notify #frontend-costs
-
-Resources in this scan matching budget tags:
-Type                     Count  Monthly Cost
-─                        ─      ─  
-google_compute_instance  1      $30.00
-
-Actual spend is based on cloud billing data for all resources
-matching this budget's tags across the organization.
+╭─────────────────────────────────────────────────────────────────╮
+│                                                                 │
+│   Budget: Frontend Q2                                           │
+│                                                                 │
+│   Scope:         team=frontend                                  │
+│   Limit:         $300                                           │
+│   Actual spend:  $400                                           │
+│   Status:        💸 OVER by $100                                │
+│   Message:       Notify #frontend-costs                         │
+│                                                                 │
+│   Matching resources                                            │
+│                                                                 │
+│   Type                     Count  Monthly Cost                  │
+│   google_compute_instance      1           $30                  │
+│                                                                 │
+│   Actual spend is org-wide cloud billing across all resources   │
+│   matching this budget's tags — not just the IaC scan.          │
+│                                                                 │
+╰─────────────────────────────────────────────────────────────────╯

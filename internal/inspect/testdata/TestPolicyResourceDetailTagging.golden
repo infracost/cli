@@ -1,7 +1,10 @@
-Policy: Required Tags
-Resource: aws_instance.web
-File: modules/compute/main.tf:42
-
-  Missing mandatory tags: environment, team
-  Invalid tag "owner": value "foo" does not match regex "^team-.*"
-
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│   Policy: Required Tags                                              │
+│   Resource: aws_instance.web                                         │
+│   File: modules/compute/main.tf:42                                   │
+│                                                                      │
+│   Missing mandatory tags: environment, team                          │
+│   Invalid tag "owner": value "foo" does not match regex "^team-.*"   │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯

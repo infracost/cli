@@ -40,6 +40,12 @@ func Run(w io.Writer, data *format.Output, opts Options) error {
 		switch {
 		case opts.Resource != "":
 			opts.GroupBy = []string{string(GroupByPolicy)}
+		case opts.Failing:
+			// --failing alone shows a unified panorama of everything
+			// needing attention: failing policies + triggered guardrails +
+			// over-budget items. Combining --failing with --group-by X uses
+			// the explicit view (and falls through this branch).
+			return WriteFailing(w, filtered, opts)
 		case opts.Provider != "" || opts.Top > 0 || opts.CostsOnly:
 			opts.GroupBy = []string{string(GroupByType)}
 		}

@@ -1,3 +1,2 @@
-Guardrail             Status     Monthly Cost
-─                     ─          ─  
-Cost increase > $100  TRIGGERED  $500.00
+Guardrail             Status        Monthly Cost
+Cost increase > $100  🛑 TRIGGERED          $500

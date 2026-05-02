@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/go-proto/pkg/rat"
 )
 
@@ -50,6 +52,15 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 	aggregate := !hasPolicyDim && !hasBudgetDim && !hasGuardrailDim
 
 	if aggregate {
+		// `--group-by file` should fold all resources within a file into one
+		// group. The file column is populated as "path:line" elsewhere (so
+		// detail views can link back to the exact location); strip the line
+		// suffix here so it doesn't become part of the aggregation key.
+		if slices.Contains(dims, string(GroupByFile)) {
+			for i := range rows {
+				rows[i].Columns[string(GroupByFile)] = fileWithoutLine(rows[i].Columns[string(GroupByFile)])
+			}
+		}
 		rows = aggregateRows(rows, dims)
 	}
 
@@ -76,9 +87,35 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 		return err
 	}
 
+	// Group-by policy renders structured blocks instead of a table — the
+	// policy/resource/file/message fields are all wide, so columns truncate
+	// everything aggressively. Two layouts:
+	//   single  --group-by policy        → one block per policy with a
+	//                                      bullet list of failing resources
+	//                                      (avoids repeating identical
+	//                                      messages once per resource).
+	//   multi   --group-by policy,X      → one block per pairing, since the
+	//                                      extra dim is a real per-row axis.
+	if hasPolicyDim {
+		if len(dims) == 1 {
+			groups := consolidatePolicyRows(rows)
+			maxWidth := ui.TerminalContentWidth()
+			for i, g := range groups {
+				if i > 0 {
+					fmt.Fprintln(w)
+				}
+				writeConsolidatedPolicyBlock(w, g, maxWidth)
+			}
+		} else {
+			writePolicyGroupRows(w, rows, dims)
+		}
+		return nil
+	}
+
 	caser := cases.Title(language.English)
 
-	// Determine columns based on the view type.
+	// Build the column spec. dims are always left-aligned (they're labels).
+	// Numeric/currency columns get right-aligned for easier scanning.
 	var extraCols []string
 	switch {
 	case hasBudgetDim:
@@ -89,43 +126,273 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 		extraCols = detailColumns
 	}
 
-	headers := make([]string, 0, len(dims)+len(extraCols)+2)
+	cols := make([]tableCol, 0, len(dims)+len(extraCols)+2)
 	for _, dim := range dims {
-		headers = append(headers, caser.String(dim))
+		cols = append(cols, tableCol{header: caser.String(dim)})
 	}
 	if aggregate {
-		headers = append(headers, "Count", "Monthly Cost")
+		cols = append(cols,
+			tableCol{header: "Count", right: true},
+			tableCol{header: "Monthly Cost", right: true},
+		)
 	} else {
 		for _, col := range extraCols {
-			headers = append(headers, caser.String(col))
+			cols = append(cols, tableCol{
+				header:        caser.String(col),
+				right:         isMoneyCol(col),
+				truncateRight: isProseCol(col),
+			})
 		}
 	}
 
-	return writeTable(w, headers, func(add func(row []string)) {
-		for _, r := range rows {
-			var vals []string
-			for _, dim := range dims {
-				vals = append(vals, r.Columns[dim])
-			}
-			if aggregate {
-				vals = append(vals, fmt.Sprintf("%d", r.count()), "$"+r.Cost.StringFixed(2))
-			} else {
-				for _, col := range extraCols {
-					if col == "Monthly Cost" && r.Cost != nil {
-						vals = append(vals, "$"+r.Cost.StringFixed(2))
-					} else {
-						vals = append(vals, r.Columns[col])
-					}
+	tableRows := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		var vals []string
+		for _, dim := range dims {
+			vals = append(vals, r.Columns[dim])
+		}
+		if aggregate {
+			vals = append(vals, humanInt(r.count()), humanMoney(r.Cost, data.Currency))
+		} else {
+			for _, col := range extraCols {
+				switch {
+				case col == "Monthly Cost" && r.Cost != nil:
+					vals = append(vals, humanMoney(r.Cost, data.Currency))
+				case col == "status":
+					vals = append(vals, statusValue(r.Columns[col]))
+				default:
+					vals = append(vals, r.Columns[col])
 				}
 			}
-			add(vals)
 		}
-	})
+		tableRows = append(tableRows, vals)
+	}
+
+	// Group-by views render unboxed, so the constraint is just the terminal
+	// width (capped at MaxBoxWidth so very wide terminals don't sprawl).
+	renderTable(w, cols, tableRows, ui.TerminalContentWidth())
+	return nil
+}
+
+// writePolicyGroupRows renders the group-by-policy view as a list of
+// structured blocks. Each block is:
+//
+//	<icon>  <Policy name>           [· extra dim values, when multi-group]
+//	   <resource> · <file>
+//	   <message, wrapped to terminal width>
+//
+// Blank line between blocks. Empty lines are skipped (e.g. no message → no
+// message line). The left indent is 3 spaces so detail/message lines align
+// under the policy name (after the 2-cell icon + 1 space).
+func writePolicyGroupRows(w io.Writer, rows []tableRow, dims []string) {
+	const indent = "   "
+	maxWidth := ui.TerminalContentWidth()
+	for i, r := range rows {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+
+		header := kindIcon(r.Columns["kind"]) + "  " + ui.Bold(r.Columns[string(GroupByPolicy)])
+		var extras []string
+		for _, d := range dims {
+			if d == string(GroupByPolicy) {
+				continue
+			}
+			if v := r.Columns[d]; v != "" {
+				extras = append(extras, v)
+			}
+		}
+		if len(extras) > 0 {
+			header += " " + ui.Muted("· "+strings.Join(extras, " · "))
+		}
+		writeWrapped(w, "", header, maxWidth)
+
+		var details []string
+		if v := r.Columns[string(GroupByResource)]; v != "" {
+			details = append(details, v)
+		}
+		if v := r.Columns[string(GroupByFile)]; v != "" {
+			details = append(details, ui.Muted(v))
+		}
+		if len(details) > 0 {
+			writeWrapped(w, indent, strings.Join(details, ui.Muted(" · ")), maxWidth)
+		}
+
+		if msg := r.Columns["message"]; msg != "" {
+			budget := 0
+			if maxWidth > 0 {
+				budget = maxWidth - len(indent)
+			}
+			wrapped := ui.WrapText(msg, budget)
+			for line := range strings.SplitSeq(wrapped, "\n") {
+				fmt.Fprintln(w, indent+ui.Muted(line))
+			}
+		}
+	}
+}
+
+// consolidatedResourceCap is the per-policy bullet-list cap for
+// `--group-by policy`. Beyond this, additional resources collapse into
+// "…N more" plus a drill-in hint pointing the user at
+// `infracost inspect --policy <name>` for the full list. The drill-in
+// command preserves all resources without truncation.
+const consolidatedResourceCap = 20
+
+// policyConsolidationGroup is one policy + the resources failing it. Built
+// by consolidatePolicyRows from a flat list of policy×resource pairings.
+type policyConsolidationGroup struct {
+	kind      string
+	policy    string
+	message   string
+	resources []policyConsolidationResource
+}
+
+type policyConsolidationResource struct {
+	name string
+	file string
+}
+
+// consolidatePolicyRows groups rows by policy in first-seen order. Used by
+// `--group-by policy` so a policy with N failing resources renders as one
+// block with N bullets, not N near-duplicate blocks repeating the message.
+func consolidatePolicyRows(rows []tableRow) []policyConsolidationGroup {
+	groups := map[string]*policyConsolidationGroup{}
+	var order []string
+	for _, r := range rows {
+		key := r.Columns["kind"] + "\x00" + r.Columns[string(GroupByPolicy)]
+		res := policyConsolidationResource{
+			name: r.Columns[string(GroupByResource)],
+			file: r.Columns[string(GroupByFile)],
+		}
+		if g, ok := groups[key]; ok {
+			g.resources = append(g.resources, res)
+			continue
+		}
+		groups[key] = &policyConsolidationGroup{
+			kind:      r.Columns["kind"],
+			policy:    r.Columns[string(GroupByPolicy)],
+			message:   r.Columns["message"],
+			resources: []policyConsolidationResource{res},
+		}
+		order = append(order, key)
+	}
+	result := make([]policyConsolidationGroup, 0, len(order))
+	for _, k := range order {
+		result = append(result, *groups[k])
+	}
+	return result
+}
+
+// writeConsolidatedPolicyBlock renders one consolidated policy block:
+//
+//	<icon>  <Policy name>   (N resources)
+//	   <wrapped message>
+//
+//	   • <resource> · <file>
+//	   • <resource> · <file>
+//	   ...
+//	   …N more
+//	   Run `infracost inspect --policy "..."` to see all N resources
+//
+// The bullet list caps at consolidatedResourceCap; the drill-in hint sends
+// the user to `--policy <name>` for the uncapped per-resource view. The
+// message renders once for the whole group.
+func writeConsolidatedPolicyBlock(w io.Writer, g policyConsolidationGroup, maxWidth int) {
+	count := len(g.resources)
+	header := kindIcon(g.kind) + "  " + ui.Bold(g.policy)
+	header += "  " + ui.Muted(fmt.Sprintf("(%d %s)", count, pluralize("resource", count)))
+	writeWrapped(w, "", header, maxWidth)
+
+	if g.message != "" {
+		fmt.Fprintln(w)
+		budget := 0
+		if maxWidth > 0 {
+			budget = maxWidth - 3
+		}
+		for line := range strings.SplitSeq(ui.WrapText(g.message, budget), "\n") {
+			fmt.Fprintln(w, "   "+ui.Muted(line))
+		}
+	}
+
+	if count == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+
+	show := min(count, consolidatedResourceCap)
+	for i := range show {
+		r := g.resources[i]
+		line := ui.Muted("•") + " " + r.name
+		if r.file != "" {
+			line += " " + ui.Muted("· "+r.file)
+		}
+		writeWrapped(w, "   ", line, maxWidth)
+	}
+	if count > show {
+		fmt.Fprintf(w, "   %s\n", ui.Muted(fmt.Sprintf("…%d more", count-show)))
+		fmt.Fprintf(w, "   %s %s %s\n",
+			ui.Muted("Run"),
+			ui.Code(fmt.Sprintf("`infracost inspect --policy %q`", g.policy)),
+			ui.Muted(fmt.Sprintf("to see all %d resources", count)),
+		)
+	}
+}
+
+// kindIcon returns the 2-cell emoji prefix for a policy kind. Unknown kinds
+// get two blank cells so the policy-name column still aligns under the
+// header line.
+func kindIcon(kind string) string {
+	switch kind {
+	case "finops":
+		return finopsIcon
+	case "tagging":
+		return taggingIcon
+	}
+	return "  "
+}
+
+// isMoneyCol marks columns whose values are currency-formatted, so they can
+// be right-aligned for easier scanning.
+func isMoneyCol(col string) bool {
+	switch col {
+	case "Monthly Cost", "actual spend", "limit":
+		return true
+	}
+	return false
+}
+
+// isProseCol marks columns whose values are free-text (a description, an
+// error message), where suffix truncation reads more naturally than middle
+// truncation. Identifier-shaped columns (resource, file, type) keep the
+// default middle truncation so both ends survive a shrink.
+func isProseCol(col string) bool {
+	switch col {
+	case "message":
+		return true
+	}
+	return false
+}
+
+// statusValue colorizes the status column for guardrail/budget rows so
+// "TRIGGERED" / "OVER" pop in red and the benign cases stay muted.
+func statusValue(s string) string {
+	switch s {
+	case "TRIGGERED":
+		return ui.Danger(stopEmoji + " " + s)
+	case "OVER":
+		return ui.Danger(moneyEmoji + " " + s)
+	case "not triggered", "under":
+		return ui.Muted(s)
+	}
+	return s
 }
 
 func WriteGuardrailDetail(w io.Writer, data *format.Output, opts Options) error {
 	for _, gr := range data.GuardrailResults {
 		if matchesPolicy(gr.GuardrailName, gr.GuardrailID, opts.Guardrail) {
+			if opts.JSON {
+				return writeJSON(w, gr)
+			}
 			return writeGuardrailDetail(w, data.Currency, gr)
 		}
 	}
@@ -135,6 +402,9 @@ func WriteGuardrailDetail(w io.Writer, data *format.Output, opts Options) error 
 func WriteBudgetDetail(w io.Writer, data *format.Output, opts Options) error {
 	for _, br := range data.BudgetResults {
 		if matchesPolicy(br.BudgetName, br.BudgetID, opts.Budget) {
+			if opts.JSON {
+				return writeJSON(w, buildBudgetDetailJSON(data, br))
+			}
 			return writeBudgetDetail(w, data, br)
 		}
 	}
@@ -142,6 +412,9 @@ func WriteBudgetDetail(w io.Writer, data *format.Output, opts Options) error {
 }
 
 func WritePolicyDetail(w io.Writer, data *format.Output, opts Options) error {
+	if opts.JSON {
+		return writePolicyDetailJSON(w, data, opts)
+	}
 	if opts.Resource != "" {
 		return writePolicyResourceDetail(w, data, opts)
 	}
@@ -242,8 +515,8 @@ func collectBudgetRows(data *format.Output) []tableRow {
 			Columns: map[string]string{
 				string(GroupByBudget): br.BudgetName,
 				"status":              status,
-				"limit":               "$" + br.Amount.StringFixed(2),
-				"actual spend":        "$" + br.CurrentCost.StringFixed(2),
+				"limit":               humanMoney(br.Amount, data.Currency),
+				"actual spend":        humanMoney(br.CurrentCost, data.Currency),
 			},
 			Cost: br.CurrentCost,
 		}
@@ -327,84 +600,197 @@ func (r tableRow) count() int {
 }
 
 func writePolicyOverview(w io.Writer, data *format.Output, opts Options) error {
+	// FinOps branch — aggregate matched resources across ALL projects, then
+	// render once. Each resource becomes a structured block: header with
+	// project/resource/file, indented issue descriptions with savings.
+	type finopsResource struct {
+		project string
+		name    string
+		file    string
+		issues  []format.FinopsIssueOutput
+	}
+	var (
+		finopsName, finopsMessage string
+		finopsResources           []finopsResource
+		finopsMatched             bool
+	)
 	for _, p := range data.Projects {
 		for _, f := range p.FinopsResults {
 			if !matchesPolicy(f.PolicyName, f.PolicySlug, opts.Policy) {
 				continue
 			}
-			_, _ = fmt.Fprintf(w, "Policy: %s", f.PolicyName)
-			if f.PolicyMessage != "" {
-				_, _ = fmt.Fprintf(w, " — %s", f.PolicyMessage)
-			}
-			_, _ = fmt.Fprintln(w)
-			_, _ = fmt.Fprintln(w)
-
-			if len(f.FailingResources) == 0 {
-				_, _ = fmt.Fprintln(w, "No failing resources.")
-				return nil
-			}
+			finopsMatched = true
+			finopsName = f.PolicyName
+			finopsMessage = f.PolicyMessage
 
 			metaByName := make(map[string]format.ResourceMetadata, len(p.Resources))
 			for _, r := range p.Resources {
 				metaByName[r.Name] = r.Metadata
 			}
-
-			return writeTable(w, []string{"Project", "Resource", "File", "Issues"}, func(add func(row []string)) {
-				for _, fr := range f.FailingResources {
-					meta := metaByName[fr.Name]
-					issues := fmt.Sprintf("%d issue", len(fr.Issues))
-					if len(fr.Issues) != 1 {
-						issues += "s"
-					}
-					add([]string{p.ProjectName, fr.Name, formatFileLoc(meta.Filename, meta.StartLine), issues})
-				}
-			})
+			for _, fr := range f.FailingResources {
+				meta := metaByName[fr.Name]
+				finopsResources = append(finopsResources, finopsResource{
+					project: p.ProjectName,
+					name:    fr.Name,
+					file:    formatFileLoc(meta.Filename, meta.StartLine),
+					issues:  fr.Issues,
+				})
+			}
 		}
 	}
+	if finopsMatched {
+		var inner bytes.Buffer
+		writePolicyHeading(&inner, finopsName, finopsMessage)
+		if len(finopsResources) == 0 {
+			fmt.Fprintln(&inner, ui.Positive("✓ No failing resources."))
+		} else {
+			maxWidth := ui.ContentWidth()
+			for i, r := range finopsResources {
+				if i > 0 {
+					fmt.Fprintln(&inner)
+				}
+				writeResourceHeader(&inner, r.project, r.name, r.file, maxWidth)
+				for _, issue := range r.issues {
+					content := issue.Description
+					if issue.MonthlySavings != nil && !issue.MonthlySavings.IsZero() {
+						content += " " + ui.Muted(fmt.Sprintf("— savings %s/mo", humanMoney(issue.MonthlySavings, data.Currency)))
+					}
+					writeWrapped(&inner, "   ", content, maxWidth)
+				}
+			}
+		}
+		_, err := fmt.Fprint(w, ui.Box(inner.String()))
+		return err
+	}
 
+	// Tagging branch — same aggregation pattern. Per-resource block shows
+	// missing tags + invalid-tag detail (with the regex/values that were
+	// expected). Tag valid-values footer comes after as a quick reference.
+	type taggingResource struct {
+		project     string
+		address     string
+		file        string
+		missingTags []string
+		invalidTags []format.InvalidTagOutput
+	}
+	var (
+		tagName, tagMessage    string
+		taggingResources       []taggingResource
+		tagMatched             bool
+		allTagFailingResources []format.FailingTaggingResourceOutput
+	)
 	for _, p := range data.Projects {
 		for _, t := range p.TaggingResults {
 			if !matchesPolicy(t.PolicyName, "", opts.Policy) {
 				continue
 			}
-			_, _ = fmt.Fprintf(w, "Policy: %s", t.PolicyName)
-			if t.Message != "" {
-				_, _ = fmt.Fprintf(w, " — %s", t.Message)
-			}
-			_, _ = fmt.Fprintln(w)
-			_, _ = fmt.Fprintln(w)
+			tagMatched = true
+			tagName = t.PolicyName
+			tagMessage = t.Message
 
-			if len(t.FailingResources) == 0 {
-				_, _ = fmt.Fprintln(w, "No failing resources.")
-				return nil
+			for _, tr := range t.FailingResources {
+				taggingResources = append(taggingResources, taggingResource{
+					project:     p.ProjectName,
+					address:     tr.Address,
+					file:        formatFileLoc(tr.Path, tr.Line),
+					missingTags: tr.MissingMandatoryTags,
+					invalidTags: tr.InvalidTags,
+				})
 			}
-
-			err := writeTable(w, []string{"Project", "Resource", "File", "Issues"}, func(add func(row []string)) {
-				for _, tr := range t.FailingResources {
-					issueCount := len(tr.MissingMandatoryTags) + len(tr.InvalidTags)
-					issues := fmt.Sprintf("%d issue", issueCount)
-					if issueCount != 1 {
-						issues += "s"
-					}
-					add([]string{p.ProjectName, tr.Address, formatFileLoc(tr.Path, tr.Line), issues})
-				}
-			})
-			if err != nil {
-				return err
-			}
-
-			tagValues := collectTagValidValues(t.FailingResources)
-			if len(tagValues) > 0 {
-				_, _ = fmt.Fprintln(w)
-				for _, tv := range tagValues {
-					_, _ = fmt.Fprintf(w, "Tag %q valid values: %s\n", tv.key, strings.Join(tv.values, ", "))
-				}
-			}
-			return nil
+			allTagFailingResources = append(allTagFailingResources, t.FailingResources...)
 		}
+	}
+	if tagMatched {
+		var inner bytes.Buffer
+		writePolicyHeading(&inner, tagName, tagMessage)
+		if len(taggingResources) == 0 {
+			fmt.Fprintln(&inner, ui.Positive("✓ No failing resources."))
+		} else {
+			maxWidth := ui.ContentWidth()
+			for i, r := range taggingResources {
+				if i > 0 {
+					fmt.Fprintln(&inner)
+				}
+				writeResourceHeader(&inner, r.project, r.address, r.file, maxWidth)
+				if len(r.missingTags) > 0 {
+					content := ui.Accent("Missing:") + " " + strings.Join(r.missingTags, ", ")
+					writeWrapped(&inner, "   ", content, maxWidth)
+				}
+				for _, inv := range r.invalidTags {
+					writeInvalidTagLine(&inner, inv, maxWidth)
+				}
+			}
+		}
+
+		tagValues := collectTagValidValues(allTagFailingResources)
+		if len(tagValues) > 0 {
+			fmt.Fprintln(&inner)
+			maxWidth := ui.ContentWidth()
+			for _, tv := range tagValues {
+				content := fmt.Sprintf("%s valid values: %s", ui.Accent("Tag "+tv.key), strings.Join(tv.values, ", "))
+				writeWrapped(&inner, "", content, maxWidth)
+			}
+		}
+
+		_, err := fmt.Fprint(w, ui.Box(inner.String()))
+		return err
 	}
 
 	return fmt.Errorf("policy %q not found", opts.Policy)
+}
+
+// writeResourceHeader writes the `project · resource · file` line for a
+// per-resource block. Resource is bold (the eye anchor); separators and file
+// muted; project rendered in default color since it's typically short and
+// repeats a lot. Wraps to maxWidth when it would overflow — natural break
+// points are the " · " token boundaries.
+func writeResourceHeader(w io.Writer, project, resource, file string, maxWidth int) {
+	parts := []string{project, ui.Bold(resource)}
+	if file != "" {
+		parts = append(parts, ui.Muted(file))
+	}
+	header := strings.Join(parts, ui.Muted(" · "))
+	writeWrapped(w, "", header, maxWidth)
+}
+
+// writeInvalidTagLine renders one invalid-tag detail line with the offending
+// value and why it's invalid (regex mismatch, custom message, etc). Wraps
+// to maxWidth so long regex patterns don't overflow narrow terminals.
+func writeInvalidTagLine(w io.Writer, inv format.InvalidTagOutput, maxWidth int) {
+	content := fmt.Sprintf("%s %s = %q",
+		ui.Accent("Invalid"),
+		ui.Accent(inv.Key),
+		inv.Value,
+	)
+	switch {
+	case inv.ValidRegex != "":
+		content += " " + ui.Muted(fmt.Sprintf("— does not match regex %q", inv.ValidRegex))
+	case inv.Message != "":
+		content += " " + ui.Muted("— "+inv.Message)
+	}
+	writeWrapped(w, "   ", content, maxWidth)
+	if inv.Suggestion != "" {
+		writeWrapped(w, "      ", ui.Muted("Suggestion:")+" "+inv.Suggestion, maxWidth)
+	}
+}
+
+// writePolicyHeading writes the bold policy title and optional message line,
+// followed by a blank line. Used by both the FinOps and Tagging branches.
+// The message wraps to the box's content width so long descriptions (often
+// containing markdown links) don't overflow the box border.
+//
+// Each wrapped line is muted independently. Wrapping the entire multi-line
+// string with a single ui.Muted() leaves intermediate lines uncolored —
+// Box.split-on-newline drops the inline ANSI codes that only sit at the
+// start and end of the original string.
+func writePolicyHeading(w io.Writer, name, message string) {
+	fmt.Fprintln(w, ui.Bold("Policy: "+name))
+	if message != "" {
+		for line := range strings.SplitSeq(ui.WrapText(message, ui.ContentWidth()), "\n") {
+			fmt.Fprintln(w, ui.Muted(line))
+		}
+	}
+	fmt.Fprintln(w)
 }
 
 func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) error {
@@ -417,32 +803,34 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 				if fr.Name != opts.Resource {
 					continue
 				}
-				_, _ = fmt.Fprintf(w, "Policy: %s\n", f.PolicyName)
-				_, _ = fmt.Fprintf(w, "Resource: %s\n", fr.Name)
+				var inner bytes.Buffer
+				writePolicyResourceHeader(&inner, f.PolicyName, fr.Name)
 
 				for _, r := range p.Resources {
 					if r.Name == fr.Name && r.Metadata.Filename != "" {
-						_, _ = fmt.Fprintf(w, "File: %s\n", formatFileLoc(r.Metadata.Filename, r.Metadata.StartLine))
-						writeSnippet(w, r.Metadata.Filename, r.Metadata.StartLine, r.Metadata.EndLine)
+						fmt.Fprintf(&inner, "%s %s\n", ui.Accent("File:"), formatFileLoc(r.Metadata.Filename, r.Metadata.StartLine))
+						writeSnippet(&inner, r.Metadata.Filename, r.Metadata.StartLine, r.Metadata.EndLine)
 						break
 					}
 				}
 
-				_, _ = fmt.Fprintln(w)
 				for _, issue := range fr.Issues {
-					_, _ = fmt.Fprintf(w, "  Issue: %s\n", issue.Description)
+					fmt.Fprintln(&inner)
+					rows := []kvRow{{"Issue", issue.Description}}
 					if issue.MonthlySavings != nil && !issue.MonthlySavings.IsZero() {
-						_, _ = fmt.Fprintf(w, "  Savings: $%s/mo\n", issue.MonthlySavings.StringFixed(2))
+						rows = append(rows, kvRow{"Savings", humanDollar(issue.MonthlySavings) + "/mo"})
 					}
 					if issue.Address != "" {
-						_, _ = fmt.Fprintf(w, "  Address: %s\n", issue.Address)
+						rows = append(rows, kvRow{"Address", issue.Address})
 					}
 					if issue.Attribute != "" {
-						_, _ = fmt.Fprintf(w, "  Attribute: %s\n", issue.Attribute)
+						rows = append(rows, kvRow{"Attribute", issue.Attribute})
 					}
-					_, _ = fmt.Fprintln(w)
+					writeKV(&inner, rows)
 				}
-				return nil
+
+				_, err := fmt.Fprint(w, ui.Box(inner.String()))
+				return err
 			}
 		}
 	}
@@ -456,19 +844,22 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 				if tr.Address != opts.Resource {
 					continue
 				}
-				_, _ = fmt.Fprintf(w, "Policy: %s\n", t.PolicyName)
-				_, _ = fmt.Fprintf(w, "Resource: %s\n", tr.Address)
+				var inner bytes.Buffer
+				writePolicyResourceHeader(&inner, t.PolicyName, tr.Address)
+
 				if tr.Path != "" {
-					_, _ = fmt.Fprintf(w, "File: %s\n", formatFileLoc(tr.Path, tr.Line))
-					writeSnippet(w, tr.Path, tr.Line, 0)
+					fmt.Fprintf(&inner, "%s %s\n", ui.Accent("File:"), formatFileLoc(tr.Path, tr.Line))
+					writeSnippet(&inner, tr.Path, tr.Line, 0)
 				}
-				_, _ = fmt.Fprintln(w)
+				if len(tr.MissingMandatoryTags) > 0 || len(tr.InvalidTags) > 0 {
+					fmt.Fprintln(&inner)
+				}
 
 				if len(tr.MissingMandatoryTags) > 0 {
-					_, _ = fmt.Fprintf(w, "  Missing mandatory tags: %s\n", strings.Join(tr.MissingMandatoryTags, ", "))
+					fmt.Fprintf(&inner, "%s %s\n", ui.Accent("Missing mandatory tags:"), strings.Join(tr.MissingMandatoryTags, ", "))
 				}
 				for _, inv := range tr.InvalidTags {
-					msg := fmt.Sprintf("  Invalid tag %q", inv.Key)
+					msg := fmt.Sprintf("%s %q", ui.Accent("Invalid tag"), inv.Key)
 					if inv.Value != "" {
 						msg += fmt.Sprintf(": value %q", inv.Value)
 					}
@@ -478,16 +869,17 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 					if inv.Message != "" {
 						msg += " — " + inv.Message
 					}
-					_, _ = fmt.Fprintln(w, msg)
+					fmt.Fprintln(&inner, msg)
 					if len(inv.ValidValues) > 0 {
-						_, _ = fmt.Fprintf(w, "    Valid values: %s\n", strings.Join(inv.ValidValues, ", "))
+						fmt.Fprintf(&inner, "  Valid values: %s\n", strings.Join(inv.ValidValues, ", "))
 					}
 					if inv.Suggestion != "" {
-						_, _ = fmt.Fprintf(w, "    Suggestion: %s\n", inv.Suggestion)
+						fmt.Fprintf(&inner, "  Suggestion: %s\n", inv.Suggestion)
 					}
 				}
-				_, _ = fmt.Fprintln(w)
-				return nil
+
+				_, err := fmt.Fprint(w, ui.Box(inner.String()))
+				return err
 			}
 		}
 	}
@@ -495,68 +887,103 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 	return fmt.Errorf("resource %q not found for policy %q", opts.Resource, opts.Policy)
 }
 
+// writePolicyResourceHeader writes the policy + resource title block. It
+// deliberately leaves NO trailing blank — callers add separators (snippet's
+// leading blank, issue loop's blank) so we don't double up.
+func writePolicyResourceHeader(w io.Writer, policy, resource string) {
+	fmt.Fprintln(w, ui.Bold("Policy: "+policy))
+	fmt.Fprintln(w, ui.Muted("Resource: "+resource))
+}
+
 func writeGuardrailDetail(w io.Writer, currency string, gr format.GuardrailOutput) error {
-	_, _ = fmt.Fprintf(w, "Guardrail: %s\n", gr.GuardrailName)
+	var inner bytes.Buffer
+	fmt.Fprintln(&inner, ui.Bold("Guardrail: "+gr.GuardrailName))
+	fmt.Fprintln(&inner)
+
+	rows := []kvRow{}
 	if gr.TotalMonthlyCost != nil {
-		_, _ = fmt.Fprintf(w, "Total monthly cost: %s%s\n", currencySymbol(currency), gr.TotalMonthlyCost.StringFixed(2))
+		rows = append(rows, kvRow{"Total monthly cost", humanMoney(gr.TotalMonthlyCost, currency)})
 	}
 	if gr.Triggered {
-		_, _ = fmt.Fprintln(w, "Status: TRIGGERED")
+		rows = append(rows, kvRow{"Status", ui.Danger(stopEmoji + " TRIGGERED")})
 	} else {
-		_, _ = fmt.Fprintln(w, "Status: not triggered")
+		rows = append(rows, kvRow{"Status", ui.Positive("✓ not triggered")})
 	}
-	return nil
+	writeKV(&inner, rows)
+
+	_, err := fmt.Fprint(w, ui.Box(inner.String()))
+	return err
 }
 
 func writeBudgetDetail(w io.Writer, data *format.Output, br format.BudgetOutput) error {
-	sym := currencySymbol(data.Currency)
-	_, _ = fmt.Fprintf(w, "Budget: %s\n", br.BudgetName)
+	var inner bytes.Buffer
+	fmt.Fprintln(&inner, ui.Bold("Budget: "+br.BudgetName))
+	fmt.Fprintln(&inner)
+
+	rows := []kvRow{}
 	if len(br.Tags) > 0 {
-		_, _ = fmt.Fprintf(w, "Scope: %s\n", formatBudgetTagScope(br.Tags))
+		rows = append(rows, kvRow{"Scope", formatBudgetTagScope(br.Tags)})
 	}
-	_, _ = fmt.Fprintf(w, "Limit: %s%s\n", sym, br.Amount.StringFixed(2))
-	_, _ = fmt.Fprintf(w, "Actual spend: %s%s\n", sym, br.CurrentCost.StringFixed(2))
-
-	if br.OverBudget {
-		overBy := br.CurrentCost.Sub(br.Amount)
-		_, _ = fmt.Fprintf(w, "Status: OVER by %s%s\n", sym, overBy.StringFixed(2))
-	} else {
-		remaining := br.Amount.Sub(br.CurrentCost)
-		pct := remaining.Div(br.Amount).Mul(rat.New(100))
-		_, _ = fmt.Fprintf(w, "Status: %s%s remaining (%s%% left)\n", sym, remaining.StringFixed(2), pct.StringFixed(1))
-	}
-
+	rows = append(rows,
+		kvRow{"Limit", humanMoney(br.Amount, data.Currency)},
+		kvRow{"Actual spend", humanMoney(br.CurrentCost, data.Currency)},
+		kvRow{"Status", budgetStatusValue(br, data.Currency)},
+	)
 	if br.CustomOverrunMessage != "" {
-		_, _ = fmt.Fprintf(w, "Message: %s\n", br.CustomOverrunMessage)
+		rows = append(rows, kvRow{"Message", br.CustomOverrunMessage})
 	}
+	writeKV(&inner, rows)
 
-	// Show resources in this scan that match the budget's tags.
 	matching := collectMatchingResources(data, br.Tags)
 	if len(matching) > 0 {
-		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "Resources in this scan matching budget tags:")
-		_ = writeTable(w, []string{"Type", "Count", "Monthly Cost"}, func(add func([]string)) {
-			for _, m := range matching {
-				add([]string{m.resourceType, fmt.Sprintf("%d", m.count), sym + m.cost.StringFixed(2)})
-			}
-		})
+		fmt.Fprintln(&inner)
+		fmt.Fprintln(&inner, ui.Bold("Matching resources"))
+		fmt.Fprintln(&inner)
+		matchingRows := make([][]string, 0, len(matching))
+		for _, m := range matching {
+			matchingRows = append(matchingRows, []string{m.resourceType, humanInt(m.count), humanMoney(m.cost, data.Currency)})
+		}
+		renderTable(&inner, []tableCol{
+			{header: "Type"},
+			{header: "Count", right: true},
+			{header: "Monthly Cost", right: true},
+		}, matchingRows, ui.ContentWidth())
 	}
 
-	// Show FinOps policy violations on matching resources.
 	savings := collectBudgetSavings(data, br.Tags)
 	if len(savings) > 0 {
-		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "FinOps policy violations on matching resources:")
+		fmt.Fprintln(&inner)
+		fmt.Fprintln(&inner, ui.Bold("FinOps violations on matching resources"))
+		fmt.Fprintln(&inner)
 		for _, s := range savings {
-			_, _ = fmt.Fprintf(w, "  %s: up to %s%s/mo (%d %s)\n", s.policyName, sym, s.savings.StringFixed(2), s.resourceCount, pluralize("resource", s.resourceCount))
+			fmt.Fprintf(&inner, "  %s: up to %s/mo (%s %s)\n",
+				ui.Accent(s.policyName),
+				humanMoney(s.savings, data.Currency),
+				humanInt(s.resourceCount),
+				pluralize("resource", s.resourceCount),
+			)
 		}
 	}
 
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Actual spend is based on cloud billing data for all resources")
-	_, _ = fmt.Fprintln(w, "matching this budget's tags across the organization.")
+	fmt.Fprintln(&inner)
+	fmt.Fprintln(&inner, ui.Muted("Actual spend is org-wide cloud billing across all resources"))
+	fmt.Fprintln(&inner, ui.Muted("matching this budget's tags — not just the IaC scan."))
 
-	return nil
+	_, err := fmt.Fprint(w, ui.Box(inner.String()))
+	return err
+}
+
+// budgetStatusValue renders the colored status pill for a budget row.
+//   over-budget → red 💸 "OVER by $X"
+//   under       → green ✓ "$X remaining (Y% left)"
+func budgetStatusValue(br format.BudgetOutput, currency string) string {
+	if br.OverBudget {
+		overBy := br.CurrentCost.Sub(br.Amount)
+		return ui.Danger(fmt.Sprintf("%s OVER by %s", moneyEmoji, humanMoney(overBy, currency)))
+	}
+	remaining := br.Amount.Sub(br.CurrentCost)
+	pct := remaining.Div(br.Amount).Mul(rat.New(100))
+	return ui.Positive(fmt.Sprintf("✓ %s remaining (%s%% left)", humanMoney(remaining, currency), pct.StringFixed(1)))
 }
 
 type matchingResourceGroup struct {
@@ -658,20 +1085,31 @@ func pluralize(word string, count int) string {
 	if count == 1 {
 		return word
 	}
+	if strings.HasSuffix(word, "y") {
+		return word[:len(word)-1] + "ies"
+	}
 	return word + "s"
 }
 
-func currencySymbol(code string) string {
-	switch code {
-	case "USD":
-		return "$"
-	case "EUR":
-		return "€"
-	case "GBP":
-		return "£"
-	default:
-		return code + " "
+// fileWithoutLine drops a trailing ":<digits>" line suffix from a file
+// location string, e.g. "data/main.tf:42" → "data/main.tf". Strings without
+// such a suffix (no colon, or non-numeric tail) are returned unchanged so
+// it's safe to call on either form.
+func fileWithoutLine(s string) string {
+	i := strings.LastIndex(s, ":")
+	if i < 0 {
+		return s
 	}
+	suffix := s[i+1:]
+	if suffix == "" {
+		return s
+	}
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return s
+		}
+	}
+	return s[:i]
 }
 
 func formatFileLoc(filename string, line int) string {

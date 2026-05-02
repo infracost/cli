@@ -38,5 +38,84 @@
   "budgets": 2,
   "over_budget": 1,
   "critical_diagnostics": 1,
-  "warning_diagnostics": 0
+  "warning_diagnostics": 0,
+  "failing_policy_list": [
+    {
+      "kind": "finops",
+      "name": "Use GP3",
+      "slug": "use-gp3",
+      "message": "Consider using GP3 volumes",
+      "project": "web-app",
+      "failing_finops": [
+        {
+          "name": "aws_ebs_volume.data",
+          "issues": [
+            {
+              "description": "Volume type is gp2",
+              "monthly_savings": "5",
+              "address": "aws_ebs_volume.data",
+              "attribute": "type"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "tagging",
+      "name": "Required Tags",
+      "message": "All resources must have required tags",
+      "project": "web-app",
+      "failing_tagging": [
+        {
+          "address": "aws_instance.web",
+          "resource_type": "aws_instance",
+          "invalid_tags": [
+            {
+              "key": "owner",
+              "value": "foo",
+              "valid_regex": "^team-.*",
+              "suggestion": "",
+              "message": "",
+              "valid_values": null,
+              "valid_value_count": 0,
+              "valid_values_truncated": false,
+              "from_default_tags": false,
+              "missing_mandatory": false
+            }
+          ],
+          "path": "modules/compute/main.tf",
+          "line": 42,
+          "missing_mandatory_tags": [
+            "environment",
+            "team"
+          ],
+          "propagation_problems": null
+        }
+      ]
+    }
+  ],
+  "triggered_guardrail_list": [
+    {
+      "guardrail_id": "g-1",
+      "guardrail_name": "Cost increase \u003e $100",
+      "triggered": true,
+      "total_monthly_cost": "500"
+    }
+  ],
+  "over_budget_list": [
+    {
+      "budget_id": "b-2",
+      "budget_name": "Frontend Q2",
+      "tags": [
+        {
+          "key": "team",
+          "value": "frontend"
+        }
+      ],
+      "amount": "300",
+      "current_cost": "400",
+      "over_budget": true,
+      "custom_overrun_message": "Notify #frontend-costs"
+    }
+  ]
 }

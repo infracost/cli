@@ -20,6 +20,113 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 // runewidth doesn't credit it but terminals widen the rendered glyph to 2.
 const variationSelector16 = "️"
 
+// ContentWidth returns the visible width available for content inside a Box
+// on the current terminal — i.e. terminal width minus the borders and inner
+// padding that Box adds. Use this as the target width when wrapping text or
+// constraining tables before passing them to Box. Returns 0 when stdout
+// isn't a TTY, in which case content is unconstrained (auto-sized).
+func ContentWidth() int {
+	tw := terminalWidth()
+	if tw == 0 {
+		return 0
+	}
+	// Box uses (border, leftPad, ..., rightPad, border) = 8 cells overhead.
+	const boxOverhead = 2 + 3 + 3
+	w := min(tw, MaxBoxWidth) - boxOverhead
+	if w < 0 {
+		return 0
+	}
+	return w
+}
+
+// TerminalContentWidth returns the visible width for content rendered
+// outside a Box (e.g. group-by tables). Capped at MaxBoxWidth so a 200-col
+// terminal doesn't produce a 200-col table; returns 0 (unconstrained) when
+// stdout isn't a TTY.
+func TerminalContentWidth() int {
+	tw := terminalWidth()
+	if tw == 0 {
+		return 0
+	}
+	return min(tw, MaxBoxWidth)
+}
+
+// WrapText soft-wraps s to maxWidth visible columns. Splits on whitespace;
+// tokens longer than maxWidth get hard-split (so e.g. a long URL doesn't
+// overrun a narrow terminal). maxWidth <= 0 returns s unchanged. Existing
+// newlines in s are preserved — each pre-existing line is wrapped
+// independently.
+func WrapText(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return s
+	}
+	var out strings.Builder
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		wrapLine(&out, line, maxWidth)
+	}
+	return out.String()
+}
+
+func wrapLine(out *strings.Builder, line string, maxWidth int) {
+	if PrintableWidth(line) <= maxWidth {
+		out.WriteString(line)
+		return
+	}
+	cur := 0
+	first := true
+	for word := range strings.FieldsSeq(line) {
+		ww := PrintableWidth(word)
+		switch {
+		case ww > maxWidth:
+			// Hard-split tokens that won't fit on any line (long URLs).
+			if !first {
+				if cur+1 > maxWidth {
+					out.WriteByte('\n')
+					cur = 0
+				} else {
+					out.WriteByte(' ')
+					cur++
+				}
+			}
+			runes := []rune(word)
+			for len(runes) > 0 {
+				take := maxWidth - cur
+				if take <= 0 {
+					out.WriteByte('\n')
+					cur = 0
+					take = maxWidth
+				}
+				if take > len(runes) {
+					take = len(runes)
+				}
+				out.WriteString(string(runes[:take]))
+				cur += take
+				runes = runes[take:]
+				if len(runes) > 0 {
+					out.WriteByte('\n')
+					cur = 0
+				}
+			}
+			first = false
+		case first:
+			out.WriteString(word)
+			cur = ww
+			first = false
+		case cur+1+ww <= maxWidth:
+			out.WriteByte(' ')
+			out.WriteString(word)
+			cur += 1 + ww
+		default:
+			out.WriteByte('\n')
+			out.WriteString(word)
+			cur = ww
+		}
+	}
+}
+
 // PrintableWidth returns the visible column count of s, ignoring ANSI escape
 // codes. Uses runewidth for base width then bumps by 1 per VS-16 selector:
 // runewidth (v0.0.16) doesn't credit U+FE0F for promoting an ambiguous-width

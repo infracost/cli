@@ -1,5 +1,9 @@
-Policy: Use GP3 — Consider using GP3 volumes
-
-Project  Resource             File  Issues
-─        ─                    ─     ─  
-web-app  aws_ebs_volume.data        1 issue
+╭───────────────────────────────────────────╮
+│                                           │
+│   Policy: Use GP3                         │
+│   Consider using GP3 volumes              │
+│                                           │
+│   web-app · aws_ebs_volume.data           │
+│      Volume type is gp2 — savings $5/mo   │
+│                                           │
+╰───────────────────────────────────────────╯
