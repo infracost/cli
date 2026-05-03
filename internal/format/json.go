@@ -3,7 +3,9 @@ package format
 import (
 	"encoding/json"
 	"io"
+	"sort"
 
+	"github.com/infracost/cli/internal/format/toon"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 	"github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/go-proto/pkg/rat"
@@ -96,7 +98,22 @@ type TaggingOutput struct {
 	PolicyID         string                         `json:"policy_id"`
 	PolicyName       string                         `json:"policy_name"`
 	Message          string                         `json:"message"`
+	// TagSchema describes the policy's per-key requirements (allowed values,
+	// validation regex, mandatory flag) once per tag key, instead of repeating
+	// them on every failing-resource invalid-tag entry.
+	TagSchema        []TagSchemaEntry               `json:"tag_schema,omitempty"`
 	FailingResources []FailingTaggingResourceOutput `json:"failing_resources"`
+}
+
+// TagSchemaEntry is the canonical, schema-level description of a single tag
+// key the policy cares about. Per-resource InvalidTagOutput entries reference
+// it by Key.
+type TagSchemaEntry struct {
+	Key         string   `json:"key"`
+	ValidRegex  string   `json:"valid_regex,omitempty"`
+	ValidValues []string `json:"valid_values,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	Mandatory   bool     `json:"mandatory,omitempty"`
 }
 
 type FailingTaggingResourceOutput struct {
@@ -109,17 +126,14 @@ type FailingTaggingResourceOutput struct {
 	PropagationProblems  []TagPropagationProblemOutput `json:"propagation_problems"`
 }
 
+// InvalidTagOutput carries only the per-instance facts about a single failing
+// tag. Schema-level metadata (allowed values, validation regex, validation
+// message, mandatory flag) lives on TaggingOutput.TagSchema; look it up by Key.
 type InvalidTagOutput struct {
-	Key                  string   `json:"key"`
-	Value                string   `json:"value"`
-	ValidRegex           string   `json:"valid_regex"`
-	Suggestion           string   `json:"suggestion"`
-	Message              string   `json:"message"`
-	ValidValues          []string `json:"valid_values"`
-	ValidValueCount      int      `json:"valid_value_count"`
-	ValidValuesTruncated bool     `json:"valid_values_truncated"`
-	FromDefaultTags      bool     `json:"from_default_tags"`
-	MissingMandatory     bool     `json:"missing_mandatory"`
+	Key             string `json:"key"`
+	Value           string `json:"value"`
+	Suggestion      string `json:"suggestion,omitempty"`
+	FromDefaultTags bool   `json:"from_default_tags,omitempty"`
 }
 
 type TagPropagationProblemOutput struct {
@@ -263,6 +277,13 @@ func (o *Output) ToJSON(w io.Writer) error {
 	return err
 }
 
+// ToTOON writes an Output as TOON (Token-Oriented Object Notation) to w. The
+// representation carries the same data model as ToJSON but uses TOON's compact,
+// indentation-based syntax intended for LLM consumption.
+func (o *Output) ToTOON(w io.Writer) error {
+	return toon.MarshalTo(w, o)
+}
+
 func convertResource(r *provider.Resource) ResourceOutput {
 	subs := make([]ResourceOutput, 0, len(r.ChildResources))
 	for _, sr := range r.ChildResources {
@@ -402,24 +423,87 @@ func convertTaggingResult(tr event.TaggingPolicyResult) TaggingOutput {
 		PolicyID:         tr.TagPolicyID,
 		PolicyName:       tr.Name,
 		Message:          tr.Message,
+		TagSchema:        buildTagSchema(tr.FailingResources),
 		FailingResources: failingResources,
 	}
+}
+
+// buildTagSchema collapses the per-instance schema metadata that upstream
+// repeats on every InvalidTag (ValidValues, ValidRegex, Message, Mandatory)
+// into a single per-key entry. Allowed-value lists are unioned across all
+// occurrences so we converge on the policy's full vocabulary even when
+// upstream produced narrowed/suggestion-mode lists for individual instances.
+// Keys that only appear via MissingMandatoryTags (never present, so no
+// InvalidTag) get a Mandatory:true entry with no other metadata.
+func buildTagSchema(resources []event.TagPolicyResultResource) []TagSchemaEntry {
+	type acc struct {
+		regex     string
+		message   string
+		mandatory bool
+		values    map[string]struct{}
+	}
+	byKey := map[string]*acc{}
+	var order []string
+	get := func(key string) *acc {
+		a, ok := byKey[key]
+		if !ok {
+			a = &acc{values: map[string]struct{}{}}
+			byKey[key] = a
+			order = append(order, key)
+		}
+		return a
+	}
+	for _, r := range resources {
+		for _, t := range r.InvalidTags {
+			a := get(t.Key)
+			if a.regex == "" {
+				a.regex = t.ValidRegex
+			}
+			if a.message == "" {
+				a.message = t.Message
+			}
+			if t.MissingMandatory {
+				a.mandatory = true
+			}
+			for _, v := range t.ValidValues {
+				a.values[v] = struct{}{}
+			}
+		}
+		for _, k := range r.MissingMandatoryTags {
+			a := get(k)
+			a.mandatory = true
+		}
+	}
+	out := make([]TagSchemaEntry, 0, len(order))
+	for _, k := range order {
+		a := byKey[k]
+		entry := TagSchemaEntry{
+			Key:        k,
+			ValidRegex: a.regex,
+			Message:    a.message,
+			Mandatory:  a.mandatory,
+		}
+		if len(a.values) > 0 {
+			vals := make([]string, 0, len(a.values))
+			for v := range a.values {
+				vals = append(vals, v)
+			}
+			sort.Strings(vals)
+			entry.ValidValues = vals
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func convertFailingTaggingResource(r event.TagPolicyResultResource) FailingTaggingResourceOutput {
 	invalidTags := make([]InvalidTagOutput, 0, len(r.InvalidTags))
 	for _, t := range r.InvalidTags {
 		invalidTags = append(invalidTags, InvalidTagOutput{
-			Key:                  t.Key,
-			Value:                t.Value,
-			ValidRegex:           t.ValidRegex,
-			Suggestion:           t.Suggestion,
-			Message:              t.Message,
-			ValidValues:          t.ValidValues,
-			ValidValueCount:      t.ValidValueCount,
-			ValidValuesTruncated: t.ValidValuesTruncated,
-			FromDefaultTags:      t.FromDefaultTags,
-			MissingMandatory:     t.MissingMandatory,
+			Key:             t.Key,
+			Value:           t.Value,
+			Suggestion:      t.Suggestion,
+			FromDefaultTags: t.FromDefaultTags,
 		})
 	}
 

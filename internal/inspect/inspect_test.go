@@ -105,6 +105,11 @@ func testData() *format.Output {
 					{
 						PolicyName: "Required Tags",
 						Message:    "All resources must have required tags",
+						TagSchema: []format.TagSchemaEntry{
+							{Key: "environment", Mandatory: true},
+							{Key: "team", Mandatory: true},
+							{Key: "owner", ValidRegex: "^team-.*"},
+						},
 						FailingResources: []format.FailingTaggingResourceOutput{
 							{
 								Address:              "aws_instance.web",
@@ -114,9 +119,8 @@ func testData() *format.Output {
 								MissingMandatoryTags: []string{"environment", "team"},
 								InvalidTags: []format.InvalidTagOutput{
 									{
-										Key:        "owner",
-										Value:      "foo",
-										ValidRegex: "^team-.*",
+										Key:   "owner",
+										Value: "foo",
 									},
 								},
 							},
@@ -176,7 +180,7 @@ func TestSummary(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
 
-	err := WriteSummary(&buf, data, false)
+	err := WriteSummary(&buf, data, Options{})
 	require.NoError(t, err)
 
 	assertGolden(t, buf.String())
@@ -186,7 +190,7 @@ func TestSummaryJSON(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
 
-	err := WriteSummary(&buf, data, true)
+	err := WriteSummary(&buf, data, Options{JSON: true})
 	require.NoError(t, err)
 
 	assertGolden(t, buf.String())

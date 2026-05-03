@@ -78,7 +78,11 @@ func Inspect(cfg *config.Config) *cobra.Command {
 				}
 			}
 
+			if cfg.JSON.Value && cfg.LLM.Value {
+				return fmt.Errorf("--json and --llm cannot be used together")
+			}
 			opts.JSON = cfg.JSON.Value
+			opts.LLM = cfg.LLM.Value
 			if err := inspect.Run(os.Stdout, data, opts); err != nil {
 				return err
 			}

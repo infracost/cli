@@ -6,13 +6,23 @@ import (
 	"io"
 
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/format/toon"
 	"github.com/infracost/go-proto/pkg/rat"
 )
 
-// writeJSON marshals v as indented JSON and writes it to w with a trailing
-// newline. Used by every inspect view's --json early-return so the encoding
-// behavior stays consistent.
-func writeJSON(w io.Writer, v any) error {
+// writeStructured marshals v in the structured format selected by opts (TOON
+// when opts.LLM is set, otherwise indented JSON) and writes it to w with a
+// trailing newline. Used by every inspect view's structured early-return so
+// the encoding behavior stays consistent.
+func writeStructured(w io.Writer, v any, opts Options) error {
+	if opts.LLM {
+		b, err := toon.Marshal(v)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(w, string(b))
+		return err
+	}
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
@@ -65,13 +75,17 @@ func buildBudgetDetailJSON(data *format.Output, br format.BudgetOutput) budgetDe
 // policyDetailJSON is the structured payload for `inspect --policy X --json`.
 // Either kind ("finops" or "tagging") populates a different resources slice,
 // since the per-resource detail differs (issues vs missing/invalid tags).
+//
+// For tagging policies, TagSchema carries the per-key schema once (allowed
+// values, validation regex, mandatory flag) — invalid_tags entries reference
+// keys back into this list rather than repeating the schema per occurrence.
 type policyDetailJSON struct {
-	Kind           string                  `json:"kind"`
-	Name           string                  `json:"name"`
-	Slug           string                  `json:"slug,omitempty"`
-	Message        string                  `json:"message,omitempty"`
-	Resources      []policyResourceJSON    `json:"resources"`
-	TagValidValues []tagValidValuesJSON    `json:"tag_valid_values,omitempty"`
+	Kind      string                  `json:"kind"`
+	Name      string                  `json:"name"`
+	Slug      string                  `json:"slug,omitempty"`
+	Message   string                  `json:"message,omitempty"`
+	Resources []policyResourceJSON    `json:"resources"`
+	TagSchema []format.TagSchemaEntry `json:"tag_schema,omitempty"`
 }
 
 type policyResourceJSON struct {
@@ -84,11 +98,6 @@ type policyResourceJSON struct {
 	// Tagging-only.
 	MissingMandatoryTags []string                  `json:"missing_mandatory_tags,omitempty"`
 	InvalidTags          []format.InvalidTagOutput `json:"invalid_tags,omitempty"`
-}
-
-type tagValidValuesJSON struct {
-	Key    string   `json:"key"`
-	Values []string `json:"values"`
 }
 
 // writePolicyDetailJSON aggregates matching FinOps and Tagging policies
@@ -128,21 +137,21 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 		}
 	}
 	if finopsMatched {
-		return writeJSON(w, policyDetailJSON{
+		return writeStructured(w, policyDetailJSON{
 			Kind:      "finops",
 			Name:      finopsName,
 			Slug:      finopsSlug,
 			Message:   finopsMessage,
 			Resources: finopsResources,
-		})
+		}, opts)
 	}
 
 	// Tagging: same aggregation pattern.
 	var (
-		tagName, tagMessage    string
-		tagResources           []policyResourceJSON
-		tagMatched             bool
-		allTagFailingResources []format.FailingTaggingResourceOutput
+		tagName, tagMessage string
+		tagResources        []policyResourceJSON
+		tagMatched          bool
+		tagSchemas          []format.TagSchemaEntry
 	)
 	for _, p := range data.Projects {
 		for _, t := range p.TaggingResults {
@@ -151,6 +160,7 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 			}
 			tagMatched = true
 			tagName, tagMessage = t.PolicyName, t.Message
+			tagSchemas = append(tagSchemas, t.TagSchema...)
 			for _, tr := range t.FailingResources {
 				if opts.Resource != "" && tr.Address != opts.Resource {
 					continue
@@ -164,7 +174,6 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 					InvalidTags:          tr.InvalidTags,
 				})
 			}
-			allTagFailingResources = append(allTagFailingResources, t.FailingResources...)
 		}
 	}
 	if tagMatched {
@@ -173,14 +182,9 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 			Name:      tagName,
 			Message:   tagMessage,
 			Resources: tagResources,
+			TagSchema: mergeTagSchemas(tagSchemas),
 		}
-		for _, tv := range collectTagValidValues(allTagFailingResources) {
-			out.TagValidValues = append(out.TagValidValues, tagValidValuesJSON{
-				Key:    tv.key,
-				Values: tv.values,
-			})
-		}
-		return writeJSON(w, out)
+		return writeStructured(w, out, opts)
 	}
 
 	return fmt.Errorf("policy %q not found", opts.Policy)

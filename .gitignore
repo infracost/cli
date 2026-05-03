@@ -30,6 +30,12 @@ go.work.sum
 # binary files
 bin/
 
+# Stray binaries that land at the repo root from `go build ./...` building
+# every main package in the tree. Anchored with `/` so they don't shadow
+# similarly-named files anywhere else.
+/llmbench
+/update-manifest
+
 # Editor/IDE
 .idea/
 .vscode/

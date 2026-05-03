@@ -2,7 +2,6 @@ package inspect
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -56,13 +55,18 @@ type summaryData struct {
 // tags) lives at the resource level so downstream consumers don't need a
 // separate drill-in call.
 type failingPolicyEntry struct {
-	Kind             string                                `json:"kind"`
-	Name             string                                `json:"name"`
-	Slug             string                                `json:"slug,omitempty"`
-	Message          string                                `json:"message,omitempty"`
-	Project          string                                `json:"project"`
-	FailingFinops    []format.FinopsFailingResourceOutput  `json:"failing_finops,omitempty"`
-	FailingTagging   []format.FailingTaggingResourceOutput `json:"failing_tagging,omitempty"`
+	Kind           string                                `json:"kind"`
+	Name           string                                `json:"name"`
+	Slug           string                                `json:"slug,omitempty"`
+	Message        string                                `json:"message,omitempty"`
+	Project        string                                `json:"project"`
+	// TagSchema is the policy's per-key tag schema (allowed values, regex,
+	// mandatory flag), present only for tagging entries. Carried here so the
+	// summary's failing list is self-contained — consumers don't need to
+	// drill back into the per-project TaggingResults to look up valid values.
+	TagSchema      []format.TagSchemaEntry               `json:"tag_schema,omitempty"`
+	FailingFinops  []format.FinopsFailingResourceOutput  `json:"failing_finops,omitempty"`
+	FailingTagging []format.FailingTaggingResourceOutput `json:"failing_tagging,omitempty"`
 }
 
 func ResourceCost(r *format.ResourceOutput) *rat.Rat {
@@ -78,16 +82,11 @@ func ResourceCost(r *format.ResourceOutput) *rat.Rat {
 	return total
 }
 
-func WriteSummary(w io.Writer, data *format.Output, asJSON bool) error {
+func WriteSummary(w io.Writer, data *format.Output, opts Options) error {
 	s := buildSummary(data)
 
-	if asJSON {
-		b, err := json.MarshalIndent(s, "", "  ")
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(w, string(b))
-		return err
+	if opts.Structured() {
+		return writeStructured(w, s, opts)
 	}
 
 	var inner bytes.Buffer
@@ -279,6 +278,7 @@ func buildSummary(data *format.Output) summaryData {
 					Name:           t.PolicyName,
 					Message:        t.Message,
 					Project:        p.ProjectName,
+					TagSchema:      t.TagSchema,
 					FailingTagging: t.FailingResources,
 				})
 			}

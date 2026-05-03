@@ -19,7 +19,12 @@ type Options struct {
 	Failing   bool
 	Top       int
 	JSON      bool
+	LLM       bool
 }
+
+// Structured reports whether the caller requested a machine-readable form
+// (either --json or --llm).
+func (o Options) Structured() bool { return o.JSON || o.LLM }
 
 func Run(w io.Writer, data *format.Output, opts Options) error {
 	filtered := Filter(data, opts)
@@ -52,12 +57,12 @@ func Run(w io.Writer, data *format.Output, opts Options) error {
 	}
 
 	if opts.Summary && opts.Resource == "" {
-		return WriteSummary(w, filtered, opts.JSON)
+		return WriteSummary(w, filtered, opts)
 	}
 
 	if len(opts.GroupBy) > 0 {
 		return WriteGroupBy(w, filtered, opts)
 	}
 
-	return WriteSummary(w, filtered, opts.JSON)
+	return WriteSummary(w, filtered, opts)
 }

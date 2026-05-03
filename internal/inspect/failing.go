@@ -24,8 +24,8 @@ import (
 // `data` has already been through Filter, so passing policies are dropped
 // from FinopsResults / TaggingResults.
 func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
-	if opts.JSON {
-		return writeJSON(w, failingPanoramaJSONFor(data))
+	if opts.Structured() {
+		return writeStructured(w, failingPanoramaJSONFor(data), opts)
 	}
 	policyRows := collectPolicyRows(data)
 	distinctPolicies := countDistinctPolicies(policyRows)
