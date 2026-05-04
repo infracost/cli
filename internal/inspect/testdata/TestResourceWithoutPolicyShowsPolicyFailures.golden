@@ -1,3 +1,5 @@
-Policy         Kind     Resource          File                        Message
-─              ─        ─                 ─                           ─  
-Required Tags  tagging  aws_instance.web  modules/compute/main.tf:42  All resources must have required tags
+🏷️  Required Tags  (1 resource)
+
+   All resources must have required tags
+
+   • aws_instance.web · modules/compute/main.tf:42

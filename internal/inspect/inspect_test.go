@@ -537,3 +537,13 @@ func TestRunPolicyFlagBypassesGroupBy(t *testing.T) {
 
 	assertGolden(t, buf.String())
 }
+
+func TestRunFailingPanorama(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := Run(&buf, data, Options{Failing: true})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}

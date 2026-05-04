@@ -1,8 +1,11 @@
-Policy: Use GP3
-Resource: aws_ebs_volume.data
-
-  Issue: Volume type is gp2
-  Savings: $5.00/mo
-  Address: aws_ebs_volume.data
-  Attribute: type
-
+╭─────────────────────────────────────╮
+│                                     │
+│   Policy: Use GP3                   │
+│   Resource: aws_ebs_volume.data     │
+│                                     │
+│   Issue:      Volume type is gp2    │
+│   Savings:    $5/mo                 │
+│   Address:    aws_ebs_volume.data   │
+│   Attribute:  type                  │
+│                                     │
+╰─────────────────────────────────────╯

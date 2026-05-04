@@ -1,3 +1,5 @@
-Policy   Kind    Resource             File  Message
-─        ─       ─                    ─     ─  
-Use GP3  finops  aws_ebs_volume.data        Consider using GP3 volumes
+⚙️  Use GP3  (1 resource)
+
+   Consider using GP3 volumes
+
+   • aws_ebs_volume.data
