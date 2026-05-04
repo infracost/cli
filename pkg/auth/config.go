@@ -227,7 +227,7 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 		return nil, err
 	}
 
-	return ts, nil
+	return c.wrapWithCache(ts, token), nil
 }
 
 func (c *Config) validateToken(token *oauth2.Token) (string, error) {
