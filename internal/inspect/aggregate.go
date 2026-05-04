@@ -115,7 +115,7 @@ func WriteTopSavings(w io.Writer, data *format.Output, n int, opts Options) erro
 		// objects. Without --fields this is the full struct, with
 		// --fields it's just the requested keys (preserving order via
 		// our maps-with-explicit-keys handling in the toon encoder /
-		// json's MarshalJSON-by-key behaviour).
+		// json's MarshalJSON-by-key behavior).
 		if len(opts.Fields) == 0 && !opts.AddressesOnly {
 			return writeStructured(w, rows, opts)
 		}
@@ -133,7 +133,7 @@ func WriteTopSavings(w io.Writer, data *format.Output, n int, opts Options) erro
 
 	// Single-column shortcut: addresses (or any one field) → one value
 	// per line, no header. This is the muscle-memory shape from the
-	// previous --addresses-only behaviour.
+	// previous --addresses-only behavior.
 	if len(fields) == 1 {
 		for _, r := range rows {
 			row := projectTopSavingsRow(r, fields, data.Currency)
