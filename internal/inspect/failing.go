@@ -45,7 +45,7 @@ func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
 	}
 
 	if len(policyRows) == 0 && len(triggered) == 0 && len(over) == 0 {
-		fmt.Fprintln(w, ui.Positive("✓ Nothing failing."))
+		_, _ = fmt.Fprintln(w, ui.Positive("✓ Nothing failing."))
 		return nil
 	}
 
@@ -57,53 +57,53 @@ func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
 	)
 	writeSectionHeading(w, "Failing policies", policyCount)
 	if len(policyRows) == 0 {
-		fmt.Fprintln(w, ui.Positive("✓ No failing policies."))
+		_, _ = fmt.Fprintln(w, ui.Positive("✓ No failing policies."))
 	} else {
 		writePolicyGroupRows(w, policyRows, []string{string(GroupByPolicy)})
 	}
 
 	// Section 2: triggered guardrails
-	fmt.Fprintln(w)
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	writeSectionHeading(w, "Triggered guardrails", fmt.Sprintf("(%d)", len(triggered)))
 	if len(triggered) == 0 {
-		fmt.Fprintln(w, ui.Positive("✓ None triggered."))
+		_, _ = fmt.Fprintln(w, ui.Positive("✓ None triggered."))
 	} else {
 		for i, gr := range triggered {
 			if i > 0 {
-				fmt.Fprintln(w)
+				_, _ = fmt.Fprintln(w)
 			}
-			fmt.Fprintf(w, "%s  %s\n", stopEmoji, ui.Bold(gr.GuardrailName))
+			_, _ = fmt.Fprintf(w, "%s  %s\n", stopEmoji, ui.Bold(gr.GuardrailName))
 			if gr.TotalMonthlyCost != nil {
-				fmt.Fprintf(w, "   %s\n", ui.Muted(humanMoney(gr.TotalMonthlyCost, data.Currency)+"/mo"))
+				_, _ = fmt.Fprintf(w, "   %s\n", ui.Muted(humanMoney(gr.TotalMonthlyCost, data.Currency)+"/mo"))
 			}
 		}
 	}
 
 	// Section 3: over budget
-	fmt.Fprintln(w)
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	writeSectionHeading(w, "Over budget", fmt.Sprintf("(%d)", len(over)))
 	if len(over) == 0 {
-		fmt.Fprintln(w, ui.Positive("✓ Nothing over budget."))
+		_, _ = fmt.Fprintln(w, ui.Positive("✓ Nothing over budget."))
 	} else {
 		for i, br := range over {
 			if i > 0 {
-				fmt.Fprintln(w)
+				_, _ = fmt.Fprintln(w)
 			}
-			fmt.Fprintf(w, "%s  %s\n", moneyEmoji, ui.Bold(br.BudgetName))
+			_, _ = fmt.Fprintf(w, "%s  %s\n", moneyEmoji, ui.Bold(br.BudgetName))
 			overBy := br.CurrentCost.Sub(br.Amount)
-			fmt.Fprintf(w, "   %s\n", ui.Muted(fmt.Sprintf(
+			_, _ = fmt.Fprintf(w, "   %s\n", ui.Muted(fmt.Sprintf(
 				"Over by %s (%s actual / %s limit)",
 				humanMoney(overBy, data.Currency),
 				humanMoney(br.CurrentCost, data.Currency),
 				humanMoney(br.Amount, data.Currency),
 			)))
 			if len(br.Tags) > 0 {
-				fmt.Fprintf(w, "   %s %s\n", ui.Accent("Scope:"), formatBudgetTagScope(br.Tags))
+				_, _ = fmt.Fprintf(w, "   %s %s\n", ui.Accent("Scope:"), formatBudgetTagScope(br.Tags))
 			}
 			if br.CustomOverrunMessage != "" {
-				fmt.Fprintf(w, "   %s\n", ui.Muted(br.CustomOverrunMessage))
+				_, _ = fmt.Fprintf(w, "   %s\n", ui.Muted(br.CustomOverrunMessage))
 			}
 		}
 	}
@@ -112,8 +112,8 @@ func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
 }
 
 func writeSectionHeading(w io.Writer, label, count string) {
-	fmt.Fprintf(w, "%s  %s\n", ui.Bold(label), ui.Muted(count))
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintf(w, "%s  %s\n", ui.Bold(label), ui.Muted(count))
+	_, _ = fmt.Fprintln(w)
 }
 
 // countDistinctPolicies counts unique policies across rows. Used for the

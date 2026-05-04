@@ -142,7 +142,7 @@ func PrintableWidth(s string) int {
 // terminal or the size can't be read. Callers fall back to content width when
 // this is 0 so non-TTY output (tests, pipes) stays deterministic.
 func terminalWidth() int {
-	fd := int(os.Stdout.Fd())
+	fd := int(os.Stdout.Fd()) //nolint:gosec // os.Stdout file descriptor always fits in int
 	if !term.IsTerminal(fd) {
 		return 0
 	}

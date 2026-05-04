@@ -144,14 +144,14 @@ func renderTable(w io.Writer, cols []tableCol, rows [][]string, maxWidth int) {
 	for i, c := range cols {
 		headerCells[i] = ui.Muted(padIfNotLast(c.header, i, c.right))
 	}
-	fmt.Fprintln(w, strings.Join(headerCells, sep))
+	_, _ = fmt.Fprintln(w, strings.Join(headerCells, sep))
 
 	for _, row := range rows {
 		cells := make([]string, len(cols))
 		for i, cell := range row {
 			cells[i] = padIfNotLast(truncateCell(cell, widths[i], cols[i].truncateRight), i, cols[i].right)
 		}
-		fmt.Fprintln(w, strings.Join(cells, sep))
+		_, _ = fmt.Fprintln(w, strings.Join(cells, sep))
 	}
 }
 
@@ -250,7 +250,7 @@ type kvRow struct {
 // what tests get since stdout there isn't a TTY.
 func writeWrapped(w io.Writer, indent, content string, maxWidth int) {
 	if maxWidth <= 0 {
-		fmt.Fprintln(w, indent+content)
+		_, _ = fmt.Fprintln(w, indent+content)
 		return
 	}
 	budget := maxWidth - ui.PrintableWidth(indent)
@@ -258,7 +258,7 @@ func writeWrapped(w io.Writer, indent, content string, maxWidth int) {
 		budget = maxWidth
 	}
 	for line := range strings.SplitSeq(ui.WrapText(content, budget), "\n") {
-		fmt.Fprintln(w, indent+line)
+		_, _ = fmt.Fprintln(w, indent+line)
 	}
 }
 
@@ -272,10 +272,10 @@ func writeKV(w io.Writer, rows []kvRow) {
 	}
 	for _, r := range rows {
 		if r.label == "" && r.value == "" {
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 			continue
 		}
 		gap := strings.Repeat(" ", maxLabel-len(r.label))
-		fmt.Fprintf(w, "%s:%s  %s\n", ui.Accent(r.label), gap, r.value)
+		_, _ = fmt.Fprintf(w, "%s:%s  %s\n", ui.Accent(r.label), gap, r.value)
 	}
 }

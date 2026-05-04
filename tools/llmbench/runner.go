@@ -260,11 +260,11 @@ func setupCellCwd(target *Target, formatName string) (string, func(), error) {
 			return "", func() {}, err
 		}
 		skillDir := filepath.Join(tmp, ".claude", "skills", "infracost-scan")
-		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		if err := os.MkdirAll(skillDir, 0o750); err != nil {
 			cleanup()
 			return "", func() {}, err
 		}
-		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillBody), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillBody), 0o600); err != nil {
 			cleanup()
 			return "", func() {}, err
 		}
@@ -283,7 +283,7 @@ func copyDir(src, dst string) error {
 	}
 	// Trailing /. on src causes cp to copy contents into dst rather than
 	// nesting src under it.
-	cmd := exec.Command("cp", "-R", src+"/.", dst)
+	cmd := exec.Command("cp", "-R", src+"/.", dst) //nolint:gosec // src/dst are bench-internal paths from caller
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("cp -R: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -295,11 +295,11 @@ func copyDir(src, dst string) error {
 // returns an encoder + close-fn. Callers Encode each Cell as it completes
 // so a kill mid-run still leaves a partial-but-valid file behind.
 func openCellsJSONL(dir string) (string, *json.Encoder, func(), error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", nil, nil, err
 	}
 	path := filepath.Join(dir, fmt.Sprintf("results-%s.jsonl", time.Now().Format("20060102-150405")))
-	f, err := os.Create(path)
+	f, err := os.Create(path) //nolint:gosec // path constructed from bench output dir + timestamp, not user input
 	if err != nil {
 		return "", nil, nil, err
 	}

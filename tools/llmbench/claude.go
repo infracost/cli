@@ -139,7 +139,7 @@ func (c *claudeClient) Run(ctx context.Context, opts claudeOpts) (*claudeResult,
 	}
 
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, c.binPath, args...)
+	cmd := exec.CommandContext(ctx, c.binPath, args...) //nolint:gosec // claude binary path resolved from --claude-bin flag
 	cmd.Dir = opts.Cwd
 	cmd.Env = buildEnv(opts.SandboxHome)
 

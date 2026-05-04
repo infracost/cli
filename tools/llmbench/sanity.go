@@ -50,13 +50,13 @@ func runSanityCheck(ctx context.Context, client *claudeClient, sandboxHome strin
 	if err != nil {
 		return fmt.Errorf("sanity: mkdir: %w", err)
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 
 	skillDir := filepath.Join(tmp, ".claude", "skills", "llmbench-canary")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+	if err := os.MkdirAll(skillDir, 0o750); err != nil {
 		return fmt.Errorf("sanity: mkdir skill: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(canarySkillBody), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(canarySkillBody), 0o600); err != nil {
 		return fmt.Errorf("sanity: write skill: %w", err)
 	}
 
@@ -74,10 +74,10 @@ func runSanityCheck(ctx context.Context, client *claudeClient, sandboxHome strin
 	}
 	if !strings.Contains(enabled.Result, canarySentinel) {
 		return fmt.Errorf(
-			"sanity check FAILED: project-level skill did not load.\n"+
-				"  Expected response to contain %q, got: %q\n"+
-				"  This means cwd-based .claude/skills/ injection is not working — "+
-				"skill-* cells will silently behave like bare-tf.",
+			"sanity check FAILED: project-level skill did not load. "+
+				"Expected response to contain %q, got: %q. "+
+				"This means cwd-based .claude/skills/ injection is not working — "+
+				"skill-* cells will silently behave like bare-tf",
 			canarySentinel, truncate(enabled.Result, 400))
 	}
 
@@ -90,16 +90,16 @@ func runSanityCheck(ctx context.Context, client *claudeClient, sandboxHome strin
 		AllowedTools: []string{"Read"},
 	})
 	if err != nil {
-		return fmt.Errorf("sanity: sandboxed-HOME run failed: %w\n"+
-			"  Most likely cause: CLAUDE_CODE_OAUTH_TOKEN isn't set, or the token is invalid.\n"+
-			"  Run `claude setup-token` and export the result.", err)
+		return fmt.Errorf("sanity: sandboxed-HOME run failed: %w "+
+			"(most likely cause: CLAUDE_CODE_OAUTH_TOKEN isn't set, or the token is invalid; "+
+			"run `claude setup-token` and export the result)", err)
 	}
 	if !strings.Contains(sandboxed.Result, canarySentinel) {
 		return fmt.Errorf(
-			"sanity check FAILED: project-level skill stopped loading under sandboxed HOME.\n"+
-				"  Expected response to contain %q, got: %q\n"+
-				"  HOME sandboxing is breaking skill discovery for some reason — bare-tf "+
-				"cells would still be polluted by globals while skill-* cells lose their mounted skill.",
+			"sanity check FAILED: project-level skill stopped loading under sandboxed HOME. "+
+				"Expected response to contain %q, got: %q. "+
+				"HOME sandboxing is breaking skill discovery for some reason — bare-tf "+
+				"cells would still be polluted by globals while skill-* cells lose their mounted skill",
 			canarySentinel, truncate(sandboxed.Result, 400))
 	}
 

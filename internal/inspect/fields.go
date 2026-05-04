@@ -12,7 +12,6 @@ import (
 var (
 	fieldsTopSavings        = []string{"address", "policy", "policy_slug", "project", "monthly_savings", "description"}
 	fieldsFilteredResources = []string{"address", "type", "project", "monthly_cost", "is_free"}
-	fieldsPolicyResources   = []string{"address", "project", "kind", "monthly_cost", "monthly_savings", "file", "line"}
 
 	// Summary fields are the scalar metrics on summaryData. Lists like
 	// project_details / failing_policy_list aren't projectable here —

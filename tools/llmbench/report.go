@@ -32,13 +32,13 @@ func writeReport(dir string, cells []Cell, cfg runConfig) (string, error) {
 		return "", nil
 	}
 	path := filepath.Join(dir, fmt.Sprintf("report-%s.md", time.Now().Format("20060102-150405")))
-	f, err := os.Create(path)
+	f, err := os.Create(path) //nolint:gosec // path constructed from bench output dir + timestamp, not user input
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
-	w := func(s string, args ...any) { fmt.Fprintf(f, s, args...) }
+	w := func(s string, args ...any) { _, _ = fmt.Fprintf(f, s, args...) }
 	w("# llmbench report\n\n")
 	w("- **model**: `%s`\n", cfg.Model)
 	target := strings.TrimSpace(cfg.TargetDir)

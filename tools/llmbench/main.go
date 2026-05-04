@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -103,14 +104,13 @@ func main() {
 	// that sandbox, so we require the env var as fallback. Only enforce
 	// when bare-tf is actually being run.
 	if containsFormat(formatList, "bare-tf") && !*dryRun && os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "" {
-		fail(fmt.Errorf(
-			"bare-tf cells sandbox HOME and need CLAUDE_CODE_OAUTH_TOKEN set explicitly.\n"+
-				"  One-time setup: run `claude setup-token` interactively, copy the printed token, then:\n"+
-				"    export CLAUDE_CODE_OAUTH_TOKEN=<token>\n"+
-				"  Or drop bare-tf from --formats if you only want skill-* comparisons."))
+		fail(errors.New(
+			"bare-tf cells sandbox HOME and need CLAUDE_CODE_OAUTH_TOKEN set explicitly. " +
+				"One-time setup: run `claude setup-token` interactively, copy the printed token, then " +
+				"`export CLAUDE_CODE_OAUTH_TOKEN=<token>`. Or drop bare-tf from --formats if you only want skill-* comparisons"))
 	}
 
-	if err := os.MkdirAll(*out, 0o755); err != nil {
+	if err := os.MkdirAll(*out, 0o750); err != nil {
 		fail(err)
 	}
 
@@ -121,7 +121,7 @@ func main() {
 	// when we set cmd.Dir to a temp path. The project cache dir is owned by
 	// the user running the bench so subprocesses inherit access.
 	tmpBase := filepath.Join(*out, "..", ".cache", "tmp")
-	if err := os.MkdirAll(tmpBase, 0o755); err != nil {
+	if err := os.MkdirAll(tmpBase, 0o750); err != nil {
 		fail(err)
 	}
 	if err := os.Setenv("TMPDIR", tmpBase); err != nil {
@@ -133,7 +133,7 @@ func main() {
 	// session caches, etc.) on first use; we only care that the user's
 	// globally-installed skills aren't reachable through it.
 	sandboxHome := filepath.Join(*out, "..", ".cache", "sandbox-home")
-	if err := os.MkdirAll(sandboxHome, 0o755); err != nil {
+	if err := os.MkdirAll(sandboxHome, 0o750); err != nil {
 		fail(err)
 	}
 
@@ -286,7 +286,7 @@ func loadCellsJSONL(spec string) ([]Cell, error) {
 
 	var cells []Cell
 	for _, p := range paths {
-		f, err := os.Open(p)
+		f, err := os.Open(p) //nolint:gosec // p is a results jsonl path supplied via --rerun-failed flag by bench operator
 		if err != nil {
 			return nil, fmt.Errorf("open %s: %w", p, err)
 		}

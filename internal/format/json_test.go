@@ -112,7 +112,7 @@ func TestComputeSummary(t *testing.T) {
 					},
 					{PolicyName: "Use Graviton"}, // present but no failing resources
 				},
-				TaggingResults: format_taggingPolicy("Required Tags", "aws_instance.web", "aws_ebs_volume.data"),
+				TaggingResults: taggingPolicyFixture("Required Tags", "aws_instance.web", "aws_ebs_volume.data"),
 			},
 			{
 				ProjectName: "api",
@@ -195,10 +195,10 @@ func TestComputeSummaryEmpty(t *testing.T) {
 	assert.Equal(t, 0, s.FailingTaggingPolicies)
 }
 
-// format_taggingPolicy builds a single tagging policy with the given failing
+// taggingPolicyFixture builds a single tagging policy with the given failing
 // resource addresses. Inline helper to keep the TestComputeSummary fixture
 // readable; not exported.
-func format_taggingPolicy(name string, addresses ...string) []TaggingOutput {
+func taggingPolicyFixture(name string, addresses ...string) []TaggingOutput {
 	failing := make([]FailingTaggingResourceOutput, 0, len(addresses))
 	for _, a := range addresses {
 		failing = append(failing, FailingTaggingResourceOutput{Address: a, MissingMandatoryTags: []string{"team"}})

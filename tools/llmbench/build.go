@@ -34,13 +34,13 @@ func resolveInfracostBin(explicit, cacheRoot string) (string, error) {
 	}
 
 	binDir := filepath.Join(cacheRoot, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := os.MkdirAll(binDir, 0o750); err != nil {
 		return "", err
 	}
 	binPath := filepath.Join(binDir, "infracost")
 
 	fmt.Printf("Building infracost from %s → %s\n", repoRoot, binPath)
-	cmd := exec.Command("go", "build", "-o", binPath, "./")
+	cmd := exec.Command("go", "build", "-o", binPath, "./") //nolint:gosec // binPath is bench-internal cache path
 	cmd.Dir = repoRoot
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

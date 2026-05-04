@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -47,7 +47,7 @@ func resolveTarget(ctx context.Context, cfg runConfig) (*Target, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+	if err := os.MkdirAll(cacheRoot, 0o750); err != nil {
 		return nil, err
 	}
 
@@ -61,7 +61,7 @@ func resolveTarget(ctx context.Context, cfg runConfig) (*Target, error) {
 		return nil, err
 	}
 
-	raw, err := os.ReadFile(fixturePath)
+	raw, err := os.ReadFile(fixturePath) //nolint:gosec // fixturePath is bench-internal cache path or --fixture-file flag value
 	if err != nil {
 		return nil, fmt.Errorf("read fixture %s: %w", fixturePath, err)
 	}
@@ -101,7 +101,7 @@ func resolveSkillSource(ctx context.Context, cfg runConfig, cacheRoot string) (s
 		url = defaultSkillURL
 	}
 	skillsDir := filepath.Join(cacheRoot, "skills")
-	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+	if err := os.MkdirAll(skillsDir, 0o750); err != nil {
 		return "", err
 	}
 	// Drop any trailing `.md` from the URL slug so we don't end up with
@@ -110,7 +110,7 @@ func resolveSkillSource(ctx context.Context, cfg runConfig, cacheRoot string) (s
 	cachePath := filepath.Join(skillsDir, cacheBase+".md")
 
 	if !cfg.RefreshTarget {
-		if b, err := os.ReadFile(cachePath); err == nil {
+		if b, err := os.ReadFile(cachePath); err == nil { //nolint:gosec // cachePath is bench cache dir + slug, not user input
 			fmt.Printf("Using cached skill: %s\n", cachePath)
 			return string(b), nil
 		}
@@ -123,11 +123,11 @@ func resolveSkillSource(ctx context.Context, cfg runConfig, cacheRoot string) (s
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL is from bench config / built-in default, not user input
 	if err != nil {
 		return "", fmt.Errorf("fetch skill %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("fetch skill %s: HTTP %d", url, resp.StatusCode)
 	}
@@ -135,7 +135,7 @@ func resolveSkillSource(ctx context.Context, cfg runConfig, cacheRoot string) (s
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(cachePath, body, 0o644); err != nil {
+	if err := os.WriteFile(cachePath, body, 0o600); err != nil {
 		return "", fmt.Errorf("cache skill: %w", err)
 	}
 	return string(body), nil
@@ -360,13 +360,13 @@ func resolveTargetDir(ctx context.Context, cfg runConfig, cacheRoot string) (str
 		return dir, slug, nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o750); err != nil {
 		return "", "", err
 	}
 	fmt.Printf("Cloning %s → %s\n", cfg.TargetRepo, dir)
 	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "git", "clone", "--depth=1", cfg.TargetRepo, dir)
+	cmd := exec.CommandContext(cctx, "git", "clone", "--depth=1", cfg.TargetRepo, dir) //nolint:gosec // TargetRepo is bench-operator-supplied via flag
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -388,7 +388,7 @@ func resolveFixture(ctx context.Context, cfg runConfig, cacheRoot, slug, repoDir
 	}
 
 	fixturesDir := filepath.Join(cacheRoot, "fixtures")
-	if err := os.MkdirAll(fixturesDir, 0o755); err != nil {
+	if err := os.MkdirAll(fixturesDir, 0o750); err != nil {
 		return "", err
 	}
 	fixturePath := filepath.Join(fixturesDir, slug+".json")
@@ -404,7 +404,7 @@ func resolveFixture(ctx context.Context, cfg runConfig, cacheRoot, slug, repoDir
 	fmt.Printf("Running %s scan --json %s → %s\n", infracost, repoDir, fixturePath)
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, infracost, "scan", "--json", repoDir)
+	cmd := exec.CommandContext(cctx, infracost, "scan", "--json", repoDir) //nolint:gosec // infracost binary path resolved via PATH lookup, repoDir from bench config
 	out, err := cmd.Output()
 	if err != nil {
 		// Surface stderr so the user sees auth / plugin errors, not just exit code.
@@ -412,9 +412,9 @@ func resolveFixture(ctx context.Context, cfg runConfig, cacheRoot, slug, repoDir
 		if ee, ok := err.(*exec.ExitError); ok {
 			stderr = string(ee.Stderr)
 		}
-		return "", fmt.Errorf("infracost scan failed: %w\nstderr: %s", err, stderr)
+		return "", fmt.Errorf("infracost scan failed: %w (stderr: %s)", err, stderr)
 	}
-	if err := os.WriteFile(fixturePath, out, 0o644); err != nil {
+	if err := os.WriteFile(fixturePath, out, 0o600); err != nil {
 		return "", fmt.Errorf("write fixture: %w", err)
 	}
 	return fixturePath, nil
@@ -442,7 +442,7 @@ func slugifyURL(u string) string {
 	clean := slugify(s)
 	if clean == "" {
 		// Fallback to a deterministic hash if the URL has nothing slug-friendly.
-		h := sha1.Sum([]byte(u))
+		h := sha256.Sum256([]byte(u))
 		return "repo-" + hex.EncodeToString(h[:6])
 	}
 	return clean
