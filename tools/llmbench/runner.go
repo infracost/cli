@@ -28,6 +28,11 @@ type runConfig struct {
 	Model     string
 	ClaudeBin string
 	MaxTurns  int
+	// InfracostBin is the absolute path to the infracost binary that
+	// cells should invoke. Threaded into the SKILL.md preamble so the
+	// model never types bare `infracost` (which could resolve to a
+	// system-installed legacy version that lacks the new flags).
+	InfracostBin string
 	// SandboxHome is a directory we pass as HOME to bare-tf cells so the
 	// user's globally-installed skills (~/.claude/skills/, plugins, etc.)
 	// can't leak into the "no infracost" baseline. Created once at startup,

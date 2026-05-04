@@ -14,16 +14,45 @@ import (
 
 // Output is the top-level JSON structure produced by the scan command.
 type Output struct {
-	Currency         string             `json:"currency"`
-	Projects         []ProjectOutput    `json:"projects"`
-	GuardrailResults []GuardrailOutput  `json:"guardrail_results,omitempty"`
-	BudgetResults    []BudgetOutput     `json:"budget_results,omitempty"`
+	Currency         string            `json:"currency"`
+	// Summary carries pre-computed aggregations so consumers (LLMs in
+	// particular) don't have to sum/count over Projects themselves. It's
+	// populated by ToOutput; manually-constructed Outputs (tests) leave
+	// it nil and the omitempty drops it from the wire format.
+	Summary          *OutputSummary    `json:"summary,omitempty"`
+	Projects         []ProjectOutput   `json:"projects"`
+	GuardrailResults []GuardrailOutput `json:"guardrail_results,omitempty"`
+	BudgetResults    []BudgetOutput    `json:"budget_results,omitempty"`
 
 	// Fields below are not serialized to JSON but carried through for event
 	// metadata.
 	projectTypes           []string
 	estimatedUsageCounts   map[string]int // nil means no usage file was loaded
 	unestimatedUsageCounts map[string]int
+}
+
+// OutputSummary is the pre-computed aggregate block on Output. Every
+// integer count is over the entire scan (across all projects). Saves the
+// model from having to walk Projects[].Resources[] etc. itself, and
+// surfaces the headline numbers structurally so they can be tabularised
+// by the --llm encoder rather than hidden inside arbitrary objects.
+type OutputSummary struct {
+	Projects                        int      `json:"projects"`
+	Resources                       int      `json:"resources"`
+	CostedResources                 int      `json:"costed_resources"`
+	FreeResources                   int      `json:"free_resources"`
+	TotalMonthlyCost                *rat.Rat `json:"total_monthly_cost,omitempty"`
+	TotalPotentialMonthlySavings    *rat.Rat `json:"total_potential_monthly_savings,omitempty"`
+	FinopsPolicies                  int      `json:"finops_policies,omitempty"`
+	FailingFinopsPolicies           int      `json:"failing_finops_policies,omitempty"`
+	DistinctFailingFinopsResources  int      `json:"distinct_failing_finops_resources,omitempty"`
+	TaggingPolicies                 int      `json:"tagging_policies,omitempty"`
+	FailingTaggingPolicies          int      `json:"failing_tagging_policies,omitempty"`
+	DistinctFailingTaggingResources int      `json:"distinct_failing_tagging_resources,omitempty"`
+	Guardrails                      int      `json:"guardrails,omitempty"`
+	TriggeredGuardrails             int      `json:"triggered_guardrails,omitempty"`
+	Budgets                         int      `json:"budgets,omitempty"`
+	OverBudget                      int      `json:"over_budget,omitempty"`
 }
 
 type ProjectOutput struct {
@@ -201,7 +230,7 @@ func ToOutput(result *Result) Output {
 		})
 	}
 
-	return Output{
+	out := Output{
 		Currency:               result.Config.Currency,
 		Projects:               projects,
 		GuardrailResults:       guardrailResults,
@@ -210,6 +239,91 @@ func ToOutput(result *Result) Output {
 		estimatedUsageCounts:   result.EstimatedUsageCounts,
 		unestimatedUsageCounts: result.UnestimatedUsageCounts,
 	}
+	out.Summary = computeSummary(&out)
+	return out
+}
+
+// computeSummary fills the Output.Summary aggregate block. Pure function
+// over Projects/GuardrailResults/BudgetResults so it can be regenerated
+// from any in-memory Output (e.g., post-filter views in inspect that
+// might want fresh numbers — though we don't currently re-run it there).
+func computeSummary(out *Output) *OutputSummary {
+	s := &OutputSummary{
+		Projects:         len(out.Projects),
+		TotalMonthlyCost: rat.Zero,
+	}
+	totalSavings := rat.Zero
+	failingFinopsRes := map[string]struct{}{}
+	failingTaggingRes := map[string]struct{}{}
+	for _, p := range out.Projects {
+		for _, r := range p.Resources {
+			s.Resources++
+			if r.IsFree {
+				s.FreeResources++
+			} else {
+				s.CostedResources++
+			}
+			s.TotalMonthlyCost = s.TotalMonthlyCost.Add(resourceMonthlyCost(&r))
+		}
+		for _, fp := range p.FinopsResults {
+			s.FinopsPolicies++
+			if len(fp.FailingResources) > 0 {
+				s.FailingFinopsPolicies++
+			}
+			for _, fr := range fp.FailingResources {
+				failingFinopsRes[fr.Name] = struct{}{}
+				for _, iss := range fr.Issues {
+					if iss.MonthlySavings != nil {
+						totalSavings = totalSavings.Add(iss.MonthlySavings)
+					}
+				}
+			}
+		}
+		for _, t := range p.TaggingResults {
+			s.TaggingPolicies++
+			if len(t.FailingResources) > 0 {
+				s.FailingTaggingPolicies++
+			}
+			for _, fr := range t.FailingResources {
+				failingTaggingRes[fr.Address] = struct{}{}
+			}
+		}
+	}
+	s.DistinctFailingFinopsResources = len(failingFinopsRes)
+	s.DistinctFailingTaggingResources = len(failingTaggingRes)
+	if !totalSavings.IsZero() {
+		s.TotalPotentialMonthlySavings = totalSavings
+	}
+	for _, g := range out.GuardrailResults {
+		s.Guardrails++
+		if g.Triggered {
+			s.TriggeredGuardrails++
+		}
+	}
+	for _, b := range out.BudgetResults {
+		s.Budgets++
+		if b.OverBudget {
+			s.OverBudget++
+		}
+	}
+	return s
+}
+
+// resourceMonthlyCost sums the TotalMonthlyCost across a resource's cost
+// components and recurses into subresources. Mirrors the inspect
+// package's ResourceCost so summary numbers match what `inspect` would
+// produce; kept here to avoid an import cycle.
+func resourceMonthlyCost(r *ResourceOutput) *rat.Rat {
+	total := rat.Zero
+	for _, c := range r.CostComponents {
+		if c.TotalMonthlyCost != nil {
+			total = total.Add(c.TotalMonthlyCost)
+		}
+	}
+	for _, sub := range r.Subresources {
+		total = total.Add(resourceMonthlyCost(&sub))
+	}
+	return total
 }
 
 func convertProjectResult(pr *ProjectResult) ProjectOutput {

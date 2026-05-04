@@ -24,6 +24,113 @@ type tableRow struct {
 	Count   int               `json:"count,omitempty"`
 }
 
+// writeGroupByProjection renders a flat tabular view of group-by rows
+// projected to exactly the user-requested fields. Used when --fields (or
+// --addresses-only) is set so the model gets a grep/awk-friendly shape
+// instead of the consolidated bullet-list rendering. Dedupes rows by
+// the projected key set, which means `--group-by policy --fields policy`
+// yields one row per distinct policy without `| sort -u`.
+func writeGroupByProjection(w io.Writer, rows []tableRow, opts Options) error {
+	available := groupByAvailableFields(rows)
+	fields, err := effectiveFields(opts, available)
+	if err != nil {
+		return err
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	var projected [][]string
+	for _, r := range rows {
+		key := strings.Builder{}
+		row := make([]string, 0, len(fields))
+		for _, f := range fields {
+			v := groupByCellValue(r, f)
+			row = append(row, v)
+			key.WriteString(v)
+			key.WriteString("\x00") // null separator avoids collisions
+		}
+		if _, dup := seen[key.String()]; dup {
+			continue
+		}
+		seen[key.String()] = struct{}{}
+		projected = append(projected, row)
+	}
+
+	if opts.Structured() {
+		out := make([]map[string]string, 0, len(projected))
+		for _, row := range projected {
+			obj := make(map[string]string, len(fields))
+			for i, f := range fields {
+				obj[f] = row[i]
+			}
+			out = append(out, obj)
+		}
+		return writeStructured(w, out, opts)
+	}
+
+	if len(fields) == 1 {
+		for _, row := range projected {
+			if _, err := fmt.Fprintln(w, row[0]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, tsvHeader(fields)); err != nil {
+		return err
+	}
+	for _, row := range projected {
+		if _, err := fmt.Fprintln(w, strings.Join(row, "\t")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// groupByAvailableFields returns the union of all column keys appearing
+// across rows, plus the synthetic count / monthly_cost fields tableRow
+// carries outside Columns. Order is stable: rows[0]'s columns first,
+// then any extras seen later, then the synthetics.
+func groupByAvailableFields(rows []tableRow) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, r := range rows {
+		for k := range r.Columns {
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	for _, extra := range []string{"count", "monthly_cost"} {
+		if _, ok := seen[extra]; ok {
+			continue
+		}
+		out = append(out, extra)
+	}
+	return out
+}
+
+func groupByCellValue(r tableRow, field string) string {
+	if v, ok := r.Columns[field]; ok {
+		return v
+	}
+	switch field {
+	case "count":
+		return fmt.Sprintf("%d", r.Count)
+	case "monthly_cost":
+		if r.Cost == nil {
+			return ""
+		}
+		return r.Cost.String()
+	}
+	return ""
+}
+
 var detailColumns = []string{"kind", string(GroupByResource), string(GroupByFile), "message"}
 
 func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
@@ -75,6 +182,15 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 
 	if opts.Top > 0 && opts.Top < len(rows) {
 		rows = rows[:opts.Top]
+	}
+
+	// --fields short-circuits the rich consolidated/table renderings
+	// because the user's asking for a flat tabular projection (typically
+	// driven by an LLM that wants exact columns to grep). Dedupe rows by
+	// the projected key set so e.g. `--group-by policy --fields policy`
+	// yields one row per policy without needing `| sort -u`.
+	if len(opts.Fields) > 0 || opts.AddressesOnly {
+		return writeGroupByProjection(w, rows, opts)
 	}
 
 	if opts.Structured() {
@@ -406,6 +522,9 @@ func WriteBudgetDetail(w io.Writer, data *format.Output, opts Options) error {
 }
 
 func WritePolicyDetail(w io.Writer, data *format.Output, opts Options) error {
+	if opts.AddressesOnly {
+		return writeAddressesOnly(w, addressesFailingPolicy(data, opts.Policy))
+	}
 	if opts.Structured() {
 		return writePolicyDetailJSON(w, data, opts)
 	}
@@ -413,6 +532,44 @@ func WritePolicyDetail(w io.Writer, data *format.Output, opts Options) error {
 		return writePolicyResourceDetail(w, data, opts)
 	}
 	return writePolicyOverview(w, data, opts)
+}
+
+// addressesFailingPolicy returns the deduplicated list of resource
+// addresses failing the named policy across all projects. Matches
+// FinOps + Tagging policies by name OR slug, mirroring matchesPolicy.
+func addressesFailingPolicy(data *format.Output, policyNeedle string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(addr string) {
+		if addr == "" {
+			return
+		}
+		if _, ok := seen[addr]; ok {
+			return
+		}
+		seen[addr] = struct{}{}
+		out = append(out, addr)
+	}
+	for _, p := range data.Projects {
+		for _, fp := range p.FinopsResults {
+			if !matchesPolicy(fp.PolicyName, fp.PolicySlug, policyNeedle) {
+				continue
+			}
+			for _, fr := range fp.FailingResources {
+				add(fr.Name)
+			}
+		}
+		for _, t := range p.TaggingResults {
+			if !matchesPolicy(t.PolicyName, "", policyNeedle) {
+				continue
+			}
+			for _, fr := range t.FailingResources {
+				add(fr.Address)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func collectResourceRows(data *format.Output) []tableRow {

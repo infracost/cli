@@ -166,6 +166,7 @@ func main() {
 		MaxTurns:      *maxTurns,
 		SandboxHome:   sandboxHome,
 		PolicyContext: policyContext,
+		InfracostBin:  binPath,
 		OutDir:        *out,
 		DryRun:        *dryRun,
 		Question:      *question,

@@ -82,8 +82,86 @@ func ResourceCost(r *format.ResourceOutput) *rat.Rat {
 	return total
 }
 
+// summaryFieldValue returns the canonical-name → string-value mapping
+// for one scalar summary field. Keys must match fieldsSummary (validated
+// at the call site by validateFields).
+func summaryFieldValue(s summaryData, field, currency string) string {
+	switch field {
+	case "projects":
+		return fmt.Sprintf("%d", s.Projects)
+	case "projects_with_errors":
+		return fmt.Sprintf("%d", s.ProjectsWithError)
+	case "resources":
+		return fmt.Sprintf("%d", s.Resources)
+	case "costed_resources":
+		return fmt.Sprintf("%d", s.CostedResources)
+	case "free_resources":
+		return fmt.Sprintf("%d", s.FreeResources)
+	case "monthly_cost":
+		return humanMoney(s.MonthlyCost, currency)
+	case "finops_policies":
+		return fmt.Sprintf("%d", s.FinopsPolicies)
+	case "failing_policies":
+		return fmt.Sprintf("%d", s.FailingPolicies)
+	case "tagging_policies":
+		return fmt.Sprintf("%d", s.TaggingPolicies)
+	case "failing_tagging_policies":
+		return fmt.Sprintf("%d", s.FailingTaggingPolicies)
+	case "guardrails":
+		return fmt.Sprintf("%d", s.Guardrails)
+	case "triggered_guardrails":
+		return fmt.Sprintf("%d", s.TriggeredGuardrails)
+	case "budgets":
+		return fmt.Sprintf("%d", s.Budgets)
+	case "over_budget":
+		return fmt.Sprintf("%d", s.OverBudget)
+	case "critical_diagnostics":
+		return fmt.Sprintf("%d", s.CriticalDiags)
+	case "warning_diagnostics":
+		return fmt.Sprintf("%d", s.WarningDiags)
+	}
+	return ""
+}
+
+// writeSummaryProjection emits the requested summary fields. Single
+// field → bare value (one number per question, no surrounding
+// chrome). Multiple fields → "key: value" lines (matches the existing
+// summary view's idiom). Structured output → flat {field: value} map.
+func writeSummaryProjection(w io.Writer, s summaryData, fields []string, opts Options, currency string) error {
+	if opts.Structured() {
+		out := make(map[string]string, len(fields))
+		for _, f := range fields {
+			out[f] = summaryFieldValue(s, f, currency)
+		}
+		return writeStructured(w, out, opts)
+	}
+	if len(fields) == 1 {
+		_, err := fmt.Fprintln(w, summaryFieldValue(s, fields[0], currency))
+		return err
+	}
+	for _, f := range fields {
+		if _, err := fmt.Fprintf(w, "%s: %s\n", f, summaryFieldValue(s, f, currency)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func WriteSummary(w io.Writer, data *format.Output, opts Options) error {
 	s := buildSummary(data)
+
+	// --fields short-circuit: project to just the requested scalars.
+	// Single field → value alone (so a model can `wc -l` or read it
+	// directly with no parsing). Multiple fields → key:value lines.
+	// Honors --json / --llm by emitting a flat object with just the
+	// requested keys.
+	if len(opts.Fields) > 0 {
+		fields, err := validateFields(opts.Fields, fieldsSummary)
+		if err != nil {
+			return err
+		}
+		return writeSummaryProjection(w, s, fields, opts, data.Currency)
+	}
 
 	if opts.Structured() {
 		return writeStructured(w, s, opts)

@@ -28,6 +28,11 @@ type Target struct {
 	FixturePath string         // absolute path to the cached infracost --json output
 	Fixture     *format.Output // parsed fixture (ground truth)
 	SkillSource string         // raw upstream SKILL.md including YAML frontmatter
+	// BinPath is the absolute path to the infracost binary cells should
+	// invoke. Threaded into the skill variants so the model never types
+	// bare `infracost` (which can hit a system-installed legacy version
+	// shadowed by a .zshrc that re-exports PATH).
+	BinPath string
 }
 
 const cacheDirName = ".cache"
@@ -76,6 +81,7 @@ func resolveTarget(ctx context.Context, cfg runConfig) (*Target, error) {
 		FixturePath: fixturePath,
 		Fixture:     &out,
 		SkillSource: skillSource,
+		BinPath:     cfg.InfracostBin,
 	}, nil
 }
 
@@ -135,66 +141,190 @@ func resolveSkillSource(ctx context.Context, cfg runConfig, cacheRoot string) (s
 	return string(body), nil
 }
 
-// SkillVariant returns the SKILL.md text for the given format variant. For
-// `skill-default` this is the upstream source verbatim; for `skill-llm` and
-// `skill-json` we append a short "Output format" instruction telling the
-// model to prefer that flag on infracost commands. The frontmatter is
-// preserved so Claude Code's skill loader picks the file up correctly.
+// SkillVariant returns the SKILL.md text for the given format variant.
+// For `skill-default` this is the upstream source verbatim, but with a
+// fool-proof binary-path preamble injected after the frontmatter so the
+// model uses the bench-built binary explicitly rather than gambling on
+// PATH resolution. (The user's system likely has a legacy `infracost` —
+// e.g. from Homebrew — earlier on PATH, which has no `scan` / `inspect` /
+// new flags. Empirically, PATH-prepending in the bench process doesn't
+// reliably propagate through the cell's bash subprocess because shell
+// init reorders PATH.)
+//
+// `skill-llm` / `skill-json` add the format-flag override appendix on
+// top, again referring to the bench-built binary by absolute path.
 func (t *Target) SkillVariant(format string) (string, error) {
+	preamble, err := t.skillBinaryPathPreamble()
+	if err != nil {
+		return "", err
+	}
+	body := injectBinaryPath(t.SkillSource, preamble)
 	switch format {
 	case "skill-default":
-		return t.SkillSource, nil
+		return body, nil
 	case "skill-llm":
-		return t.SkillSource + skillLLMOverride, nil
+		return body + skillLLMOverride(t.BinPath), nil
 	case "skill-json":
-		return t.SkillSource + skillJSONOverride, nil
+		return body + skillJSONOverride(t.BinPath), nil
 	default:
 		return "", fmt.Errorf("not a skill variant: %q", format)
 	}
 }
 
+// skillBinaryPathPreamble produces a markdown block that goes immediately
+// after the YAML frontmatter, telling the model — in the strongest terms
+// — to use the bench-built infracost binary at its full absolute path
+// and never to invoke a bare `infracost`.
+func (t *Target) skillBinaryPathPreamble() (string, error) {
+	if t.BinPath == "" {
+		return "", fmt.Errorf("target.BinPath not set; resolve infracost binary before building skill variants")
+	}
+	return fmt.Sprintf(`# IMPORTANT — Use exactly this `+"`infracost`"+` binary
+
+For this session, every reference to `+"`infracost`"+` in the rest of this skill MUST be invoked at the absolute path:
+
+`+"```"+`
+%s
+`+"```"+`
+
+Do **not** type bare `+"`infracost`"+`. The system's PATH may resolve `+"`infracost`"+` to a different (older) version that lacks the `+"`scan`"+`, `+"`inspect`"+`, `+"`--llm`"+`, `+"`--fields`"+`, and other flags this skill expects. Always type the full path above.
+
+For example, where the skill below says:
+
+`+"```"+`
+infracost scan /path/to/repo
+`+"```"+`
+
+You MUST run:
+
+`+"```"+`
+%s scan /path/to/repo
+`+"```"+`
+
+This applies to every command on every invocation, with no exceptions.
+
+---
+
+`, t.BinPath, t.BinPath), nil
+}
+
+// injectBinaryPath places the binary-path preamble immediately after the
+// YAML frontmatter (so Claude Code's skill loader still parses it
+// correctly) but before the user-visible body. If the source has no
+// frontmatter we just prepend.
+func injectBinaryPath(source, preamble string) string {
+	if !strings.HasPrefix(source, "---\n") {
+		return preamble + source
+	}
+	rest := source[4:]
+	end := strings.Index(rest, "\n---\n")
+	if end < 0 {
+		return preamble + source
+	}
+	frontmatter := source[:4+end+5]
+	body := source[4+end+5:]
+	return frontmatter + preamble + body
+}
+
 // skillLLMOverride is appended to the upstream SKILL.md to test whether
-// steering the model to `--llm` improves outcomes. Phrased as a strong
-// override because the upstream skill actively discourages parsing
-// machine-readable output ("you DO NOT NEED to write any scripts to handle
-// JSON yourself"); a hint phrased as a suggestion would lose to that.
-const skillLLMOverride = `
+// steering the model to `--llm` plus the new query flags improves
+// outcomes. Phrased as a strong override because the upstream skill
+// actively discourages parsing machine-readable output ("you DO NOT NEED
+// to write any scripts to handle JSON yourself"); a hint phrased as a
+// suggestion would lose to that. Takes the absolute binary path so all
+// example commands point at the bench-built binary explicitly.
+func skillLLMOverride(binPath string) string {
+	return `
 
 ## Output format (REQUIRED — overrides any other guidance in this skill)
 
-When invoking ` + "`infracost`" + ` for any subcommand, **always** include the global ` + "`--llm`" + ` flag. This applies to ` + "`scan`" + `, ` + "`inspect`" + ` (with any sub-flags like ` + "`--policy`" + `, ` + "`--group-by`" + `, ` + "`--summary`" + `), and ` + "`price`" + `. The ` + "`--llm`" + ` output is a compact, indentation-based text format you read directly — no jq required.
+When invoking the bench-built ` + "`infracost`" + ` (` + "`" + binPath + "`" + `) for any subcommand, **always** include the global ` + "`--llm`" + ` flag. This applies to ` + "`scan`" + `, ` + "`inspect`" + `, and ` + "`price`" + `. The ` + "`--llm`" + ` output is a compact, indentation-based text format you read directly — no jq required.
 
-Examples:
-
-` + "```" + `bash
-infracost scan --llm /path/to/repo
-infracost inspect --summary --llm
-infracost inspect --policy "Required Tags" --llm
-infracost inspect --group-by policy --llm
-` + "```" + `
-
-This overrides the default human-readable output described elsewhere in this skill. Do not omit ` + "`--llm`" + `.
+` + skillCommonFlagAppendix(binPath) + `
 `
+}
 
 // skillJSONOverride is the equivalent for the JSON variant. Same strength
 // of override so the comparison with skillLLMOverride is fair.
-const skillJSONOverride = `
+func skillJSONOverride(binPath string) string {
+	return `
 
 ## Output format (REQUIRED — overrides any other guidance in this skill)
 
-When invoking ` + "`infracost`" + ` for any subcommand, **always** include the global ` + "`--json`" + ` flag. This applies to ` + "`scan`" + `, ` + "`inspect`" + ` (with any sub-flags like ` + "`--policy`" + `, ` + "`--group-by`" + `, ` + "`--summary`" + `), and ` + "`price`" + `. Parse the JSON output with ` + "`jq`" + ` to extract whatever you need.
+When invoking the bench-built ` + "`infracost`" + ` (` + "`" + binPath + "`" + `) for any subcommand, **always** include the global ` + "`--json`" + ` flag. This applies to ` + "`scan`" + `, ` + "`inspect`" + `, and ` + "`price`" + `.
 
-Examples:
+` + skillCommonFlagAppendix(binPath) + `
+`
+}
+
+// skillCommonFlagAppendix documents the inspect flags that obviate jq /
+// python fallbacks. Shared between the --llm and --json variant overrides
+// because the flags themselves are format-agnostic. Takes the absolute
+// binary path so every example invocation is unambiguous.
+func skillCommonFlagAppendix(binPath string) string {
+	bin := "`" + binPath + "`"
+	return `## Prefer native ` + bin + ` ` + "`inspect`" + ` flags over jq / python
+
+The ` + "`inspect`" + ` command has dedicated flags for the patterns that would otherwise need jq or python aggregation. Always use these in preference to writing your own parsing scripts:
+
+### Aggregations
+- ` + "`infracost inspect --total-savings`" + ` — scalar sum of monthly savings across every FinOps issue.
+- ` + "`infracost inspect --top-savings N`" + ` — top N FinOps issues sorted by ` + "`monthly_savings`" + ` desc.
+
+### Resource selection
+- ` + "`infracost inspect --missing-tag <key>`" + ` — resources missing that tag entirely.
+- ` + "`infracost inspect --invalid-tag <key>`" + ` — resources where that tag's value is outside the policy's allowed list.
+- ` + "`infracost inspect --min-cost N`" + ` / ` + "`--max-cost N`" + ` — resources within a monthly-cost range.
+- ` + "`infracost inspect --filter \"<expr>\"`" + ` — comma-separated AND'd predicates. Supported keys: ` + "`policy`" + `, ` + "`project`" + `, ` + "`provider`" + `, ` + "`tag.<key>=missing`" + `. Example: ` + "`--filter \"tag.team=missing,provider=aws\"`" + `.
+
+### Output projection (replaces ` + "`cut`" + ` / ` + "`awk '{print $N}'`" + `)
+- ` + "`infracost inspect --fields <a,b,c>`" + ` — choose which columns to emit, in that order. With one field you get one value per line; multiple fields give a TSV with header.
+  - For ` + "`--top-savings`" + `: ` + "`address`" + `, ` + "`policy`" + `, ` + "`policy_slug`" + `, ` + "`project`" + `, ` + "`monthly_savings`" + `, ` + "`description`" + `.
+  - For ` + "`--missing-tag`" + ` / ` + "`--invalid-tag`" + ` / ` + "`--min-cost`" + ` / ` + "`--max-cost`" + `: ` + "`address`" + `, ` + "`type`" + `, ` + "`project`" + `, ` + "`monthly_cost`" + `, ` + "`is_free`" + `.
+- ` + "`infracost inspect --addresses-only`" + ` — alias for ` + "`--fields=address`" + ` for the common "just give me the names" case.
+
+### Pre-computed totals on ` + "`scan`" + ` output
+The ` + "`scan`" + ` output includes a top-level ` + "`summary`" + ` block with pre-computed totals (total monthly cost, total potential savings, distinct failing resources counts, failing policy counts). Read that first before drilling in — most "how many X are failing" questions can be answered with one ` + "`infracost inspect --summary --fields <name>`" + ` call.
+
+Available summary fields (use with ` + "`--summary --fields <name>`" + `): ` + "`projects`" + `, ` + "`resources`" + `, ` + "`costed_resources`" + `, ` + "`free_resources`" + `, ` + "`monthly_cost`" + `, ` + "`finops_policies`" + `, ` + "`failing_policies`" + ` (failing FinOps), ` + "`tagging_policies`" + `, ` + "`failing_tagging_policies`" + `, ` + "`guardrails`" + `, ` + "`triggered_guardrails`" + `, ` + "`budgets`" + `, ` + "`over_budget`" + `. Single field → bare value, no label.
+
+### Examples — what to use for common queries
+
+(Replace ` + "`<INFRACOST>`" + ` below with ` + bin + ` exactly — never type bare ` + "`infracost`" + `.)
 
 ` + "```" + `bash
-infracost scan --json /path/to/repo
-infracost inspect --summary --json
-infracost inspect --policy "Required Tags" --json
-infracost inspect --group-by policy --json
+# Setup: populate the cache.
+` + binPath + ` scan /path/to/repo
+
+# Counts and totals (single --summary call answers most "how many" questions):
+` + binPath + ` inspect --summary                                # full summary block
+` + binPath + ` inspect --summary --fields failing_policies      # just the count, bare value
+` + binPath + ` inspect --summary --fields failing_policies,failing_tagging_policies,resources
+` + binPath + ` inspect --total-savings                          # one number
+
+# "List the top N highest-savings opportunities" (no jq, no awk):
+` + binPath + ` inspect --top-savings 5 --fields address,monthly_savings
+
+# "Which resources fail the tagging policy?":
+` + binPath + ` inspect --missing-tag team                        # default: one address per line
+` + binPath + ` inspect --missing-tag team --fields address,type  # with type column
+
+# "All resources failing a specific policy" (preserves full list, no truncation):
+` + binPath + ` inspect --policy "Required Tags" --addresses-only
+
+# Composable filter (multiple predicates, AND'd):
+` + binPath + ` inspect --filter "tag.team=missing,provider=aws" --fields address,monthly_cost
 ` + "```" + `
 
-This overrides the default human-readable output described elsewhere in this skill. Do not omit ` + "`--json`" + `.
+### Anti-patterns
+
+Do not:
+- Write ` + "`jq`" + ` pipelines or ` + "`python3 -c`" + ` heredocs over the raw scan output for any of the patterns above. The dedicated flags exist for them.
+- Pipe through ` + "`cut -f`" + ` or ` + "`awk '{print $N}'`" + ` — use ` + "`--fields`" + ` to project columns directly.
+- Run ` + bin + ` ` + "`scan --json`" + ` and parse the result yourself for aggregates that ` + "`--summary`" + ` already computes.
+- Type bare ` + "`infracost`" + `; always invoke it as ` + bin + `.
 `
+}
 
 func resolveTargetDir(ctx context.Context, cfg runConfig, cacheRoot string) (string, string, error) {
 	if cfg.TargetDir != "" {
