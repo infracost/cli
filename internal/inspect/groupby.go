@@ -102,7 +102,7 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 			maxWidth := ui.TerminalContentWidth()
 			for i, g := range groups {
 				if i > 0 {
-					fmt.Fprintln(w)
+					_, _ = fmt.Fprintln(w)
 				}
 				writeConsolidatedPolicyBlock(w, g, maxWidth)
 			}
@@ -189,7 +189,7 @@ func writePolicyGroupRows(w io.Writer, rows []tableRow, dims []string) {
 	maxWidth := ui.TerminalContentWidth()
 	for i, r := range rows {
 		if i > 0 {
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 		}
 
 		header := kindIcon(r.Columns["kind"]) + "  " + ui.Bold(r.Columns[string(GroupByPolicy)])
@@ -225,7 +225,7 @@ func writePolicyGroupRows(w io.Writer, rows []tableRow, dims []string) {
 			}
 			wrapped := ui.WrapText(msg, budget)
 			for line := range strings.SplitSeq(wrapped, "\n") {
-				fmt.Fprintln(w, indent+ui.Muted(line))
+				_, _ = fmt.Fprintln(w, indent+ui.Muted(line))
 			}
 		}
 	}
@@ -304,20 +304,20 @@ func writeConsolidatedPolicyBlock(w io.Writer, g policyConsolidationGroup, maxWi
 	writeWrapped(w, "", header, maxWidth)
 
 	if g.message != "" {
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 		budget := 0
 		if maxWidth > 0 {
 			budget = maxWidth - 3
 		}
 		for line := range strings.SplitSeq(ui.WrapText(g.message, budget), "\n") {
-			fmt.Fprintln(w, "   "+ui.Muted(line))
+			_, _ = fmt.Fprintln(w, "   "+ui.Muted(line))
 		}
 	}
 
 	if count == 0 {
 		return
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 
 	show := min(count, consolidatedResourceCap)
 	for i := range show {
@@ -329,8 +329,8 @@ func writeConsolidatedPolicyBlock(w io.Writer, g policyConsolidationGroup, maxWi
 		writeWrapped(w, "   ", line, maxWidth)
 	}
 	if count > show {
-		fmt.Fprintf(w, "   %s\n", ui.Muted(fmt.Sprintf("…%d more", count-show)))
-		fmt.Fprintf(w, "   %s %s %s\n",
+		_, _ = fmt.Fprintf(w, "   %s\n", ui.Muted(fmt.Sprintf("…%d more", count-show)))
+		_, _ = fmt.Fprintf(w, "   %s %s %s\n",
 			ui.Muted("Run"),
 			ui.Code(fmt.Sprintf("`infracost inspect --policy %q`", g.policy)),
 			ui.Muted(fmt.Sprintf("to see all %d resources", count)),
@@ -366,11 +366,7 @@ func isMoneyCol(col string) bool {
 // truncation. Identifier-shaped columns (resource, file, type) keep the
 // default middle truncation so both ends survive a shrink.
 func isProseCol(col string) bool {
-	switch col {
-	case "message":
-		return true
-	}
-	return false
+	return col == "message"
 }
 
 // statusValue colorizes the status column for guardrail/budget rows so
@@ -784,13 +780,13 @@ func writeInvalidTagLine(w io.Writer, inv format.InvalidTagOutput, maxWidth int)
 // Box.split-on-newline drops the inline ANSI codes that only sit at the
 // start and end of the original string.
 func writePolicyHeading(w io.Writer, name, message string) {
-	fmt.Fprintln(w, ui.Bold("Policy: "+name))
+	_, _ = fmt.Fprintln(w, ui.Bold("Policy: "+name))
 	if message != "" {
 		for line := range strings.SplitSeq(ui.WrapText(message, ui.ContentWidth()), "\n") {
-			fmt.Fprintln(w, ui.Muted(line))
+			_, _ = fmt.Fprintln(w, ui.Muted(line))
 		}
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 }
 
 func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) error {
@@ -891,8 +887,8 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 // deliberately leaves NO trailing blank — callers add separators (snippet's
 // leading blank, issue loop's blank) so we don't double up.
 func writePolicyResourceHeader(w io.Writer, policy, resource string) {
-	fmt.Fprintln(w, ui.Bold("Policy: "+policy))
-	fmt.Fprintln(w, ui.Muted("Resource: "+resource))
+	_, _ = fmt.Fprintln(w, ui.Bold("Policy: "+policy))
+	_, _ = fmt.Fprintln(w, ui.Muted("Resource: "+resource))
 }
 
 func writeGuardrailDetail(w io.Writer, currency string, gr format.GuardrailOutput) error {

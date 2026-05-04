@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -142,7 +143,11 @@ func PrintableWidth(s string) int {
 // terminal or the size can't be read. Callers fall back to content width when
 // this is 0 so non-TTY output (tests, pipes) stays deterministic.
 func terminalWidth() int {
-	fd := int(os.Stdout.Fd())
+	rawFd := os.Stdout.Fd()
+	if rawFd > math.MaxInt {
+		return 0
+	}
+	fd := int(rawFd)
 	if !term.IsTerminal(fd) {
 		return 0
 	}

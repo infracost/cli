@@ -1,6 +1,7 @@
 package inspect
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 
@@ -44,9 +45,11 @@ func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
 		}
 	}
 
+	var buf bytes.Buffer
 	if len(policyRows) == 0 && len(triggered) == 0 && len(over) == 0 {
-		fmt.Fprintln(w, ui.Positive("✓ Nothing failing."))
-		return nil
+		fmt.Fprintln(&buf, ui.Positive("✓ Nothing failing."))
+		_, err := w.Write(buf.Bytes())
+		return err
 	}
 
 	// Section 1: failing policies — per-pairing blocks. Section header shows
@@ -55,65 +58,66 @@ func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
 		distinctPolicies, pluralize("policy", distinctPolicies),
 		len(policyRows), pluralize("resource", len(policyRows)),
 	)
-	writeSectionHeading(w, "Failing policies", policyCount)
+	writeSectionHeading(&buf, "Failing policies", policyCount)
 	if len(policyRows) == 0 {
-		fmt.Fprintln(w, ui.Positive("✓ No failing policies."))
+		fmt.Fprintln(&buf, ui.Positive("✓ No failing policies."))
 	} else {
-		writePolicyGroupRows(w, policyRows, []string{string(GroupByPolicy)})
+		writePolicyGroupRows(&buf, policyRows, []string{string(GroupByPolicy)})
 	}
 
 	// Section 2: triggered guardrails
-	fmt.Fprintln(w)
-	fmt.Fprintln(w)
-	writeSectionHeading(w, "Triggered guardrails", fmt.Sprintf("(%d)", len(triggered)))
+	fmt.Fprintln(&buf)
+	fmt.Fprintln(&buf)
+	writeSectionHeading(&buf, "Triggered guardrails", fmt.Sprintf("(%d)", len(triggered)))
 	if len(triggered) == 0 {
-		fmt.Fprintln(w, ui.Positive("✓ None triggered."))
+		fmt.Fprintln(&buf, ui.Positive("✓ None triggered."))
 	} else {
 		for i, gr := range triggered {
 			if i > 0 {
-				fmt.Fprintln(w)
+				fmt.Fprintln(&buf)
 			}
-			fmt.Fprintf(w, "%s  %s\n", stopEmoji, ui.Bold(gr.GuardrailName))
+			fmt.Fprintf(&buf, "%s  %s\n", stopEmoji, ui.Bold(gr.GuardrailName))
 			if gr.TotalMonthlyCost != nil {
-				fmt.Fprintf(w, "   %s\n", ui.Muted(humanMoney(gr.TotalMonthlyCost, data.Currency)+"/mo"))
+				fmt.Fprintf(&buf, "   %s\n", ui.Muted(humanMoney(gr.TotalMonthlyCost, data.Currency)+"/mo"))
 			}
 		}
 	}
 
 	// Section 3: over budget
-	fmt.Fprintln(w)
-	fmt.Fprintln(w)
-	writeSectionHeading(w, "Over budget", fmt.Sprintf("(%d)", len(over)))
+	fmt.Fprintln(&buf)
+	fmt.Fprintln(&buf)
+	writeSectionHeading(&buf, "Over budget", fmt.Sprintf("(%d)", len(over)))
 	if len(over) == 0 {
-		fmt.Fprintln(w, ui.Positive("✓ Nothing over budget."))
+		fmt.Fprintln(&buf, ui.Positive("✓ Nothing over budget."))
 	} else {
 		for i, br := range over {
 			if i > 0 {
-				fmt.Fprintln(w)
+				fmt.Fprintln(&buf)
 			}
-			fmt.Fprintf(w, "%s  %s\n", moneyEmoji, ui.Bold(br.BudgetName))
+			fmt.Fprintf(&buf, "%s  %s\n", moneyEmoji, ui.Bold(br.BudgetName))
 			overBy := br.CurrentCost.Sub(br.Amount)
-			fmt.Fprintf(w, "   %s\n", ui.Muted(fmt.Sprintf(
+			fmt.Fprintf(&buf, "   %s\n", ui.Muted(fmt.Sprintf(
 				"Over by %s (%s actual / %s limit)",
 				humanMoney(overBy, data.Currency),
 				humanMoney(br.CurrentCost, data.Currency),
 				humanMoney(br.Amount, data.Currency),
 			)))
 			if len(br.Tags) > 0 {
-				fmt.Fprintf(w, "   %s %s\n", ui.Accent("Scope:"), formatBudgetTagScope(br.Tags))
+				fmt.Fprintf(&buf, "   %s %s\n", ui.Accent("Scope:"), formatBudgetTagScope(br.Tags))
 			}
 			if br.CustomOverrunMessage != "" {
-				fmt.Fprintf(w, "   %s\n", ui.Muted(br.CustomOverrunMessage))
+				fmt.Fprintf(&buf, "   %s\n", ui.Muted(br.CustomOverrunMessage))
 			}
 		}
 	}
 
-	return nil
+	_, err := w.Write(buf.Bytes())
+	return err
 }
 
 func writeSectionHeading(w io.Writer, label, count string) {
-	fmt.Fprintf(w, "%s  %s\n", ui.Bold(label), ui.Muted(count))
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintf(w, "%s  %s\n", ui.Bold(label), ui.Muted(count))
+	_, _ = fmt.Fprintln(w)
 }
 
 // countDistinctPolicies counts unique policies across rows. Used for the
