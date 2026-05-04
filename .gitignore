@@ -36,6 +36,12 @@ bin/
 /llmbench
 /update-manifest
 
+# llmbench caches cloned repos and captured infracost JSON outputs here so
+# repeated invocations don't re-clone or re-scan. Results subdir is also
+# transient (timestamped reports + raw JSONL).
+tools/llmbench/.cache/
+tools/llmbench/results/
+
 # Editor/IDE
 .idea/
 .vscode/

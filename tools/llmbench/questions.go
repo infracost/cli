@@ -1,14 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/infracost/cli/internal/format"
-	"github.com/infracost/cli/internal/format/fixturegen"
 	"github.com/infracost/go-proto/pkg/rat"
 )
 
@@ -36,24 +35,19 @@ const (
 
 // Questions returns the canonical question set. Each fixture size shares the
 // same set; verification computes ground truth from the fixture at run time.
+//
+// The set is weighted toward detection (find the failures) and remediation
+// (propose fixes) — the two task shapes where the agent skill matters most
+// to real users. Trivia like "how many projects" was dropped intentionally.
 func Questions() []Question {
 	return []Question{
+		// --- aggregation / lookup baseline ---
 		{
 			ID:       "q1-total-cost",
 			Category: "aggregation",
 			Prompt:   "What is the total monthly cost across all projects? Reply with just the dollar amount, no explanation.",
 			Verify: func(ans string, f *format.Output) Verdict {
-				want := totalMonthlyCost(f)
-				return verdictNumeric(ans, want, 0.05) // 5¢ tolerance
-			},
-		},
-		{
-			ID:       "q2-resource-count",
-			Category: "aggregation",
-			Prompt:   "How many resources are there in total across all projects? Reply with just the integer.",
-			Verify: func(ans string, f *format.Output) Verdict {
-				want := totalResources(f)
-				return verdictInt(ans, want)
+				return verdictNumeric(ans, totalMonthlyCost(f), 500)
 			},
 		},
 		{
@@ -61,16 +55,7 @@ func Questions() []Question {
 			Category: "filtering",
 			Prompt:   "Which single resource has the highest total monthly cost? Reply with just its address (the value of the `name` field), no other text.",
 			Verify: func(ans string, f *format.Output) Verdict {
-				want := mostExpensiveResource(f)
-				return verdictStringContains(ans, want)
-			},
-		},
-		{
-			ID:       "q4-project-count",
-			Category: "structure",
-			Prompt:   "How many projects are in this scan? Reply with just the integer.",
-			Verify: func(ans string, f *format.Output) Verdict {
-				return verdictInt(ans, len(f.Projects))
+				return verdictStringContains(ans, mostExpensiveResource(f))
 			},
 		},
 		{
@@ -79,45 +64,6 @@ func Questions() []Question {
 			Prompt:   "How many distinct FinOps policies have at least one failing resource (counted across all projects, deduplicated by policy name)? Reply with just the integer.",
 			Verify: func(ans string, f *format.Output) Verdict {
 				return verdictInt(ans, distinctFailingFinopsPolicies(f))
-			},
-		},
-		{
-			ID:       "q6-triggered-guardrails",
-			Category: "retrieval",
-			Prompt:   "How many guardrails are currently triggered? Reply with just the integer.",
-			Verify: func(ans string, f *format.Output) Verdict {
-				n := 0
-				for _, g := range f.GuardrailResults {
-					if g.Triggered {
-						n++
-					}
-				}
-				return verdictInt(ans, n)
-			},
-		},
-		{
-			ID:       "q7-resources-missing-team-tag",
-			Category: "filtering",
-			Prompt:   "How many resources are missing the `team` tag? Reply with just the integer.",
-			Verify: func(ans string, f *format.Output) Verdict {
-				n := 0
-				for _, p := range f.Projects {
-					for _, r := range p.Resources {
-						if _, ok := r.Tags["team"]; !ok {
-							n++
-						}
-					}
-				}
-				return verdictInt(ans, n)
-			},
-		},
-		{
-			ID:       "q8-most-common-resource-type",
-			Category: "aggregation",
-			Prompt:   "Which resource type appears most frequently across all projects? Reply with just the type name.",
-			Verify: func(ans string, f *format.Output) Verdict {
-				want := mostCommonResourceType(f)
-				return verdictStringContains(ans, want)
 			},
 		},
 		{
@@ -139,12 +85,97 @@ func Questions() []Question {
 			Category: "aggregation",
 			Prompt:   "Across all FinOps issues, which resource has the largest total `monthly_savings` value? Reply with just the resource address (the `address` field on the issue).",
 			Verify: func(ans string, f *format.Output) Verdict {
-				want := largestSavingsResource(f)
-				return verdictStringContains(ans, want)
+				return verdictStringContains(ans, largestSavingsResource(f))
 			},
+		},
+		// --- detection: find the issues ---
+		{
+			ID:       "d1-resources-failing-tagging",
+			Category: "detection",
+			Prompt:   "How many distinct resources fail at least one tagging policy (deduplicated by resource address across all tagging policies and projects)? Reply with just the integer.",
+			Verify: func(ans string, f *format.Output) Verdict {
+				return verdictInt(ans, distinctFailingTaggingResources(f))
+			},
+		},
+		{
+			ID:       "d2-resources-failing-finops",
+			Category: "detection",
+			Prompt:   "How many distinct resources fail at least one FinOps policy (deduplicated by resource address across all FinOps policies and projects)? Reply with just the integer.",
+			Verify: func(ans string, f *format.Output) Verdict {
+				return verdictInt(ans, distinctFailingFinopsResources(f))
+			},
+		},
+		{
+			ID:       "d3-tag-key-missing-most",
+			Category: "detection",
+			Prompt:   "Across all failing tagging-policy results, which mandatory tag key is missing from the most resources? Reply with just the tag key.",
+			Verify: func(ans string, f *format.Output) Verdict {
+				return verdictStringContains(ans, mostMissingMandatoryTag(f))
+			},
+		},
+		{
+			ID:       "d4-list-resources-failing-tagging",
+			Category: "detection",
+			Prompt:   "List every resource address that fails any tagging policy. Reply with one address per line, nothing else.",
+			Verify: func(ans string, f *format.Output) Verdict {
+				return verdictListMatch(ans, allFailingTaggingAddresses(f))
+			},
+		},
+		{
+			ID:       "q7-resources-failing-team-tag",
+			Category: "detection",
+			Prompt:   "According to the tagging policy, how many resources fail the `team` tag requirement — either missing the `team` tag entirely, or having a value outside the allowed list (frontend, platform, prodsec, networkops, dataops)? Reply with just the integer.",
+			Verify: func(ans string, f *format.Output) Verdict {
+				return verdictInt(ans, resourcesFailingTeamTag(f))
+			},
+		},
+		{
+			ID:       "d5-finops-total-savings",
+			Category: "detection",
+			Prompt:   "What is the total potential monthly savings if every FinOps issue were resolved (sum of `monthly_savings` across all issues)? Reply with just the dollar amount.",
+			Verify: func(ans string, f *format.Output) Verdict {
+				return verdictNumeric(ans, totalFinopsSavings(f), 500)
+			},
+		},
+		// --- fix tasks: scored on token usage only, not quality ---
+		{
+			ID:       "f1-fix-all-tagging",
+			Category: "fix",
+			Prompt:   "Propose Terraform source-code changes that would make every failing tagging policy pass. Reply with a unified diff (`diff --git ...` blocks).",
+			Verify:   verifyTokenOnly,
+		},
+		{
+			ID:       "f2-fix-top-finops",
+			Category: "fix",
+			Prompt:   "Propose Terraform source-code changes for the top 3 highest-savings FinOps issues. Reply with a unified diff (`diff --git ...` blocks).",
+			Verify:   verifyTokenOnly,
+		},
+		{
+			ID:       "f3-add-missing-tags",
+			Category: "fix",
+			Prompt:   "For each resource that is missing required tags, write the tag block to add. Group output by resource address.",
+			Verify:   verifyTokenOnly,
+		},
+		{
+			ID:       "q11-propose-cost-fixes",
+			Category: "fix",
+			Prompt:   "Propose the top 3 cost-saving changes for this infrastructure as a unified diff (`diff --git ...` blocks). Focus on the highest-impact wins only.",
+			Verify:   verifyTokenOnly,
+		},
+		{
+			ID:       "q12-propose-tag-fixes",
+			Category: "fix",
+			Prompt:   "Propose changes to make every resource compliant with the project's tagging policy. Reply with a unified diff (`diff --git ...` blocks).",
+			Verify:   verifyTokenOnly,
 		},
 	}
 }
+
+// verifyTokenOnly is the no-op verifier for fix-task questions. We measure
+// how many tokens the model spends attempting a fix, not whether the fix is
+// correct. Returning Ambiguous keeps the row in the report without skewing
+// accuracy aggregates.
+func verifyTokenOnly(_ string, _ *format.Output) Verdict { return Ambiguous }
 
 // FilterQuestions returns the subset whose ID contains substring (or all if
 // substring is empty).
@@ -186,14 +217,6 @@ func resourceTotal(r *format.ResourceOutput) *rat.Rat {
 	return total
 }
 
-func totalResources(f *format.Output) int {
-	n := 0
-	for _, p := range f.Projects {
-		n += len(p.Resources)
-	}
-	return n
-}
-
 func mostExpensiveResource(f *format.Output) string {
 	var bestAddr string
 	bestCost := math.Inf(-1)
@@ -221,31 +244,131 @@ func distinctFailingFinopsPolicies(f *format.Output) int {
 	return len(seen)
 }
 
-func mostCommonResourceType(f *format.Output) string {
-	counts := map[string]int{}
+// teamTagAllowedValues mirrors the tagging policy supplied via
+// --policy-context-file. Hardcoded here so the q7 verifier can score
+// against the *real* policy rather than just "tag absent". If the policy
+// changes upstream, update this list to match (or extract to config).
+var teamTagAllowedValues = map[string]bool{
+	"frontend":   true,
+	"platform":   true,
+	"prodsec":    true,
+	"networkops": true,
+	"dataops":    true,
+}
+
+// resourcesFailingTeamTag counts resources that either lack a `team` tag
+// entirely or carry a value outside the allowed-values list.
+func resourcesFailingTeamTag(f *format.Output) int {
+	n := 0
 	for _, p := range f.Projects {
 		for _, r := range p.Resources {
-			counts[r.Type]++
+			v, ok := r.Tags["team"]
+			if !ok || !teamTagAllowedValues[v] {
+				n++
+			}
 		}
 	}
-	type tc struct {
-		t string
+	return n
+}
+
+// distinctFailingTaggingResources counts resource addresses appearing in at
+// least one tagging policy's FailingResources, across all projects, with
+// resource addresses deduplicated.
+func distinctFailingTaggingResources(f *format.Output) int {
+	seen := map[string]struct{}{}
+	for _, p := range f.Projects {
+		for _, t := range p.TaggingResults {
+			for _, fr := range t.FailingResources {
+				seen[fr.Address] = struct{}{}
+			}
+		}
+	}
+	return len(seen)
+}
+
+// distinctFailingFinopsResources is the FinOps-side equivalent of the
+// tagging counter — distinct resource names failing any FinOps policy.
+func distinctFailingFinopsResources(f *format.Output) int {
+	seen := map[string]struct{}{}
+	for _, p := range f.Projects {
+		for _, fp := range p.FinopsResults {
+			for _, fr := range fp.FailingResources {
+				seen[fr.Name] = struct{}{}
+			}
+		}
+	}
+	return len(seen)
+}
+
+// mostMissingMandatoryTag returns the tag key that appears most frequently
+// in any FailingTaggingResourceOutput.MissingMandatoryTags. Ties broken
+// alphabetically for determinism.
+func mostMissingMandatoryTag(f *format.Output) string {
+	counts := map[string]int{}
+	for _, p := range f.Projects {
+		for _, t := range p.TaggingResults {
+			for _, fr := range t.FailingResources {
+				for _, key := range fr.MissingMandatoryTags {
+					counts[key]++
+				}
+			}
+		}
+	}
+	type kv struct {
+		k string
 		n int
 	}
-	rows := make([]tc, 0, len(counts))
-	for t, n := range counts {
-		rows = append(rows, tc{t, n})
+	rows := make([]kv, 0, len(counts))
+	for k, n := range counts {
+		rows = append(rows, kv{k, n})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].n != rows[j].n {
 			return rows[i].n > rows[j].n
 		}
-		return rows[i].t < rows[j].t
+		return rows[i].k < rows[j].k
 	})
 	if len(rows) == 0 {
 		return ""
 	}
-	return rows[0].t
+	return rows[0].k
+}
+
+// allFailingTaggingAddresses returns the deduplicated set of resource
+// addresses failing any tagging policy. Used by verdictListMatch.
+func allFailingTaggingAddresses(f *format.Output) []string {
+	seen := map[string]struct{}{}
+	for _, p := range f.Projects {
+		for _, t := range p.TaggingResults {
+			for _, fr := range t.FailingResources {
+				seen[fr.Address] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// totalFinopsSavings sums MonthlySavings across every FinOps issue.
+func totalFinopsSavings(f *format.Output) float64 {
+	total := rat.Zero
+	for _, p := range f.Projects {
+		for _, fp := range p.FinopsResults {
+			for _, fr := range fp.FailingResources {
+				for _, iss := range fr.Issues {
+					if iss.MonthlySavings == nil {
+						continue
+					}
+					total = total.Add(iss.MonthlySavings)
+				}
+			}
+		}
+	}
+	return total.Float64()
 }
 
 func largestSavingsResource(f *format.Output) string {
@@ -312,6 +435,33 @@ func verdictStringContains(ans, want string) Verdict {
 	return Incorrect
 }
 
+// addressLikeRe roughly matches Terraform resource addresses (`type.name`,
+// `module.foo.type.name`). Permissive enough to catch backticked or quoted
+// variants in free-form replies.
+var addressLikeRe = regexp.MustCompile(`[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+`)
+
+// verdictListMatch checks that every expected address appears somewhere in
+// the answer. Order is irrelevant; surrounding prose is tolerated. Extra
+// addresses in the answer (false positives) are tolerated too — we'd
+// rather count partial credit toward the model than fail the verifier on
+// formatting noise. If you want a strict superset check, switch to set
+// equality once we have a better grasp of how chatty replies actually are.
+func verdictListMatch(ans string, want []string) Verdict {
+	if len(want) == 0 {
+		return Ambiguous
+	}
+	got := map[string]struct{}{}
+	for _, m := range addressLikeRe.FindAllString(ans, -1) {
+		got[m] = struct{}{}
+	}
+	for _, w := range want {
+		if _, ok := got[w]; !ok {
+			return Incorrect
+		}
+	}
+	return Correct
+}
+
 func extractInt(s string) (int, bool) {
 	// Strip non-digit/sign characters from each token until we find one that
 	// parses cleanly. Catches "12 resources", "There are 12.", "12,345", etc.
@@ -336,25 +486,3 @@ func extractFloat(s string) (float64, bool) {
 	return 0, false
 }
 
-// SizeFixture returns the format.Output for a given size, computed once and
-// cached so verifiers can reuse the same instance.
-type SizeFixture = struct {
-	Size    fixturegen.Size
-	Fixture *format.Output
-}
-
-func BuildFixtures(sizes []fixturegen.Size) []SizeFixture {
-	out := make([]SizeFixture, 0, len(sizes))
-	for _, s := range sizes {
-		out = append(out, SizeFixture{
-			Size:    s,
-			Fixture: fixturegen.Build(fixturegen.SpecFor(s)),
-		})
-	}
-	return out
-}
-
-// QuestionLabel returns "size/id" for use in result keys.
-func QuestionLabel(size fixturegen.Size, id string) string {
-	return fmt.Sprintf("%s/%s", size, id)
-}
