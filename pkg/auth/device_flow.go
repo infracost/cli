@@ -51,5 +51,5 @@ func (c *Config) PollDeviceFlow(ctx context.Context, resp *oauth2.DeviceAuthResp
 		return nil, fmt.Errorf("saving token: %w", err)
 	}
 
-	return c.OAuth2Config().TokenSource(ctx, token), nil
+	return c.wrapWithCache(c.OAuth2Config().TokenSource(ctx, token), token), nil
 }
