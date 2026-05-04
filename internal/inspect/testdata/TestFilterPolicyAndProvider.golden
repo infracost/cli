@@ -1,0 +1,4 @@
+aws_ebs_volume.data
+aws_instance.web
+aws_lambda_function.handler
+aws_s3_bucket.logs
