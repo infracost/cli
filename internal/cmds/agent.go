@@ -199,7 +199,8 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Install Infracost skills for your AI coding agent",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return RunAgentSetup(cfg, scope, false)
+			_, err := RunAgentSetup(cfg, scope, false)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope: user (global), project, or local")
@@ -208,21 +209,26 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 
 // RunAgentSetup is the core logic for `infracost agent setup`, callable from
 // the unified `infracost setup` flow (DEV-230). When skippable is true, a
-// "Skip" option is appended to the selection list.
-func RunAgentSetup(cfg *config.Config, scope string, skippable bool) error {
+// "Skip" option is appended to the selection list. Returns the selected
+// agent's display name (empty if the user skipped or aborted) so the
+// unified flow can tailor its closing CTA.
+func RunAgentSetup(cfg *config.Config, scope string, skippable bool) (string, error) {
 	if _, ok := validAgentScopes[scope]; !ok {
-		return fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
+		return "", fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
 	}
 
 	selected, err := selectAgent("Which AI coding agent do you use?", skippable)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if selected == nil {
-		return nil
+		return "", nil
 	}
 
-	return setupAgent(cfg, *selected, scope)
+	if err := setupAgent(cfg, *selected, scope); err != nil {
+		return "", err
+	}
+	return selected.name, nil
 }
 
 func agentRemove(cfg *config.Config) *cobra.Command {
