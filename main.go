@@ -30,6 +30,35 @@ var runTrackedCommands = map[string]bool{
 	"inspect": true,
 }
 
+// telemetryFlagAllowlist names the flags whose VALUES (not just whether
+// they were set) we record on infracost-command / infracost-run events.
+// Includes the discriminating flags users explicitly pick (policy,
+// budget, etc.) plus the new query flags so we can see which filter
+// shapes are popular in practice. Path-shaped flags (--file) and
+// resource-address-shaped flags (--resource) are deliberately omitted —
+// they may carry customer-identifying paths or names.
+var telemetryFlagAllowlist = map[string]bool{
+	"filter":         true,
+	"policy":         true,
+	"budget":         true,
+	"guardrail":      true,
+	"top":            true,
+	"top-savings":    true,
+	"provider":       true,
+	"project":        true,
+	"group-by":       true,
+	"missing-tag":    true,
+	"invalid-tag":    true,
+	"min-cost":       true,
+	"max-cost":       true,
+	"summary":        true,
+	"failing":        true,
+	"costs-only":     true,
+	"total-savings":  true,
+	"addresses-only": true,
+	"fields":         true,
+}
+
 func main() {
 	os.Exit(run())
 }
@@ -70,6 +99,28 @@ func run() (exitCode int) {
 					flags = append(flags, flag.Name)
 				})
 				return flags
+			}())
+			// Capture values for high-signal, low-PII flags so we can
+			// answer "what filters / drill-downs do users actually run?"
+			// from telemetry. Path-shaped flags (--file, --resource) and
+			// values that may identify customer infrastructure are
+			// deliberately omitted. Slice-shaped flags (--fields,
+			// --group-by) are captured as actual lists rather than the
+			// "[a,b,c]" Stringer output, so analytics queries can index
+			// element-wise without parsing the bracketed form.
+			events.RegisterMetadata("flagValues", func() map[string]any {
+				out := map[string]any{}
+				cmd.Flags().Visit(func(flag *pflag.Flag) {
+					if !telemetryFlagAllowlist[flag.Name] {
+						return
+					}
+					if sv, ok := flag.Value.(pflag.SliceValue); ok {
+						out[flag.Name] = sv.GetSlice()
+						return
+					}
+					out[flag.Name] = flag.Value.String()
+				})
+				return out
 			}())
 
 			process.Process(cfg) // set defaults and validate values etc

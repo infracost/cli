@@ -105,6 +105,11 @@ func testData() *format.Output {
 					{
 						PolicyName: "Required Tags",
 						Message:    "All resources must have required tags",
+						TagSchema: []format.TagSchemaEntry{
+							{Key: "environment", Mandatory: true},
+							{Key: "team", Mandatory: true},
+							{Key: "owner", ValidRegex: "^team-.*"},
+						},
 						FailingResources: []format.FailingTaggingResourceOutput{
 							{
 								Address:              "aws_instance.web",
@@ -114,9 +119,8 @@ func testData() *format.Output {
 								MissingMandatoryTags: []string{"environment", "team"},
 								InvalidTags: []format.InvalidTagOutput{
 									{
-										Key:        "owner",
-										Value:      "foo",
-										ValidRegex: "^team-.*",
+										Key:   "owner",
+										Value: "foo",
 									},
 								},
 							},
@@ -176,7 +180,7 @@ func TestSummary(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
 
-	err := WriteSummary(&buf, data, false)
+	err := WriteSummary(&buf, data, Options{})
 	require.NoError(t, err)
 
 	assertGolden(t, buf.String())
@@ -186,7 +190,7 @@ func TestSummaryJSON(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
 
-	err := WriteSummary(&buf, data, true)
+	err := WriteSummary(&buf, data, Options{JSON: true})
 	require.NoError(t, err)
 
 	assertGolden(t, buf.String())
@@ -545,5 +549,152 @@ func TestRunFailingPanorama(t *testing.T) {
 	err := Run(&buf, data, Options{Failing: true})
 	require.NoError(t, err)
 
+	assertGolden(t, buf.String())
+}
+
+// --- new flag tests (added with the inspect-flag PR) ---
+
+func TestTotalSavings(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TotalSavings: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTotalSavingsJSON(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TotalSavings: true, JSON: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTopSavings(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TopSavings: 5})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTopSavingsAddressesOnly(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TopSavings: 5, AddressesOnly: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTopSavingsFieldsProjection(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TopSavings: 5, Fields: []string{"address", "monthly_savings"}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTopSavingsUnknownFieldErrors(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TopSavings: 5, Fields: []string{"wrongname"}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown field "wrongname"`)
+}
+
+func TestMissingTag(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{MissingTag: "team"})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestMissingTagWithFields(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{MissingTag: "team", Fields: []string{"address", "type"}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestMinCost(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{MinCost: 15})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestFilterPolicyAndProvider(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Filter: "provider=aws,tag.team=missing", AddressesOnly: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestSummaryFieldsScalar(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{"failing_policies"}})
+	require.NoError(t, err)
+	// Single scalar projection: bare value, no label, no chrome.
+	assertGolden(t, buf.String())
+}
+
+func TestSummaryFieldsMulti(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{"failing_policies", "failing_tagging_policies", "resources"}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestSummaryFieldsDistinctFailingResources(t *testing.T) {
+	// New summary fields exposing distinct address counts for FinOps and
+	// tagging failures. These let consumers answer "how many resources fail
+	// any tagging policy?" with one --summary --fields call instead of
+	// post-processing the per-policy lists.
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{
+		"distinct_failing_finops_resources",
+		"distinct_failing_tagging_resources",
+	}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestSummaryFieldsUnknownErrors(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{"wrongname"}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown field "wrongname"`)
+}
+
+func TestGroupByPolicyFieldsDedup(t *testing.T) {
+	// `--group-by policy --fields policy` must yield ONE row per distinct
+	// failing policy, not one row per (policy × failing-resource) pairing
+	// — that's the property that lets users skip `| sort -u`.
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{
+		Failing: true,
+		GroupBy: []string{"policy"},
+		Fields:  []string{"policy"},
+	})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestPolicyDetailAddressesOnly(t *testing.T) {
+	// --policy <name> --addresses-only short-circuits to a flat newline-
+	// separated list of failing addresses.
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Policy: "Use GP3", AddressesOnly: true})
+	require.NoError(t, err)
 	assertGolden(t, buf.String())
 }

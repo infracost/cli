@@ -3,7 +3,6 @@ package inspect
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +22,113 @@ type tableRow struct {
 	Columns map[string]string `json:"columns"`
 	Cost    *rat.Rat          `json:"cost,omitempty"`
 	Count   int               `json:"count,omitempty"`
+}
+
+// writeGroupByProjection renders a flat tabular view of group-by rows
+// projected to exactly the user-requested fields. Used when --fields (or
+// --addresses-only) is set so the model gets a grep/awk-friendly shape
+// instead of the consolidated bullet-list rendering. Dedupes rows by
+// the projected key set, which means `--group-by policy --fields policy`
+// yields one row per distinct policy without `| sort -u`.
+func writeGroupByProjection(w io.Writer, rows []tableRow, opts Options) error {
+	available := groupByAvailableFields(rows)
+	fields, err := effectiveFields(opts, available)
+	if err != nil {
+		return err
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	var projected [][]string
+	for _, r := range rows {
+		key := strings.Builder{}
+		row := make([]string, 0, len(fields))
+		for _, f := range fields {
+			v := groupByCellValue(r, f)
+			row = append(row, v)
+			key.WriteString(v)
+			key.WriteString("\x00") // null separator avoids collisions
+		}
+		if _, dup := seen[key.String()]; dup {
+			continue
+		}
+		seen[key.String()] = struct{}{}
+		projected = append(projected, row)
+	}
+
+	if opts.Structured() {
+		out := make([]orderedFields, 0, len(projected))
+		for _, row := range projected {
+			obj := make(orderedFields, 0, len(fields))
+			for i, f := range fields {
+				obj = append(obj, orderedField{Key: f, Value: row[i]})
+			}
+			out = append(out, obj)
+		}
+		return writeStructured(w, out, opts)
+	}
+
+	if len(fields) == 1 {
+		for _, row := range projected {
+			if _, err := fmt.Fprintln(w, row[0]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, tsvHeader(fields)); err != nil {
+		return err
+	}
+	for _, row := range projected {
+		if _, err := fmt.Fprintln(w, strings.Join(row, "\t")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// groupByAvailableFields returns the union of all column keys appearing
+// across rows, plus the synthetic count / monthly_cost fields tableRow
+// carries outside Columns. Order is stable: rows[0]'s columns first,
+// then any extras seen later, then the synthetics.
+func groupByAvailableFields(rows []tableRow) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, r := range rows {
+		for k := range r.Columns {
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	for _, extra := range []string{"count", "monthly_cost"} {
+		if _, ok := seen[extra]; ok {
+			continue
+		}
+		out = append(out, extra)
+	}
+	return out
+}
+
+func groupByCellValue(r tableRow, field string) string {
+	if v, ok := r.Columns[field]; ok {
+		return v
+	}
+	switch field {
+	case "count":
+		return fmt.Sprintf("%d", r.Count)
+	case "monthly_cost":
+		if r.Cost == nil {
+			return ""
+		}
+		return r.Cost.String()
+	}
+	return ""
 }
 
 var detailColumns = []string{"kind", string(GroupByResource), string(GroupByFile), "message"}
@@ -78,13 +184,17 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 		rows = rows[:opts.Top]
 	}
 
-	if opts.JSON {
-		b, err := json.MarshalIndent(rows, "", "  ")
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(w, string(b))
-		return err
+	// --fields short-circuits the rich consolidated/table renderings
+	// because the user's asking for a flat tabular projection (typically
+	// driven by an LLM that wants exact columns to grep). Dedupe rows by
+	// the projected key set so e.g. `--group-by policy --fields policy`
+	// yields one row per policy without needing `| sort -u`.
+	if len(opts.Fields) > 0 || opts.AddressesOnly {
+		return writeGroupByProjection(w, rows, opts)
+	}
+
+	if opts.Structured() {
+		return writeStructured(w, rows, opts)
 	}
 
 	// Group-by policy renders structured blocks instead of a table — the
@@ -386,8 +496,8 @@ func statusValue(s string) string {
 func WriteGuardrailDetail(w io.Writer, data *format.Output, opts Options) error {
 	for _, gr := range data.GuardrailResults {
 		if matchesPolicy(gr.GuardrailName, gr.GuardrailID, opts.Guardrail) {
-			if opts.JSON {
-				return writeJSON(w, gr)
+			if opts.Structured() {
+				return writeStructured(w, gr, opts)
 			}
 			return writeGuardrailDetail(w, data.Currency, gr)
 		}
@@ -398,8 +508,8 @@ func WriteGuardrailDetail(w io.Writer, data *format.Output, opts Options) error 
 func WriteBudgetDetail(w io.Writer, data *format.Output, opts Options) error {
 	for _, br := range data.BudgetResults {
 		if matchesPolicy(br.BudgetName, br.BudgetID, opts.Budget) {
-			if opts.JSON {
-				return writeJSON(w, buildBudgetDetailJSON(data, br))
+			if opts.Structured() {
+				return writeStructured(w, buildBudgetDetailJSON(data, br), opts)
 			}
 			return writeBudgetDetail(w, data, br)
 		}
@@ -408,13 +518,62 @@ func WriteBudgetDetail(w io.Writer, data *format.Output, opts Options) error {
 }
 
 func WritePolicyDetail(w io.Writer, data *format.Output, opts Options) error {
-	if opts.JSON {
+	if opts.Structured() {
+		if opts.AddressesOnly {
+			addrs := addressesFailingPolicy(data, opts.Policy)
+			payload := struct {
+				Addresses []string `json:"addresses"`
+				Count     int      `json:"count"`
+			}{Addresses: addrs, Count: len(addrs)}
+			return writeStructured(w, payload, opts)
+		}
 		return writePolicyDetailJSON(w, data, opts)
+	}
+	if opts.AddressesOnly {
+		return writeAddressesOnly(w, addressesFailingPolicy(data, opts.Policy))
 	}
 	if opts.Resource != "" {
 		return writePolicyResourceDetail(w, data, opts)
 	}
 	return writePolicyOverview(w, data, opts)
+}
+
+// addressesFailingPolicy returns the deduplicated list of resource
+// addresses failing the named policy across all projects. Matches
+// FinOps + Tagging policies by name OR slug, mirroring matchesPolicy.
+func addressesFailingPolicy(data *format.Output, policyNeedle string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(addr string) {
+		if addr == "" {
+			return
+		}
+		if _, ok := seen[addr]; ok {
+			return
+		}
+		seen[addr] = struct{}{}
+		out = append(out, addr)
+	}
+	for _, p := range data.Projects {
+		for _, fp := range p.FinopsResults {
+			if !matchesPolicy(fp.PolicyName, fp.PolicySlug, policyNeedle) {
+				continue
+			}
+			for _, fr := range fp.FailingResources {
+				add(fr.Name)
+			}
+		}
+		for _, t := range p.TaggingResults {
+			if !matchesPolicy(t.PolicyName, "", policyNeedle) {
+				continue
+			}
+			for _, fr := range t.FailingResources {
+				add(fr.Address)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func collectResourceRows(data *format.Output) []tableRow {
@@ -670,10 +829,10 @@ func writePolicyOverview(w io.Writer, data *format.Output, opts Options) error {
 		invalidTags []format.InvalidTagOutput
 	}
 	var (
-		tagName, tagMessage    string
-		taggingResources       []taggingResource
-		tagMatched             bool
-		allTagFailingResources []format.FailingTaggingResourceOutput
+		tagName, tagMessage string
+		taggingResources    []taggingResource
+		tagMatched          bool
+		tagSchemas          []format.TagSchemaEntry
 	)
 	for _, p := range data.Projects {
 		for _, t := range p.TaggingResults {
@@ -683,6 +842,7 @@ func writePolicyOverview(w io.Writer, data *format.Output, opts Options) error {
 			tagMatched = true
 			tagName = t.PolicyName
 			tagMessage = t.Message
+			tagSchemas = append(tagSchemas, t.TagSchema...)
 
 			for _, tr := range t.FailingResources {
 				taggingResources = append(taggingResources, taggingResource{
@@ -693,10 +853,12 @@ func writePolicyOverview(w io.Writer, data *format.Output, opts Options) error {
 					invalidTags: tr.InvalidTags,
 				})
 			}
-			allTagFailingResources = append(allTagFailingResources, t.FailingResources...)
 		}
 	}
 	if tagMatched {
+		mergedSchema := mergeTagSchemas(tagSchemas)
+		schemaLookup := tagSchemaLookup(mergedSchema)
+
 		var inner bytes.Buffer
 		writePolicyHeading(&inner, tagName, tagMessage)
 		if len(taggingResources) == 0 {
@@ -713,17 +875,23 @@ func writePolicyOverview(w io.Writer, data *format.Output, opts Options) error {
 					writeWrapped(&inner, "   ", content, maxWidth)
 				}
 				for _, inv := range r.invalidTags {
-					writeInvalidTagLine(&inner, inv, maxWidth)
+					writeInvalidTagLine(&inner, inv, schemaLookup, maxWidth)
 				}
 			}
 		}
 
-		tagValues := collectTagValidValues(allTagFailingResources)
-		if len(tagValues) > 0 {
-			fmt.Fprintln(&inner)
+		if len(mergedSchema) > 0 {
+			printed := false
 			maxWidth := ui.ContentWidth()
-			for _, tv := range tagValues {
-				content := fmt.Sprintf("%s valid values: %s", ui.Accent("Tag "+tv.key), strings.Join(tv.values, ", "))
+			for _, s := range mergedSchema {
+				if len(s.ValidValues) == 0 {
+					continue
+				}
+				if !printed {
+					fmt.Fprintln(&inner)
+					printed = true
+				}
+				content := fmt.Sprintf("%s valid values: %s", ui.Accent("Tag "+s.Key), strings.Join(s.ValidValues, ", "))
 				writeWrapped(&inner, "", content, maxWidth)
 			}
 		}
@@ -751,18 +919,21 @@ func writeResourceHeader(w io.Writer, project, resource, file string, maxWidth i
 
 // writeInvalidTagLine renders one invalid-tag detail line with the offending
 // value and why it's invalid (regex mismatch, custom message, etc). Wraps
-// to maxWidth so long regex patterns don't overflow narrow terminals.
-func writeInvalidTagLine(w io.Writer, inv format.InvalidTagOutput, maxWidth int) {
+// to maxWidth so long regex patterns don't overflow narrow terminals. The
+// schema lookup carries the per-key validation metadata that lives on
+// TaggingOutput.TagSchema (no longer duplicated on each InvalidTag).
+func writeInvalidTagLine(w io.Writer, inv format.InvalidTagOutput, schema map[string]format.TagSchemaEntry, maxWidth int) {
 	content := fmt.Sprintf("%s %s = %q",
 		ui.Accent("Invalid"),
 		ui.Accent(inv.Key),
 		inv.Value,
 	)
+	s := schema[inv.Key]
 	switch {
-	case inv.ValidRegex != "":
-		content += " " + ui.Muted(fmt.Sprintf("— does not match regex %q", inv.ValidRegex))
-	case inv.Message != "":
-		content += " " + ui.Muted("— "+inv.Message)
+	case s.ValidRegex != "":
+		content += " " + ui.Muted(fmt.Sprintf("— does not match regex %q", s.ValidRegex))
+	case s.Message != "":
+		content += " " + ui.Muted("— "+s.Message)
 	}
 	writeWrapped(w, "   ", content, maxWidth)
 	if inv.Suggestion != "" {
@@ -854,20 +1025,22 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 				if len(tr.MissingMandatoryTags) > 0 {
 					fmt.Fprintf(&inner, "%s %s\n", ui.Accent("Missing mandatory tags:"), strings.Join(tr.MissingMandatoryTags, ", "))
 				}
+				schemaLookup := tagSchemaLookup(t.TagSchema)
 				for _, inv := range tr.InvalidTags {
+					s := schemaLookup[inv.Key]
 					msg := fmt.Sprintf("%s %q", ui.Accent("Invalid tag"), inv.Key)
 					if inv.Value != "" {
 						msg += fmt.Sprintf(": value %q", inv.Value)
 					}
-					if inv.ValidRegex != "" {
-						msg += fmt.Sprintf(" does not match regex %q", inv.ValidRegex)
+					if s.ValidRegex != "" {
+						msg += fmt.Sprintf(" does not match regex %q", s.ValidRegex)
 					}
-					if inv.Message != "" {
-						msg += " — " + inv.Message
+					if s.Message != "" {
+						msg += " — " + s.Message
 					}
 					fmt.Fprintln(&inner, msg)
-					if len(inv.ValidValues) > 0 {
-						fmt.Fprintf(&inner, "  Valid values: %s\n", strings.Join(inv.ValidValues, ", "))
+					if len(s.ValidValues) > 0 {
+						fmt.Fprintf(&inner, "  Valid values: %s\n", strings.Join(s.ValidValues, ", "))
 					}
 					if inv.Suggestion != "" {
 						fmt.Fprintf(&inner, "  Suggestion: %s\n", inv.Suggestion)
@@ -1186,38 +1359,71 @@ func resourceTypeFromAddress(addr string) string {
 	return addr
 }
 
-type tagValidValues struct {
-	key    string
-	values []string
+// mergeTagSchemas collapses TagSchema slices from multiple TaggingOutput
+// instances (the same policy can appear once per project) into a single
+// per-key list. Within a single TaggingOutput each key already appears once,
+// but across projects we may see the same key repeated; we union the valid
+// values and OR-merge the mandatory flag.
+func mergeTagSchemas(schemas []format.TagSchemaEntry) []format.TagSchemaEntry {
+	if len(schemas) == 0 {
+		return nil
+	}
+	type acc struct {
+		regex     string
+		message   string
+		mandatory bool
+		values    map[string]struct{}
+	}
+	byKey := map[string]*acc{}
+	var order []string
+	for _, s := range schemas {
+		a, ok := byKey[s.Key]
+		if !ok {
+			a = &acc{values: map[string]struct{}{}}
+			byKey[s.Key] = a
+			order = append(order, s.Key)
+		}
+		if a.regex == "" {
+			a.regex = s.ValidRegex
+		}
+		if a.message == "" {
+			a.message = s.Message
+		}
+		if s.Mandatory {
+			a.mandatory = true
+		}
+		for _, v := range s.ValidValues {
+			a.values[v] = struct{}{}
+		}
+	}
+	out := make([]format.TagSchemaEntry, 0, len(order))
+	for _, k := range order {
+		a := byKey[k]
+		entry := format.TagSchemaEntry{
+			Key:        k,
+			ValidRegex: a.regex,
+			Message:    a.message,
+			Mandatory:  a.mandatory,
+		}
+		if len(a.values) > 0 {
+			vals := make([]string, 0, len(a.values))
+			for v := range a.values {
+				vals = append(vals, v)
+			}
+			sort.Strings(vals)
+			entry.ValidValues = vals
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
-func collectTagValidValues(resources []format.FailingTaggingResourceOutput) []tagValidValues {
-	seen := map[string]map[string]bool{}
-	var order []string
-
-	for _, r := range resources {
-		for _, inv := range r.InvalidTags {
-			if len(inv.ValidValues) == 0 {
-				continue
-			}
-			if seen[inv.Key] == nil {
-				seen[inv.Key] = map[string]bool{}
-				order = append(order, inv.Key)
-			}
-			for _, v := range inv.ValidValues {
-				seen[inv.Key][v] = true
-			}
-		}
+// tagSchemaLookup builds a key→entry map for fast per-tag schema lookups
+// when rendering invalid-tag detail lines.
+func tagSchemaLookup(schemas []format.TagSchemaEntry) map[string]format.TagSchemaEntry {
+	out := make(map[string]format.TagSchemaEntry, len(schemas))
+	for _, s := range schemas {
+		out[s.Key] = s
 	}
-
-	result := make([]tagValidValues, 0, len(order))
-	for _, key := range order {
-		vals := make([]string, 0, len(seen[key]))
-		for v := range seen[key] {
-			vals = append(vals, v)
-		}
-		sort.Strings(vals)
-		result = append(result, tagValidValues{key: key, values: vals})
-	}
-	return result
+	return out
 }

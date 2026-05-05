@@ -95,10 +95,21 @@ func Price(cfg *config.Config) *cobra.Command {
 			}
 
 			outputFormat := "text"
-			if cfg.JSON.Value {
+			switch {
+			case cfg.LLM.Value:
+				outputFormat = "llm"
+			case cfg.JSON.Value:
 				outputFormat = "json"
 			}
 			output.TrackRun(cmd.Context(), eventsClient, runSeconds, outputFormat, nil)
+
+			if cfg.LLM.Value {
+				if err := output.ToTOON(os.Stdout); err != nil {
+					return fmt.Errorf("failed to write LLM output: %w", err)
+				}
+				fmt.Println()
+				return nil
+			}
 
 			if cfg.JSON.Value {
 				if err := output.ToJSON(os.Stdout); err != nil {
