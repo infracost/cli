@@ -1,0 +1,5 @@
+address	type
+aws_ebs_volume.data	aws_ebs_volume
+aws_instance.web	aws_instance
+aws_lambda_function.handler	aws_lambda_function
+aws_s3_bucket.logs	aws_s3_bucket

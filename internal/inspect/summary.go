@@ -2,7 +2,6 @@ package inspect
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -32,10 +31,12 @@ type summaryData struct {
 	CostedResources        int              `json:"costed_resources"`
 	FreeResources          int              `json:"free_resources"`
 	MonthlyCost            *rat.Rat         `json:"monthly_cost"`
-	FinopsPolicies         int              `json:"finops_policies"`
-	FailingPolicies        int              `json:"failing_policies"`
-	TaggingPolicies        int              `json:"tagging_policies"`
-	FailingTaggingPolicies int              `json:"failing_tagging_policies"`
+	FinopsPolicies                  int              `json:"finops_policies"`
+	FailingPolicies                 int              `json:"failing_policies"`
+	DistinctFailingFinopsResources  int              `json:"distinct_failing_finops_resources,omitempty"`
+	TaggingPolicies                 int              `json:"tagging_policies"`
+	FailingTaggingPolicies          int              `json:"failing_tagging_policies"`
+	DistinctFailingTaggingResources int              `json:"distinct_failing_tagging_resources,omitempty"`
 	Guardrails             int              `json:"guardrails"`
 	TriggeredGuardrails    int              `json:"triggered_guardrails"`
 	Budgets                int              `json:"budgets"`
@@ -56,13 +57,18 @@ type summaryData struct {
 // tags) lives at the resource level so downstream consumers don't need a
 // separate drill-in call.
 type failingPolicyEntry struct {
-	Kind             string                                `json:"kind"`
-	Name             string                                `json:"name"`
-	Slug             string                                `json:"slug,omitempty"`
-	Message          string                                `json:"message,omitempty"`
-	Project          string                                `json:"project"`
-	FailingFinops    []format.FinopsFailingResourceOutput  `json:"failing_finops,omitempty"`
-	FailingTagging   []format.FailingTaggingResourceOutput `json:"failing_tagging,omitempty"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Slug    string `json:"slug,omitempty"`
+	Message string `json:"message,omitempty"`
+	Project string `json:"project"`
+	// TagSchema is the policy's per-key tag schema (allowed values, regex,
+	// mandatory flag), present only for tagging entries. Carried here so the
+	// summary's failing list is self-contained — consumers don't need to
+	// drill back into the per-project TaggingResults to look up valid values.
+	TagSchema      []format.TagSchemaEntry               `json:"tag_schema,omitempty"`
+	FailingFinops  []format.FinopsFailingResourceOutput  `json:"failing_finops,omitempty"`
+	FailingTagging []format.FailingTaggingResourceOutput `json:"failing_tagging,omitempty"`
 }
 
 func ResourceCost(r *format.ResourceOutput) *rat.Rat {
@@ -78,21 +84,100 @@ func ResourceCost(r *format.ResourceOutput) *rat.Rat {
 	return total
 }
 
-func WriteSummary(w io.Writer, data *format.Output, asJSON bool) error {
+// summaryFieldValue returns the canonical-name → string-value mapping
+// for one scalar summary field. Keys must match fieldsSummary (validated
+// at the call site by validateFields).
+func summaryFieldValue(s summaryData, field, currency string) string {
+	switch field {
+	case "projects":
+		return fmt.Sprintf("%d", s.Projects)
+	case "projects_with_errors":
+		return fmt.Sprintf("%d", s.ProjectsWithError)
+	case "resources":
+		return fmt.Sprintf("%d", s.Resources)
+	case "costed_resources":
+		return fmt.Sprintf("%d", s.CostedResources)
+	case "free_resources":
+		return fmt.Sprintf("%d", s.FreeResources)
+	case "monthly_cost":
+		return humanMoney(s.MonthlyCost, currency)
+	case "finops_policies":
+		return fmt.Sprintf("%d", s.FinopsPolicies)
+	case "failing_policies":
+		return fmt.Sprintf("%d", s.FailingPolicies)
+	case "distinct_failing_finops_resources":
+		return fmt.Sprintf("%d", s.DistinctFailingFinopsResources)
+	case "tagging_policies":
+		return fmt.Sprintf("%d", s.TaggingPolicies)
+	case "failing_tagging_policies":
+		return fmt.Sprintf("%d", s.FailingTaggingPolicies)
+	case "distinct_failing_tagging_resources":
+		return fmt.Sprintf("%d", s.DistinctFailingTaggingResources)
+	case "guardrails":
+		return fmt.Sprintf("%d", s.Guardrails)
+	case "triggered_guardrails":
+		return fmt.Sprintf("%d", s.TriggeredGuardrails)
+	case "budgets":
+		return fmt.Sprintf("%d", s.Budgets)
+	case "over_budget":
+		return fmt.Sprintf("%d", s.OverBudget)
+	case "critical_diagnostics":
+		return fmt.Sprintf("%d", s.CriticalDiags)
+	case "warning_diagnostics":
+		return fmt.Sprintf("%d", s.WarningDiags)
+	}
+	return ""
+}
+
+// writeSummaryProjection emits the requested summary fields. Single
+// field → bare value (one number per question, no surrounding
+// chrome). Multiple fields → "key: value" lines (matches the existing
+// summary view's idiom). Structured output → flat {field: value} object,
+// keys in the caller-specified order.
+func writeSummaryProjection(w io.Writer, s summaryData, fields []string, opts Options, currency string) error {
+	if opts.Structured() {
+		out := make(orderedFields, 0, len(fields))
+		for _, f := range fields {
+			out = append(out, orderedField{Key: f, Value: summaryFieldValue(s, f, currency)})
+		}
+		return writeStructured(w, out, opts)
+	}
+	if len(fields) == 1 {
+		_, err := fmt.Fprintln(w, summaryFieldValue(s, fields[0], currency))
+		return err
+	}
+	for _, f := range fields {
+		if _, err := fmt.Fprintf(w, "%s: %s\n", f, summaryFieldValue(s, f, currency)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func WriteSummary(w io.Writer, data *format.Output, opts Options) error {
 	s := buildSummary(data)
 
-	if asJSON {
-		b, err := json.MarshalIndent(s, "", "  ")
+	// --fields short-circuit: project to just the requested scalars.
+	// Single field → value alone (so a model can `wc -l` or read it
+	// directly with no parsing). Multiple fields → key:value lines.
+	// Honors --json / --llm by emitting a flat object with just the
+	// requested keys.
+	if len(opts.Fields) > 0 {
+		fields, err := validateFields(opts.Fields, fieldsSummary)
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(w, string(b))
-		return err
+		return writeSummaryProjection(w, s, fields, opts, data.Currency)
+	}
+
+	if opts.Structured() {
+		return writeStructured(w, s, opts)
 	}
 
 	var inner bytes.Buffer
 	fmt.Fprintln(&inner, ui.Bold("Scan Summary"))
 	fmt.Fprintln(&inner)
+
 
 	rows := []kvRow{}
 	if s.Projects > 1 {
@@ -213,6 +298,11 @@ func writeProjectTable(w io.Writer, projects []projectSummary) {
 func buildSummary(data *format.Output) summaryData {
 	s := summaryData{MonthlyCost: rat.Zero}
 
+	// Track distinct resource addresses across projects so the same address
+	// failing in two projects (or two policies) doesn't double-count.
+	failingFinopsAddrs := map[string]struct{}{}
+	failingTaggingAddrs := map[string]struct{}{}
+
 	for _, p := range data.Projects {
 		s.Projects++
 		ps := projectSummary{
@@ -257,6 +347,9 @@ func buildSummary(data *format.Output) summaryData {
 			if len(f.FailingResources) > 0 {
 				s.FailingPolicies++
 				ps.FinopsFailingPolicies++
+				for _, fr := range f.FailingResources {
+					failingFinopsAddrs[fr.Name] = struct{}{}
+				}
 				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
 					Kind:          "finops",
 					Name:          f.PolicyName,
@@ -274,11 +367,15 @@ func buildSummary(data *format.Output) summaryData {
 			if len(t.FailingResources) > 0 {
 				s.FailingTaggingPolicies++
 				ps.TaggingFailingPolicies++
+				for _, tr := range t.FailingResources {
+					failingTaggingAddrs[tr.Address] = struct{}{}
+				}
 				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
 					Kind:           "tagging",
 					Name:           t.PolicyName,
 					Message:        t.Message,
 					Project:        p.ProjectName,
+					TagSchema:      t.TagSchema,
 					FailingTagging: t.FailingResources,
 				})
 			}
@@ -302,6 +399,9 @@ func buildSummary(data *format.Output) summaryData {
 			s.OverBudgetList = append(s.OverBudgetList, br)
 		}
 	}
+
+	s.DistinctFailingFinopsResources = len(failingFinopsAddrs)
+	s.DistinctFailingTaggingResources = len(failingTaggingAddrs)
 
 	return s
 }

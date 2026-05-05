@@ -1,0 +1,5 @@
+address	type	project	monthly_cost	is_free
+aws_ebs_volume.data	aws_ebs_volume	web-app	$10	false
+aws_instance.web	aws_instance	web-app	$20	false
+aws_lambda_function.handler	aws_lambda_function	api-service	$5	false
+aws_s3_bucket.logs	aws_s3_bucket	web-app	$0	true

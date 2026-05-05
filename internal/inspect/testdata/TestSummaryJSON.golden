@@ -31,8 +31,10 @@
   "monthly_cost": "65",
   "finops_policies": 1,
   "failing_policies": 1,
+  "distinct_failing_finops_resources": 1,
   "tagging_policies": 1,
   "failing_tagging_policies": 1,
+  "distinct_failing_tagging_resources": 1,
   "guardrails": 1,
   "triggered_guardrails": 1,
   "budgets": 2,
@@ -65,6 +67,20 @@
       "name": "Required Tags",
       "message": "All resources must have required tags",
       "project": "web-app",
+      "tag_schema": [
+        {
+          "key": "environment",
+          "mandatory": true
+        },
+        {
+          "key": "team",
+          "mandatory": true
+        },
+        {
+          "key": "owner",
+          "valid_regex": "^team-.*"
+        }
+      ],
       "failing_tagging": [
         {
           "address": "aws_instance.web",
@@ -72,15 +88,7 @@
           "invalid_tags": [
             {
               "key": "owner",
-              "value": "foo",
-              "valid_regex": "^team-.*",
-              "suggestion": "",
-              "message": "",
-              "valid_values": null,
-              "valid_value_count": 0,
-              "valid_values_truncated": false,
-              "from_default_tags": false,
-              "missing_mandatory": false
+              "value": "foo"
             }
           ],
           "path": "modules/compute/main.tf",

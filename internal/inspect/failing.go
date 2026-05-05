@@ -1,7 +1,6 @@
 package inspect
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 
@@ -25,8 +24,8 @@ import (
 // `data` has already been through Filter, so passing policies are dropped
 // from FinopsResults / TaggingResults.
 func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
-	if opts.JSON {
-		return writeJSON(w, failingPanoramaJSONFor(data))
+	if opts.Structured() {
+		return writeStructured(w, failingPanoramaJSONFor(data), opts)
 	}
 	policyRows := collectPolicyRows(data)
 	distinctPolicies := countDistinctPolicies(policyRows)
@@ -45,11 +44,9 @@ func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
 		}
 	}
 
-	var buf bytes.Buffer
 	if len(policyRows) == 0 && len(triggered) == 0 && len(over) == 0 {
-		fmt.Fprintln(&buf, ui.Positive("✓ Nothing failing."))
-		_, err := w.Write(buf.Bytes())
-		return err
+		_, _ = fmt.Fprintln(w, ui.Positive("✓ Nothing failing."))
+		return nil
 	}
 
 	// Section 1: failing policies — per-pairing blocks. Section header shows
@@ -58,61 +55,60 @@ func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
 		distinctPolicies, pluralize("policy", distinctPolicies),
 		len(policyRows), pluralize("resource", len(policyRows)),
 	)
-	writeSectionHeading(&buf, "Failing policies", policyCount)
+	writeSectionHeading(w, "Failing policies", policyCount)
 	if len(policyRows) == 0 {
-		fmt.Fprintln(&buf, ui.Positive("✓ No failing policies."))
+		_, _ = fmt.Fprintln(w, ui.Positive("✓ No failing policies."))
 	} else {
-		writePolicyGroupRows(&buf, policyRows, []string{string(GroupByPolicy)})
+		writePolicyGroupRows(w, policyRows, []string{string(GroupByPolicy)})
 	}
 
 	// Section 2: triggered guardrails
-	fmt.Fprintln(&buf)
-	fmt.Fprintln(&buf)
-	writeSectionHeading(&buf, "Triggered guardrails", fmt.Sprintf("(%d)", len(triggered)))
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
+	writeSectionHeading(w, "Triggered guardrails", fmt.Sprintf("(%d)", len(triggered)))
 	if len(triggered) == 0 {
-		fmt.Fprintln(&buf, ui.Positive("✓ None triggered."))
+		_, _ = fmt.Fprintln(w, ui.Positive("✓ None triggered."))
 	} else {
 		for i, gr := range triggered {
 			if i > 0 {
-				fmt.Fprintln(&buf)
+				_, _ = fmt.Fprintln(w)
 			}
-			fmt.Fprintf(&buf, "%s  %s\n", stopEmoji, ui.Bold(gr.GuardrailName))
+			_, _ = fmt.Fprintf(w, "%s  %s\n", stopEmoji, ui.Bold(gr.GuardrailName))
 			if gr.TotalMonthlyCost != nil {
-				fmt.Fprintf(&buf, "   %s\n", ui.Muted(humanMoney(gr.TotalMonthlyCost, data.Currency)+"/mo"))
+				_, _ = fmt.Fprintf(w, "   %s\n", ui.Muted(humanMoney(gr.TotalMonthlyCost, data.Currency)+"/mo"))
 			}
 		}
 	}
 
 	// Section 3: over budget
-	fmt.Fprintln(&buf)
-	fmt.Fprintln(&buf)
-	writeSectionHeading(&buf, "Over budget", fmt.Sprintf("(%d)", len(over)))
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
+	writeSectionHeading(w, "Over budget", fmt.Sprintf("(%d)", len(over)))
 	if len(over) == 0 {
-		fmt.Fprintln(&buf, ui.Positive("✓ Nothing over budget."))
+		_, _ = fmt.Fprintln(w, ui.Positive("✓ Nothing over budget."))
 	} else {
 		for i, br := range over {
 			if i > 0 {
-				fmt.Fprintln(&buf)
+				_, _ = fmt.Fprintln(w)
 			}
-			fmt.Fprintf(&buf, "%s  %s\n", moneyEmoji, ui.Bold(br.BudgetName))
+			_, _ = fmt.Fprintf(w, "%s  %s\n", moneyEmoji, ui.Bold(br.BudgetName))
 			overBy := br.CurrentCost.Sub(br.Amount)
-			fmt.Fprintf(&buf, "   %s\n", ui.Muted(fmt.Sprintf(
+			_, _ = fmt.Fprintf(w, "   %s\n", ui.Muted(fmt.Sprintf(
 				"Over by %s (%s actual / %s limit)",
 				humanMoney(overBy, data.Currency),
 				humanMoney(br.CurrentCost, data.Currency),
 				humanMoney(br.Amount, data.Currency),
 			)))
 			if len(br.Tags) > 0 {
-				fmt.Fprintf(&buf, "   %s %s\n", ui.Accent("Scope:"), formatBudgetTagScope(br.Tags))
+				_, _ = fmt.Fprintf(w, "   %s %s\n", ui.Accent("Scope:"), formatBudgetTagScope(br.Tags))
 			}
 			if br.CustomOverrunMessage != "" {
-				fmt.Fprintf(&buf, "   %s\n", ui.Muted(br.CustomOverrunMessage))
+				_, _ = fmt.Fprintf(w, "   %s\n", ui.Muted(br.CustomOverrunMessage))
 			}
 		}
 	}
 
-	_, err := w.Write(buf.Bytes())
-	return err
+	return nil
 }
 
 func writeSectionHeading(w io.Writer, label, count string) {
