@@ -286,7 +286,9 @@ The ` + "`inspect`" + ` command has dedicated flags for the patterns that would 
 ### Pre-computed totals on ` + "`scan`" + ` output
 The ` + "`scan`" + ` output includes a top-level ` + "`summary`" + ` block with pre-computed totals (total monthly cost, total potential savings, distinct failing resources counts, failing policy counts). Read that first before drilling in — most "how many X are failing" questions can be answered with one ` + "`infracost inspect --summary --fields <name>`" + ` call.
 
-Available summary fields (use with ` + "`--summary --fields <name>`" + `): ` + "`projects`" + `, ` + "`resources`" + `, ` + "`costed_resources`" + `, ` + "`free_resources`" + `, ` + "`monthly_cost`" + `, ` + "`finops_policies`" + `, ` + "`failing_policies`" + ` (failing FinOps), ` + "`tagging_policies`" + `, ` + "`failing_tagging_policies`" + `, ` + "`guardrails`" + `, ` + "`triggered_guardrails`" + `, ` + "`budgets`" + `, ` + "`over_budget`" + `. Single field → bare value, no label.
+Available summary fields (use with ` + "`--summary --fields <name>`" + `): ` + "`projects`" + `, ` + "`resources`" + `, ` + "`costed_resources`" + `, ` + "`free_resources`" + `, ` + "`monthly_cost`" + `, ` + "`finops_policies`" + `, ` + "`failing_policies`" + ` (failing FinOps), ` + "`distinct_failing_finops_resources`" + ` (count of unique addresses that fail any FinOps policy), ` + "`tagging_policies`" + `, ` + "`failing_tagging_policies`" + `, ` + "`distinct_failing_tagging_resources`" + ` (count of unique addresses that fail any tagging policy), ` + "`guardrails`" + `, ` + "`triggered_guardrails`" + `, ` + "`budgets`" + `, ` + "`over_budget`" + `. Single field → bare value, no label.
+
+For "how many distinct resources fail X policy" questions, prefer ` + "`--summary --fields distinct_failing_finops_resources`" + ` / ` + "`distinct_failing_tagging_resources`" + ` over enumerating the failing-resource list and piping through ` + "`sort -u | wc -l`" + ` or awk. The summary already de-dupes addresses across multiple policies.
 
 ### Examples — what to use for common queries
 
@@ -297,10 +299,12 @@ Available summary fields (use with ` + "`--summary --fields <name>`" + `): ` + "
 ` + binPath + ` scan /path/to/repo
 
 # Counts and totals (single --summary call answers most "how many" questions):
-` + binPath + ` inspect --summary                                # full summary block
-` + binPath + ` inspect --summary --fields failing_policies      # just the count, bare value
+` + binPath + ` inspect --summary                                                   # full summary block
+` + binPath + ` inspect --summary --fields failing_policies                         # just the count, bare value
 ` + binPath + ` inspect --summary --fields failing_policies,failing_tagging_policies,resources
-` + binPath + ` inspect --total-savings                          # one number
+` + binPath + ` inspect --summary --fields distinct_failing_tagging_resources       # distinct resources failing tagging
+` + binPath + ` inspect --summary --fields distinct_failing_finops_resources        # distinct resources failing finops
+` + binPath + ` inspect --total-savings                                             # one number
 
 # "List the top N highest-savings opportunities" (no jq, no awk):
 ` + binPath + ` inspect --top-savings 5 --fields address,monthly_savings

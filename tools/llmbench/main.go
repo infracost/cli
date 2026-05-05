@@ -60,10 +60,19 @@ func main() {
 		policyCtxFile = flag.String("policy-context-file", "", "Path to a text file describing the tagging / FinOps policies in plain English. Injected into bare-tf prompts only — skill cells already get policy data via infracost. Without this, bare-tf has to guess the policy and will systematically fail on detection / fix questions, distorting the comparison.")
 		reportOnly    = flag.String("report-only", "", "Skip running cells; build a fresh report from existing JSONL files. Comma-separated list of paths or globs (e.g. 'tools/llmbench/results/results-*.jsonl'). Useful for combining a skill-only run with a separate bare-tf run.")
 		rerunFailed   = flag.String("rerun-failed", "", "Path to a JSONL from a prior run. Re-runs only the (question, format) cells whose Error is non-empty or Verdict is empty. Combine with a higher --max-turns to get accurate cost numbers on cells that previously hit the turn cap.")
+		rescore       = flag.String("rescore", "", "Path to a JSONL from a prior run. Reapplies each question's verifier against the cells' final_text without re-running the model — useful when the verifier itself changed (e.g. extractInt now strips backticks). Writes a `<input>.rescored.jsonl` next to the input unless --rescore-out is set.")
+		rescoreOut    = flag.String("rescore-out", "", "Output path for --rescore. Defaults to '<input>.rescored.jsonl' alongside the input.")
 	)
 	flag.Parse()
 
 	formatList := splitCSV(*formats)
+
+	if *rescore != "" {
+		if err := runRescore(*rescore, *rescoreOut, *fixtureFile, *targetRepo, *targetDir, *out); err != nil {
+			fail(err)
+		}
+		return
+	}
 
 	if *reportOnly != "" {
 		cells, err := loadCellsJSONL(*reportOnly)

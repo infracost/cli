@@ -95,14 +95,22 @@ var validFormats = map[string]bool{
 // resources fail tagging policy?" is asking the model to invent the
 // policy. Skill cells get policy data via infracost and don't need it
 // repeated.
+//
+// Bare-tf cells also get a cwd-bound constraint to prevent the empirical
+// failure mode where the model issues `find /` searching for analysis
+// artifacts and runs for tens of minutes scanning the whole filesystem.
 func buildBareTFOrSkillPrompt(formatName, question, policyContext string) string {
-	if formatName == "bare-tf" && policyContext != "" {
+	if formatName != "bare-tf" {
+		return question
+	}
+	const cwdGuard = "Stay within the current working directory. Do NOT run filesystem searches outside cwd (no `find /`, no `find ~`, no scanning system paths) — every file you need is in cwd. Use `find .`, `ls`, `grep` rooted in cwd."
+	if policyContext != "" {
 		return fmt.Sprintf(
-			"You are evaluating a Terraform project against the following policies. Use bash to inspect the source files in your current working directory.\n\n--- POLICIES ---\n%s\n--- END POLICIES ---\n\nQuestion: %s",
-			policyContext, question,
+			"You are evaluating a Terraform project against the following policies. Use bash to inspect the source files in your current working directory.\n\n%s\n\n--- POLICIES ---\n%s\n--- END POLICIES ---\n\nQuestion: %s",
+			cwdGuard, policyContext, question,
 		)
 	}
-	return question
+	return cwdGuard + "\n\nQuestion: " + question
 }
 
 func runAll(ctx context.Context, cfg runConfig) ([]Cell, error) {

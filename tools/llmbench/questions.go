@@ -51,6 +51,20 @@ func Questions() []Question {
 			},
 		},
 		{
+			// Companion to q1-total-cost that explicitly forbids using
+			// infracost or any cost-estimation tool. Used to measure how
+			// well the model can estimate AWS spend purely from its training
+			// knowledge of the resources defined in the .tf files. We give
+			// the verifier a wider tolerance ($5k) since the answer is an
+			// estimate, not a precise figure.
+			ID:       "q1-total-cost-estimated",
+			Category: "aggregation",
+			Prompt:   "What is the estimated total monthly cost across all projects? You do NOT have access to `infracost` or any pricing API. Use your knowledge of typical AWS pricing for the resources defined in the .tf files in your current working directory. Reply with just a single dollar amount, no explanation.",
+			Verify: func(ans string, f *format.Output) Verdict {
+				return verdictNumeric(ans, totalMonthlyCost(f), 5000)
+			},
+		},
+		{
 			ID:       "q3-most-expensive-resource",
 			Category: "filtering",
 			Prompt:   "Which single resource has the highest total monthly cost? Reply with just its address (the value of the `name` field), no other text.",
@@ -85,7 +99,10 @@ func Questions() []Question {
 			Category: "aggregation",
 			Prompt:   "Across all FinOps issues, which resource has the largest total `monthly_savings` value? Reply with just the resource address (the `address` field on the issue).",
 			Verify: func(ans string, f *format.Output) Verdict {
-				return verdictStringContains(ans, largestSavingsResource(f))
+				// Multiple resources can tie for the top savings value. Accept
+				// any of them — picking one arbitrarily would make the verdict
+				// depend on Go map iteration order in the helper.
+				return verdictContainsAny(ans, largestSavingsResources(f))
 			},
 		},
 		// --- detection: find the issues ---
@@ -371,7 +388,12 @@ func totalFinopsSavings(f *format.Output) float64 {
 	return total.Float64()
 }
 
-func largestSavingsResource(f *format.Output) string {
+// largestSavingsResources returns every address tied for the highest total
+// monthly_savings across all FinOps issues. We return a list (not a single
+// pick) because callers verifying free-form model answers should accept any
+// of the tied winners — otherwise the verdict depends on Go map iteration
+// order, which is randomized.
+func largestSavingsResources(f *format.Output) []string {
 	totals := map[string]float64{}
 	for _, p := range f.Projects {
 		for _, fp := range p.FinopsResults {
@@ -385,15 +407,20 @@ func largestSavingsResource(f *format.Output) string {
 			}
 		}
 	}
-	var bestAddr string
 	bestVal := math.Inf(-1)
-	for addr, v := range totals {
+	for _, v := range totals {
 		if v > bestVal {
 			bestVal = v
-			bestAddr = addr
 		}
 	}
-	return bestAddr
+	var winners []string
+	for addr, v := range totals {
+		if v == bestVal {
+			winners = append(winners, addr)
+		}
+	}
+	sort.Strings(winners)
+	return winners
 }
 
 // --- verdict helpers -------------------------------------------------------
@@ -435,10 +462,26 @@ func verdictStringContains(ans, want string) Verdict {
 	return Incorrect
 }
 
+// verdictContainsAny passes if ans contains at least one of the wants.
+// Used for questions with multiple valid answers (e.g. ties).
+func verdictContainsAny(ans string, wants []string) Verdict {
+	if len(wants) == 0 {
+		return Ambiguous
+	}
+	trimmed := strings.TrimSpace(ans)
+	for _, w := range wants {
+		if w != "" && strings.Contains(trimmed, w) {
+			return Correct
+		}
+	}
+	return Incorrect
+}
+
 // addressLikeRe roughly matches Terraform resource addresses (`type.name`,
-// `module.foo.type.name`). Permissive enough to catch backticked or quoted
-// variants in free-form replies.
-var addressLikeRe = regexp.MustCompile(`[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+`)
+// `module.foo.type.name`, plus optional `[...]` for_each / count indices on
+// any segment, e.g. `aws_eks_cluster.main["prod"]`). Permissive enough to
+// catch backticked or quoted variants in free-form replies.
+var addressLikeRe = regexp.MustCompile(`[a-zA-Z_][a-zA-Z0-9_]*(?:\[[^\]]*\])?(?:\.[a-zA-Z_][a-zA-Z0-9_]*(?:\[[^\]]*\])?)+`)
 
 // verdictListMatch checks that every expected address appears somewhere in
 // the answer. Order is irrelevant; surrounding prose is tolerated. Extra
@@ -464,9 +507,11 @@ func verdictListMatch(ans string, want []string) Verdict {
 
 func extractInt(s string) (int, bool) {
 	// Strip non-digit/sign characters from each token until we find one that
-	// parses cleanly. Catches "12 resources", "There are 12.", "12,345", etc.
+	// parses cleanly. Catches "12 resources", "There are 12.", "12,345",
+	// "`field: 12`" (backticks/quotes/colons/parens), etc.
 	cleaned := strings.NewReplacer(",", "", ".", " ").Replace(s)
 	for _, tok := range strings.Fields(cleaned) {
+		tok = strings.Trim(tok, "`\"'():;[]{}")
 		if n, err := strconv.Atoi(tok); err == nil {
 			return n, true
 		}
@@ -477,8 +522,9 @@ func extractInt(s string) (int, bool) {
 func extractFloat(s string) (float64, bool) {
 	cleaned := strings.NewReplacer("$", " ", ",", "").Replace(s)
 	for _, tok := range strings.Fields(cleaned) {
-		// trim trailing punctuation
-		tok = strings.TrimRight(tok, ".:;)")
+		// strip surrounding punctuation/quoting (backticks, quotes, parens, colons…)
+		tok = strings.Trim(tok, "`\"'():;[]{}")
+		tok = strings.TrimRight(tok, ".")
 		if f, err := strconv.ParseFloat(tok, 64); err == nil {
 			return f, true
 		}
