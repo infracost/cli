@@ -42,20 +42,46 @@ func pluginSetup(bin, marketplace, plugin, scope string) error {
 	}); err != nil {
 		return err
 	}
-	if actionErr != nil {
+	if actionErr != nil && !isAlreadyConfiguredErr(actionErr) {
 		return fmt.Errorf("adding marketplace: %w", actionErr)
 	}
 
+	installArgs := []string{"plugin", "install"}
+	if scope != "" {
+		installArgs = append(installArgs, "--scope", scope)
+	}
+	installArgs = append(installArgs, plugin)
+
 	if err := ui.RunWithSpinner("Installing Infracost plugin...", "Plugin installed", func() {
-		actionErr = runAgentBinary(bin, "plugin", "install", "--scope", scope, plugin)
+		actionErr = runAgentBinary(bin, installArgs...)
 	}); err != nil {
 		return err
 	}
-	if actionErr != nil {
+	if actionErr != nil && !isAlreadyConfiguredErr(actionErr) {
 		return fmt.Errorf("installing plugin: %w", actionErr)
 	}
 
 	return nil
+}
+
+// isAlreadyConfiguredErr reports whether err describes a step that's
+// already done (marketplace registered, plugin installed, etc.). Setup
+// is meant to be idempotent — re-running it after a partial install,
+// or installing skills the user already has, should silently no-op
+// rather than abort the whole flow. Matches against substrings of the
+// error message because each agent CLI phrases this differently
+// ("already registered", "already installed", "already exists").
+func isAlreadyConfiguredErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "already") {
+		return false
+	}
+	return strings.Contains(msg, "registered") ||
+		strings.Contains(msg, "installed") ||
+		strings.Contains(msg, "exists")
 }
 
 func pluginCheck(bin, name string) (bool, error) {
@@ -73,8 +99,14 @@ func pluginTeardown(bin, marketplaceName, plugin, scope string) error {
 	var errs []error
 	var actionErr error
 
+	uninstallArgs := []string{"plugin", "uninstall"}
+	if scope != "" {
+		uninstallArgs = append(uninstallArgs, "--scope", scope)
+	}
+	uninstallArgs = append(uninstallArgs, plugin)
+
 	if err := ui.RunWithSpinner("Uninstalling Infracost plugin...", "Plugin uninstalled", func() {
-		actionErr = runAgentBinary(bin, "plugin", "uninstall", "--scope", scope, plugin)
+		actionErr = runAgentBinary(bin, uninstallArgs...)
 	}); err != nil {
 		return err
 	}
@@ -125,11 +157,14 @@ var supportedAgents = []agent{
 	{
 		name:     "GitHub Copilot (CLI)",
 		binaries: []string{"copilot"},
-		setup: func(bin, scope string) error {
-			return pluginSetup(bin, infracostMarketplace, infracostPlugin, scope)
+		// Copilot CLI's `plugin install` / `plugin uninstall` don't accept
+		// --scope (it has no per-scope concept like Claude Code does);
+		// passing "" tells pluginSetup/pluginTeardown to omit the flag.
+		setup: func(bin, _ string) error {
+			return pluginSetup(bin, infracostMarketplace, infracostPlugin, "")
 		},
-		teardown: func(bin, scope string) error {
-			return pluginTeardown(bin, infracostMarketplaceName, infracostPlugin, scope)
+		teardown: func(bin, _ string) error {
+			return pluginTeardown(bin, infracostMarketplaceName, infracostPlugin, "")
 		},
 		check: func(bin string) (bool, error) {
 			return pluginCheck(bin, "infracost")
@@ -199,7 +234,8 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Install Infracost skills for your AI coding agent",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return RunAgentSetup(cfg, scope, false)
+			_, err := RunAgentSetup(cfg, scope, false)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope: user (global), project, or local")
@@ -208,21 +244,26 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 
 // RunAgentSetup is the core logic for `infracost agent setup`, callable from
 // the unified `infracost setup` flow (DEV-230). When skippable is true, a
-// "Skip" option is appended to the selection list.
-func RunAgentSetup(cfg *config.Config, scope string, skippable bool) error {
+// "Skip" option is appended to the selection list. Returns the selected
+// agent's display name (empty if the user skipped or aborted) so the
+// unified flow can tailor its closing CTA.
+func RunAgentSetup(cfg *config.Config, scope string, skippable bool) (string, error) {
 	if _, ok := validAgentScopes[scope]; !ok {
-		return fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
+		return "", fmt.Errorf("invalid scope %q: must be one of user, project, or local", scope)
 	}
 
 	selected, err := selectAgent("Which AI coding agent do you use?", skippable)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if selected == nil {
-		return nil
+		return "", nil
 	}
 
-	return setupAgent(cfg, *selected, scope)
+	if err := setupAgent(cfg, *selected, scope); err != nil {
+		return "", err
+	}
+	return selected.name, nil
 }
 
 func agentRemove(cfg *config.Config) *cobra.Command {

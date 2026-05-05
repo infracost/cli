@@ -66,12 +66,14 @@ func Setup(cfg *config.Config) *cobra.Command {
 			}
 
 			// Step 2: Agent setup
-			if err := RunAgentSetup(cfg, "user", true); err != nil {
+			agentName, err := RunAgentSetup(cfg, "user", true)
+			if err != nil {
 				return err
 			}
 
 			// Step 3: IDE setup
-			if err := RunIDESetup(true); err != nil {
+			ideName, err := RunIDESetup(true)
+			if err != nil {
 				return err
 			}
 
@@ -84,8 +86,31 @@ func Setup(cfg *config.Config) *cobra.Command {
 
 			fmt.Println()
 			fmt.Println(ui.Bold(ui.Gradient("Setup complete.")))
+
+			fmt.Println()
+			ui.Heading("What's next?")
+			printNextSteps(agentName, ideName)
 			return nil
 		},
+	}
+}
+
+// printNextSteps renders the post-setup CTA. The recommendation is tailored
+// to whichever integration the user just installed — the agent path (chat
+// in your coding agent) and the IDE path (inline cost estimates) deliver a
+// faster aha moment than the bare CLI for users who installed those tools.
+// Falls back to "cd + infracost scan" when nothing was installed.
+func printNextSteps(agentName, ideName string) {
+	switch {
+	case agentName != "":
+		ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
+		ui.Stepf("Open %s and ask it %s", ui.Code(agentName), ui.Code(`"How much does this project cost?"`))
+	case ideName != "":
+		ui.Stepf("Open a Terraform, CloudFormation, or CDK project in %s", ui.Code(ideName))
+		ui.Stepf("Open the Infracost extension from the toolbar and make sure you're logged in — you'll see cost estimates inline with your code")
+	default:
+		ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
+		ui.Stepf("Run %s to see your costs and any policy violations", ui.Code("infracost scan"))
 	}
 }
 

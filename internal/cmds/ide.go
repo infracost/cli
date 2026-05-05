@@ -81,17 +81,20 @@ func ideSetup(_ *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Install the Infracost extension for your IDE",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return RunIDESetup(false)
+			_, err := RunIDESetup(false)
+			return err
 		},
 	}
 }
 
 // RunIDESetup is the core logic for `infracost ide setup`, callable from the
 // unified `infracost setup` flow (DEV-230). When skippable is true, a "Skip"
-// option is appended to the selection list.
-func RunIDESetup(skippable bool) error {
+// option is appended to the selection list. Returns the selected IDE's
+// display name (empty if the user skipped or aborted) so the unified flow
+// can tailor its closing CTA.
+func RunIDESetup(skippable bool) (string, error) {
 	if !ui.IsInteractive() {
-		return nil
+		return "", nil
 	}
 
 	var enabledIDEs []ide
@@ -118,16 +121,19 @@ func RunIDESetup(skippable bool) error {
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			return nil
+			return "", nil
 		}
-		return fmt.Errorf("selecting IDE: %w", err)
+		return "", fmt.Errorf("selecting IDE: %w", err)
 	}
 
 	if selected < 0 {
-		return nil
+		return "", nil
 	}
 
-	return installIDE(enabledIDEs[selected])
+	if err := installIDE(enabledIDEs[selected]); err != nil {
+		return "", err
+	}
+	return enabledIDEs[selected].name, nil
 }
 
 func installIDE(i ide) error {
