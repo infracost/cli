@@ -84,6 +84,11 @@ func Setup(cfg *config.Config) *cobra.Command {
 
 			fmt.Println()
 			fmt.Println(ui.Bold(ui.Gradient("Setup complete.")))
+
+			fmt.Println()
+			ui.Heading("What's next?")
+			ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
+			ui.Stepf("Run %s to see your costs and any policy violations", ui.Code("infracost scan"))
 			return nil
 		},
 	}
