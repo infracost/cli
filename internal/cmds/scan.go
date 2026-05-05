@@ -136,32 +136,28 @@ func Scan(cfg *config.Config) *cobra.Command {
 				logging.Warn("failed to cache results: " + err.Error())
 			}
 
-			if cfg.JSON.Value && cfg.LLM.Value {
-				return fmt.Errorf("--json and --llm cannot be used together")
-			}
-
 			outputFormat := "text"
 			switch {
-			case cfg.JSON.Value:
-				outputFormat = "json"
 			case cfg.LLM.Value:
 				outputFormat = "llm"
+			case cfg.JSON.Value:
+				outputFormat = "json"
 			}
 			output.TrackRun(cmd.Context(), eventsClient, runSeconds, outputFormat, prevForDir)
-
-			if cfg.JSON.Value {
-				if err := output.ToJSON(os.Stdout); err != nil {
-					return fmt.Errorf("failed to write JSON output: %w", err)
-				}
-				fmt.Println() // add newline after JSON output
-				return nil
-			}
 
 			if cfg.LLM.Value {
 				if err := output.ToTOON(os.Stdout); err != nil {
 					return fmt.Errorf("failed to write LLM output: %w", err)
 				}
 				fmt.Println()
+				return nil
+			}
+
+			if cfg.JSON.Value {
+				if err := output.ToJSON(os.Stdout); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
+				fmt.Println() // add newline after JSON output
 				return nil
 			}
 

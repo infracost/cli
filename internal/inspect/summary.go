@@ -132,12 +132,13 @@ func summaryFieldValue(s summaryData, field, currency string) string {
 // writeSummaryProjection emits the requested summary fields. Single
 // field → bare value (one number per question, no surrounding
 // chrome). Multiple fields → "key: value" lines (matches the existing
-// summary view's idiom). Structured output → flat {field: value} map.
+// summary view's idiom). Structured output → flat {field: value} object,
+// keys in the caller-specified order.
 func writeSummaryProjection(w io.Writer, s summaryData, fields []string, opts Options, currency string) error {
 	if opts.Structured() {
-		out := make(map[string]string, len(fields))
+		out := make(orderedFields, 0, len(fields))
 		for _, f := range fields {
-			out[f] = summaryFieldValue(s, f, currency)
+			out = append(out, orderedField{Key: f, Value: summaryFieldValue(s, f, currency)})
 		}
 		return writeStructured(w, out, opts)
 	}

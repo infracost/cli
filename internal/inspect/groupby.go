@@ -59,11 +59,11 @@ func writeGroupByProjection(w io.Writer, rows []tableRow, opts Options) error {
 	}
 
 	if opts.Structured() {
-		out := make([]map[string]string, 0, len(projected))
+		out := make([]orderedFields, 0, len(projected))
 		for _, row := range projected {
-			obj := make(map[string]string, len(fields))
+			obj := make(orderedFields, 0, len(fields))
 			for i, f := range fields {
-				obj[f] = row[i]
+				obj = append(obj, orderedField{Key: f, Value: row[i]})
 			}
 			out = append(out, obj)
 		}
@@ -518,11 +518,19 @@ func WriteBudgetDetail(w io.Writer, data *format.Output, opts Options) error {
 }
 
 func WritePolicyDetail(w io.Writer, data *format.Output, opts Options) error {
+	if opts.Structured() {
+		if opts.AddressesOnly {
+			addrs := addressesFailingPolicy(data, opts.Policy)
+			payload := struct {
+				Addresses []string `json:"addresses"`
+				Count     int      `json:"count"`
+			}{Addresses: addrs, Count: len(addrs)}
+			return writeStructured(w, payload, opts)
+		}
+		return writePolicyDetailJSON(w, data, opts)
+	}
 	if opts.AddressesOnly {
 		return writeAddressesOnly(w, addressesFailingPolicy(data, opts.Policy))
-	}
-	if opts.Structured() {
-		return writePolicyDetailJSON(w, data, opts)
 	}
 	if opts.Resource != "" {
 		return writePolicyResourceDetail(w, data, opts)

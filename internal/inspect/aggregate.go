@@ -113,15 +113,14 @@ func WriteTopSavings(w io.Writer, data *format.Output, n int, opts Options) erro
 	if opts.Structured() {
 		// Projected structured output: emit a list of {field: value}
 		// objects. Without --fields this is the full struct, with
-		// --fields it's just the requested keys (preserving order via
-		// our maps-with-explicit-keys handling in the toon encoder /
-		// json's MarshalJSON-by-key behavior).
+		// --fields it's just the requested keys preserving the
+		// caller's --fields order via orderedFields.
 		if len(opts.Fields) == 0 && !opts.AddressesOnly {
 			return writeStructured(w, rows, opts)
 		}
-		out := make([]map[string]string, 0, len(rows))
+		out := make([]orderedFields, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, projectTopSavingsRow(r, fields, data.Currency))
+			out = append(out, orderedFromMap(projectTopSavingsRow(r, fields, data.Currency), fields))
 		}
 		return writeStructured(w, out, opts)
 	}
@@ -216,13 +215,9 @@ func WriteFilteredResources(w io.Writer, data *format.Output, opts Options) erro
 			}{Addresses: addrs, Count: len(addrs)}
 			return writeStructured(w, payload, opts)
 		}
-		out := make([]map[string]string, 0, len(rows))
+		out := make([]orderedFields, 0, len(rows))
 		for _, r := range rows {
-			projected := map[string]string{}
-			for _, f := range fields {
-				projected[f] = r[f]
-			}
-			out = append(out, projected)
+			out = append(out, orderedFromMap(r, fields))
 		}
 		return writeStructured(w, out, opts)
 	}

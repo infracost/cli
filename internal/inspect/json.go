@@ -1,6 +1,7 @@
 package inspect
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,59 @@ import (
 	"github.com/infracost/cli/internal/format/toon"
 	"github.com/infracost/go-proto/pkg/rat"
 )
+
+// orderedFields is a JSON-marshalable list of (key, value) pairs that
+// preserves insertion order. Used by projection sites (--fields) so the
+// caller's field order survives encoding — Go's encoding/json sorts map
+// keys alphabetically, and the toon encoder explicitly sorts them too,
+// which would otherwise drop the user's intent. The toon encoder honors
+// json.Marshaler, so implementing it once gets us order preservation in
+// both --json and --llm output.
+type orderedFields []orderedField
+
+// orderedField is one (key, value) pair in an orderedFields. Both sides
+// are strings because every projection site renders to strings before
+// emitting; if a future projection needs a non-string value it can swap
+// Value for any.
+type orderedField struct {
+	Key   string
+	Value string
+}
+
+func (o orderedFields) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, f := range o {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		kb, err := json.Marshal(f.Key)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(kb)
+		buf.WriteByte(':')
+		vb, err := json.Marshal(f.Value)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(vb)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// orderedFromMap converts a (rendered string) map into an orderedFields
+// projection, taking values in the order the keys slice specifies. Used
+// where a projection helper still returns map[string]string for the TSV
+// path's lookups.
+func orderedFromMap(m map[string]string, keys []string) orderedFields {
+	out := make(orderedFields, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, orderedField{Key: k, Value: m[k]})
+	}
+	return out
+}
 
 // writeStructured marshals v in the structured format selected by opts (TOON
 // when opts.LLM is set, otherwise indented JSON) and writes it to w with a
