@@ -42,20 +42,46 @@ func pluginSetup(bin, marketplace, plugin, scope string) error {
 	}); err != nil {
 		return err
 	}
-	if actionErr != nil {
+	if actionErr != nil && !isAlreadyConfiguredErr(actionErr) {
 		return fmt.Errorf("adding marketplace: %w", actionErr)
 	}
 
+	installArgs := []string{"plugin", "install"}
+	if scope != "" {
+		installArgs = append(installArgs, "--scope", scope)
+	}
+	installArgs = append(installArgs, plugin)
+
 	if err := ui.RunWithSpinner("Installing Infracost plugin...", "Plugin installed", func() {
-		actionErr = runAgentBinary(bin, "plugin", "install", "--scope", scope, plugin)
+		actionErr = runAgentBinary(bin, installArgs...)
 	}); err != nil {
 		return err
 	}
-	if actionErr != nil {
+	if actionErr != nil && !isAlreadyConfiguredErr(actionErr) {
 		return fmt.Errorf("installing plugin: %w", actionErr)
 	}
 
 	return nil
+}
+
+// isAlreadyConfiguredErr reports whether err describes a step that's
+// already done (marketplace registered, plugin installed, etc.). Setup
+// is meant to be idempotent — re-running it after a partial install,
+// or installing skills the user already has, should silently no-op
+// rather than abort the whole flow. Matches against substrings of the
+// error message because each agent CLI phrases this differently
+// ("already registered", "already installed", "already exists").
+func isAlreadyConfiguredErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "already") {
+		return false
+	}
+	return strings.Contains(msg, "registered") ||
+		strings.Contains(msg, "installed") ||
+		strings.Contains(msg, "exists")
 }
 
 func pluginCheck(bin, name string) (bool, error) {
@@ -73,8 +99,14 @@ func pluginTeardown(bin, marketplaceName, plugin, scope string) error {
 	var errs []error
 	var actionErr error
 
+	uninstallArgs := []string{"plugin", "uninstall"}
+	if scope != "" {
+		uninstallArgs = append(uninstallArgs, "--scope", scope)
+	}
+	uninstallArgs = append(uninstallArgs, plugin)
+
 	if err := ui.RunWithSpinner("Uninstalling Infracost plugin...", "Plugin uninstalled", func() {
-		actionErr = runAgentBinary(bin, "plugin", "uninstall", "--scope", scope, plugin)
+		actionErr = runAgentBinary(bin, uninstallArgs...)
 	}); err != nil {
 		return err
 	}
@@ -125,11 +157,14 @@ var supportedAgents = []agent{
 	{
 		name:     "GitHub Copilot (CLI)",
 		binaries: []string{"copilot"},
-		setup: func(bin, scope string) error {
-			return pluginSetup(bin, infracostMarketplace, infracostPlugin, scope)
+		// Copilot CLI's `plugin install` / `plugin uninstall` don't accept
+		// --scope (it has no per-scope concept like Claude Code does);
+		// passing "" tells pluginSetup/pluginTeardown to omit the flag.
+		setup: func(bin, _ string) error {
+			return pluginSetup(bin, infracostMarketplace, infracostPlugin, "")
 		},
-		teardown: func(bin, scope string) error {
-			return pluginTeardown(bin, infracostMarketplaceName, infracostPlugin, scope)
+		teardown: func(bin, _ string) error {
+			return pluginTeardown(bin, infracostMarketplaceName, infracostPlugin, "")
 		},
 		check: func(bin string) (bool, error) {
 			return pluginCheck(bin, "infracost")
