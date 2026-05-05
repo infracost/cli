@@ -57,11 +57,11 @@ type summaryData struct {
 // tags) lives at the resource level so downstream consumers don't need a
 // separate drill-in call.
 type failingPolicyEntry struct {
-	Kind           string                                `json:"kind"`
-	Name           string                                `json:"name"`
-	Slug           string                                `json:"slug,omitempty"`
-	Message        string                                `json:"message,omitempty"`
-	Project        string                                `json:"project"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Slug    string `json:"slug,omitempty"`
+	Message string `json:"message,omitempty"`
+	Project string `json:"project"`
 	// TagSchema is the policy's per-key tag schema (allowed values, regex,
 	// mandatory flag), present only for tagging entries. Carried here so the
 	// summary's failing list is self-contained — consumers don't need to
@@ -176,6 +176,7 @@ func WriteSummary(w io.Writer, data *format.Output, opts Options) error {
 	var inner bytes.Buffer
 	fmt.Fprintln(&inner, ui.Bold("Scan Summary"))
 	fmt.Fprintln(&inner)
+
 
 	rows := []kvRow{}
 	if s.Projects > 1 {
