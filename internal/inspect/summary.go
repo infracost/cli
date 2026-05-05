@@ -31,10 +31,12 @@ type summaryData struct {
 	CostedResources        int              `json:"costed_resources"`
 	FreeResources          int              `json:"free_resources"`
 	MonthlyCost            *rat.Rat         `json:"monthly_cost"`
-	FinopsPolicies         int              `json:"finops_policies"`
-	FailingPolicies        int              `json:"failing_policies"`
-	TaggingPolicies        int              `json:"tagging_policies"`
-	FailingTaggingPolicies int              `json:"failing_tagging_policies"`
+	FinopsPolicies                  int              `json:"finops_policies"`
+	FailingPolicies                 int              `json:"failing_policies"`
+	DistinctFailingFinopsResources  int              `json:"distinct_failing_finops_resources,omitempty"`
+	TaggingPolicies                 int              `json:"tagging_policies"`
+	FailingTaggingPolicies          int              `json:"failing_tagging_policies"`
+	DistinctFailingTaggingResources int              `json:"distinct_failing_tagging_resources,omitempty"`
 	Guardrails             int              `json:"guardrails"`
 	TriggeredGuardrails    int              `json:"triggered_guardrails"`
 	Budgets                int              `json:"budgets"`
@@ -103,10 +105,14 @@ func summaryFieldValue(s summaryData, field, currency string) string {
 		return fmt.Sprintf("%d", s.FinopsPolicies)
 	case "failing_policies":
 		return fmt.Sprintf("%d", s.FailingPolicies)
+	case "distinct_failing_finops_resources":
+		return fmt.Sprintf("%d", s.DistinctFailingFinopsResources)
 	case "tagging_policies":
 		return fmt.Sprintf("%d", s.TaggingPolicies)
 	case "failing_tagging_policies":
 		return fmt.Sprintf("%d", s.FailingTaggingPolicies)
+	case "distinct_failing_tagging_resources":
+		return fmt.Sprintf("%d", s.DistinctFailingTaggingResources)
 	case "guardrails":
 		return fmt.Sprintf("%d", s.Guardrails)
 	case "triggered_guardrails":
@@ -290,6 +296,11 @@ func writeProjectTable(w io.Writer, projects []projectSummary) {
 func buildSummary(data *format.Output) summaryData {
 	s := summaryData{MonthlyCost: rat.Zero}
 
+	// Track distinct resource addresses across projects so the same address
+	// failing in two projects (or two policies) doesn't double-count.
+	failingFinopsAddrs := map[string]struct{}{}
+	failingTaggingAddrs := map[string]struct{}{}
+
 	for _, p := range data.Projects {
 		s.Projects++
 		ps := projectSummary{
@@ -334,6 +345,9 @@ func buildSummary(data *format.Output) summaryData {
 			if len(f.FailingResources) > 0 {
 				s.FailingPolicies++
 				ps.FinopsFailingPolicies++
+				for _, fr := range f.FailingResources {
+					failingFinopsAddrs[fr.Name] = struct{}{}
+				}
 				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
 					Kind:          "finops",
 					Name:          f.PolicyName,
@@ -351,6 +365,9 @@ func buildSummary(data *format.Output) summaryData {
 			if len(t.FailingResources) > 0 {
 				s.FailingTaggingPolicies++
 				ps.TaggingFailingPolicies++
+				for _, tr := range t.FailingResources {
+					failingTaggingAddrs[tr.Address] = struct{}{}
+				}
 				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
 					Kind:           "tagging",
 					Name:           t.PolicyName,
@@ -380,6 +397,9 @@ func buildSummary(data *format.Output) summaryData {
 			s.OverBudgetList = append(s.OverBudgetList, br)
 		}
 	}
+
+	s.DistinctFailingFinopsResources = len(failingFinopsAddrs)
+	s.DistinctFailingTaggingResources = len(failingTaggingAddrs)
 
 	return s
 }

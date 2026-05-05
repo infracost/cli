@@ -651,6 +651,21 @@ func TestSummaryFieldsMulti(t *testing.T) {
 	assertGolden(t, buf.String())
 }
 
+func TestSummaryFieldsDistinctFailingResources(t *testing.T) {
+	// New summary fields exposing distinct address counts for FinOps and
+	// tagging failures. These let consumers answer "how many resources fail
+	// any tagging policy?" with one --summary --fields call instead of
+	// post-processing the per-policy lists.
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{
+		"distinct_failing_finops_resources",
+		"distinct_failing_tagging_resources",
+	}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
 func TestSummaryFieldsUnknownErrors(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
