@@ -102,16 +102,17 @@ jobs:
 
       - name: Package
         env:
-          VERSION: ${{ needs.version.outputs.version }}
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          ARCHIVE="infracost_${VERSION}_${GOOS}_${GOARCH}"
+          ARCHIVE="infracost-${GOOS}-${GOARCH}"
           mkdir -p dist
           if [ "$GOOS" = "windows" ]; then
             (cd bin && zip -r "../dist/${ARCHIVE}.zip" "infracost.exe")
+            (cd dist && shasum -a 256 "${ARCHIVE}.zip" > "${ARCHIVE}.zip.sha256")
           else
             tar -czf "dist/${ARCHIVE}.tar.gz" -C bin infracost
+            (cd dist && shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256")
           fi
 
       - name: Upload

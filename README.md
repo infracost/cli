@@ -11,24 +11,28 @@ It currently supports Terraform, Terragrunt, and CloudFormation.
 
 ## Installation
 
-Download the latest release archive for your platform from the
-[GitHub Releases page](https://github.com/infracost/cli/releases), then extract the binary and place it somewhere on
-your `PATH`.
-
-For example, on macOS (Apple Silicon):
+The quickest way to install on macOS or Linux:
 
 ```bash
-# Download and extract
-tar -xzf infracost_0.0.2_darwin_arm64.tar.gz
-
-# Move the binary onto your PATH
-mv infracost /usr/local/bin/infracost
+curl -fsSL https://raw.githubusercontent.com/infracost/cli/main/scripts/install.sh | sh
 ```
 
-On Linux (amd64):
+To pin a specific version, set `INFRACOST_VERSION`:
 
 ```bash
-tar -xzf infracost_0.0.2_linux_amd64.tar.gz
+curl -fsSL https://raw.githubusercontent.com/infracost/cli/main/scripts/install.sh | INFRACOST_VERSION=v1.0.0 sh
+```
+
+Or download the archive for your platform from the
+[GitHub Releases page](https://github.com/infracost/cli/releases), extract the binary and place it on your `PATH`:
+
+```bash
+# macOS (Apple Silicon)
+tar -xzf infracost-darwin-arm64.tar.gz
+mv infracost /usr/local/bin/infracost
+
+# Linux (amd64)
+tar -xzf infracost-linux-amd64.tar.gz
 mv infracost /usr/local/bin/infracost
 ```
 

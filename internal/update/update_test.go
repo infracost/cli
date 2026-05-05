@@ -96,7 +96,7 @@ func TestUpdate_NewerVersionAvailable(t *testing.T) {
 	version.Version = "0.0.1"
 
 	binaryContent := []byte("new-binary-content")
-	assetName := expectedAssetName("1.0.0")
+	assetName := expectedAssetName()
 	archive := buildTarGz(t, "infracost", binaryContent)
 	if runtime.GOOS == "windows" {
 		t.Skip("tar.gz test not applicable on windows")
@@ -137,7 +137,7 @@ func TestUpdate_AlreadyUpToDate(t *testing.T) {
 
 	version.Version = "1.0.0"
 
-	assetName := expectedAssetName("1.0.0")
+	assetName := expectedAssetName()
 	srv := fakeGitHubServer(t, "v1.0.0", assetName, nil)
 	defer srv.Close()
 
@@ -170,7 +170,7 @@ func TestUpdate_DevVersionAlwaysUpdates(t *testing.T) {
 	version.Version = "dev"
 
 	binaryContent := []byte("dev-update-binary")
-	assetName := expectedAssetName("0.0.1")
+	assetName := expectedAssetName()
 	archive := buildTarGz(t, "infracost", binaryContent)
 	if runtime.GOOS == "windows" {
 		t.Skip("tar.gz test not applicable on windows")

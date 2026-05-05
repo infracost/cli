@@ -258,7 +258,8 @@ func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	// GitHub requires this header to download release assets as binary.
+	// Required by GitHub's release-asset API endpoint to return the binary
+	// rather than JSON metadata. Harmless on the public download URL.
 	req.Header.Set("Accept", "application/octet-stream")
 
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from plugin manifest

@@ -95,7 +95,7 @@ func main() {
 		osArch := matches[1]
 
 		a := plugins.Artifact{
-			URL:  fmt.Sprintf("https://api.github.com/repos/infracost/cli/releases/assets/%d", asset.GetID()),
+			URL:  fmt.Sprintf("https://infracost.io/downloads/%s/%s", tag, asset.GetName()),
 			SHA:  strings.TrimPrefix(asset.GetDigest(), "sha256:"),
 			Name: asset.GetName(),
 		}

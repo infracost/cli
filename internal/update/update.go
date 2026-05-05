@@ -85,7 +85,7 @@ func Update(ctx context.Context) error {
 			return fmt.Errorf("failed to fetch latest release: %w", err)
 		}
 
-		assetName := expectedAssetName(latestVersion.String())
+		assetName := expectedAssetName()
 		var assetID int64
 		for _, a := range release.Assets {
 			if a.GetName() == assetName {
@@ -145,12 +145,12 @@ var newGitHubClient = func() *github.Client {
 	return github.NewClient(nil)
 }
 
-func expectedAssetName(ver string) string {
+func expectedAssetName() string {
 	ext := "tar.gz"
 	if runtime.GOOS == "windows" {
 		ext = "zip"
 	}
-	return fmt.Sprintf("infracost_%s_%s_%s.%s", ver, runtime.GOOS, runtime.GOARCH, ext)
+	return fmt.Sprintf("infracost-%s-%s.%s", runtime.GOOS, runtime.GOARCH, ext)
 }
 
 func extractBinary(assetName string, data []byte, binaryName string) ([]byte, error) {
