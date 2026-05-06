@@ -193,17 +193,22 @@ func installIDE(i ide) error {
 		}
 		content.WriteString(ui.Code(i.url))
 
+		card := ui.InstructionsCard("Setup instructions for "+i.name, content.String())
 		fmt.Println()
-		fmt.Print(ui.InstructionsCard("Setup instructions for "+i.name, content.String()))
+		fmt.Print(card)
+		// Each \n in the card == one rendered line. The +3 covers the
+		// leading blank line, the prompt's leading "\n", and the user's
+		// echoed Enter.
+		rewind := strings.Count(card, "\n") + 3
 
 		if ui.PressEnter("\nPress enter to continue...") {
+			ui.EraseLastLines(rewind)
 			if err := browser.Open(i.url); err != nil {
-				// On failure we DO show the URL — the user needs it again to
-				// follow it manually. On success we don't, since it's already
-				// in the instructions card.
+				// On failure show the URL — the user needs it again to
+				// follow manually now that the card is gone.
 				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Code(i.url))
 			} else {
-				ui.Success("Opened in your browser.")
+				ui.Successf("Followed setup instructions for %s", i.name)
 			}
 		}
 		return nil

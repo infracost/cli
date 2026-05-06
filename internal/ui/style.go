@@ -81,6 +81,21 @@ func IsInteractive() bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
+// EraseLastLines moves the cursor up n lines and erases from there to
+// the bottom of the screen. Useful for replacing transient TUI fragments
+// (an instructions card the user has acknowledged, a spinner that's
+// finished) with a more compact final state. No-op when stdout isn't a
+// TTY — writing the raw escape codes there would dump as garbage in
+// piped output.
+func EraseLastLines(n int) {
+	if n <= 0 || !ColorEnabled() {
+		return
+	}
+	// CSI n F: move cursor n lines up to column 1.
+	// CSI J:   erase from cursor to end of screen.
+	fmt.Printf("\x1b[%dF\x1b[J", n)
+}
+
 // PressEnter prints a message and waits for the user to press Enter.
 // Returns true if the user pressed Enter, false on EOF or error (e.g.
 // non-interactive stdin).

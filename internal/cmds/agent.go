@@ -387,9 +387,18 @@ func resolveAgentBinary(cfg *config.Config, a agent) (string, error) {
 
 func setupAgent(cfg *config.Config, a agent, scope string) error {
 	if a.manual != "" {
+		card := ui.InstructionsCard("Setup instructions for "+a.name, a.manual)
 		fmt.Println()
-		fmt.Print(ui.InstructionsCard("Setup instructions for "+a.name, a.manual))
-		ui.PressEnter("\nPress enter to continue...")
+		fmt.Print(card)
+		// Each \n in the card == one rendered line. The cursor sits on the
+		// next blank line after the card. The +3 covers the leading blank
+		// line, the prompt's leading "\n", and the user's echoed Enter.
+		rewind := strings.Count(card, "\n") + 3
+
+		if ui.PressEnter("\nPress enter to continue...") {
+			ui.EraseLastLines(rewind)
+			ui.Successf("Followed setup instructions for %s", a.name)
+		}
 		return nil
 	}
 
