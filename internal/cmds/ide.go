@@ -199,17 +199,34 @@ func installIDE(i ide) error {
 		// Each \n in the card == one rendered line. The +3 covers the
 		// leading blank line, the prompt's leading "\n", and the user's
 		// echoed Enter.
-		rewind := strings.Count(card, "\n") + 3
+		cardRewind := strings.Count(card, "\n") + 3
 
+		if !ui.PressEnter("\nPress enter to open browser...") {
+			return nil
+		}
+
+		// First prompt acknowledged: wipe the card + prompt, run the
+		// browser open, and surface a transient "Opened" checkmark so
+		// the user can see the browser actually launched.
+		ui.EraseLastLines(cardRewind)
+		if err := browser.Open(i.url); err != nil {
+			// On failure show the URL — the user needs it again to
+			// follow manually now that the card is gone.
+			ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Code(i.url))
+			return nil
+		}
+		ui.Success("Opened browser window")
+
+		// Second prompt: gates progression so the setup flow doesn't
+		// race ahead before the user has actually completed the
+		// browser-side step. On enter, wipe both the "Opened" line and
+		// this prompt, replace with the final checklist line — same
+		// pattern as the manual flow's single-prompt cleanup.
 		if ui.PressEnter("\nPress enter to continue...") {
-			ui.EraseLastLines(rewind)
-			if err := browser.Open(i.url); err != nil {
-				// On failure show the URL — the user needs it again to
-				// follow manually now that the card is gone.
-				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Code(i.url))
-			} else {
-				ui.Successf("Followed setup instructions for %s", i.name)
-			}
+			// 3 = the "Opened browser window" line + the prompt's
+			// leading "\n" + the user's echoed Enter.
+			ui.EraseLastLines(3)
+			ui.Successf("Followed setup instructions for %s", i.name)
 		}
 		return nil
 	}
