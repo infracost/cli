@@ -71,18 +71,31 @@ func Setup(cfg *config.Config) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if agentName == "" {
+				renderAgentSkipNotice()
+			}
 
 			// Step 3: IDE setup
 			ideName, err := RunIDESetup(true)
 			if err != nil {
 				return err
 			}
+			if ideName == "" {
+				renderIdeSkipNotice()
+			}
 
-			// Step 4: CI setup
+			// Step 4: CI setup. runSetupStep returns nil whether the user
+			// confirmed or declined; track the user's intent through the
+			// closure so we know whether to render a skip notice.
+			ciSkipped := true
 			if err := runSetupStep("Set up CI integration?", func() error {
+				ciSkipped = false
 				return RunCISetup(ctx, cfg, false, false)
 			}); err != nil {
 				return err
+			}
+			if ciSkipped {
+				renderCiSkipNotice()
 			}
 
 			fmt.Println()
@@ -90,6 +103,33 @@ func Setup(cfg *config.Config) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// Skip notices stay on screen once rendered — earlier attempts to
+// surgically remove them when the next step completed proved unreliable
+// across terminals (cursor-position queries time out, bubbletea's exit
+// state varies). Leaving them visible is the safer default; the user
+// retains a record of which steps they skipped and how to run each one
+// later.
+
+func renderAgentSkipNotice() {
+	renderSkipNotice("AI coding agents",
+		"To install AI coding agent integration later, run "+ui.Code("infracost agent setup")+".")
+}
+
+func renderIdeSkipNotice() {
+	renderSkipNotice("IDE",
+		"To install IDE integration later, run "+ui.Code("infracost ide setup")+".")
+}
+
+func renderCiSkipNotice() {
+	renderSkipNotice("CI",
+		"To set up CI integration later, cd into a Terraform, CloudFormation, or CDK project and run "+ui.Code("infracost ci setup")+".")
+}
+
+func renderSkipNotice(name, content string) {
+	fmt.Println()
+	fmt.Print(ui.InstructionsCard("Set up "+name+" later", content))
 }
 
 // setupCompleteContent assembles the celebration card body: the bold
