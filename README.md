@@ -11,25 +11,29 @@ It currently supports Terraform, Terragrunt, and CloudFormation.
 
 ## Installation
 
-Download the latest release archive for your platform from the
-[GitHub Releases page](https://github.com/infracost/cli/releases), then extract the binary and place it somewhere on
-your `PATH`.
-
-For example, on macOS (Apple Silicon):
+The quickest way to install on macOS or Linux:
 
 ```bash
-# Download and extract
-tar -xzf infracost-preview_0.0.2_darwin_arm64.tar.gz
-
-# Move the binary onto your PATH
-mv infracost-preview /usr/local/bin/infracost-preview
+curl -fsSL https://raw.githubusercontent.com/infracost/cli/main/scripts/install.sh | sh
 ```
 
-On Linux (amd64):
+To pin a specific version, set `INFRACOST_VERSION`:
 
 ```bash
-tar -xzf infracost-preview_0.0.2_linux_amd64.tar.gz
-mv infracost-preview /usr/local/bin/infracost-preview
+curl -fsSL https://raw.githubusercontent.com/infracost/cli/main/scripts/install.sh | INFRACOST_VERSION=v1.0.0 sh
+```
+
+Or download the archive for your platform from the
+[GitHub Releases page](https://github.com/infracost/cli/releases), extract the binary and place it on your `PATH`:
+
+```bash
+# macOS (Apple Silicon)
+tar -xzf infracost-darwin-arm64.tar.gz
+mv infracost /usr/local/bin/infracost
+
+# Linux (amd64)
+tar -xzf infracost-linux-amd64.tar.gz
+mv infracost /usr/local/bin/infracost
 ```
 
 On Windows, download the `.zip` archive and extract it to a directory on your `PATH`.
@@ -37,7 +41,7 @@ On Windows, download the `.zip` archive and extract it to a directory on your `P
 Once installed, verify it works:
 
 ```bash
-infracost-preview help
+infracost help
 ```
 
 ### Uninstalling
@@ -47,21 +51,21 @@ Remove the binary and the cached configuration/token data.
 On macOS:
 
 ```bash
-rm $(which infracost-preview)
+rm $(which infracost)
 rm -rf "$HOME/Library/Application Support/infracost"
 ```
 
 On Linux:
 
 ```bash
-rm $(which infracost-preview)
+rm $(which infracost)
 rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/infracost"
 ```
 
 On Windows (PowerShell):
 
 ```powershell
-Remove-Item (Get-Command infracost-preview).Source
+Remove-Item (Get-Command infracost).Source
 Remove-Item -Recurse "$env:APPDATA\infracost"
 ```
 
@@ -79,14 +83,14 @@ If you prefer to build from source:
 Before running any commands, authenticate with Infracost:
 
 ```bash
-infracost-preview login
+infracost login
 ```
 
 This opens a browser-based login flow (PKCE). The resulting token is cached locally so you only need to log in once. If
 you don't have access to a browser or localhost, use the device flow instead:
 
 ```bash
-infracost-preview login --oauth-use-device-flow
+infracost login --oauth-use-device-flow
 ```
 
 For non-interactive environments (CI/CD), set the `INFRACOST_CLI_AUTHENTICATION_TOKEN` environment variable to a
@@ -95,7 +99,7 @@ service account token or personal access token instead of using the login comman
 ### Scan
 
 ```bash
-infracost-preview scan /path/to/directory
+infracost scan /path/to/directory
 ```
 
 The target must be a directory. If no argument is given, it defaults to the current working directory. The CLI will

@@ -85,7 +85,7 @@ func Update(ctx context.Context) error {
 			return fmt.Errorf("failed to fetch latest release: %w", err)
 		}
 
-		assetName := expectedAssetName(latestVersion.String())
+		assetName := expectedAssetName()
 		var assetID int64
 		for _, a := range release.Assets {
 			if a.GetName() == assetName {
@@ -126,7 +126,7 @@ func Update(ctx context.Context) error {
 }
 
 func getBinaryNames() []string {
-	candidates := []string{"infracost-preview", "infracost"}
+	candidates := []string{"infracost", "infracost-preview"}
 	output := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		if runtime.GOOS == "windows" {
@@ -145,12 +145,12 @@ var newGitHubClient = func() *github.Client {
 	return github.NewClient(nil)
 }
 
-func expectedAssetName(ver string) string {
+func expectedAssetName() string {
 	ext := "tar.gz"
 	if runtime.GOOS == "windows" {
 		ext = "zip"
 	}
-	return fmt.Sprintf("infracost-preview_%s_%s_%s.%s", ver, runtime.GOOS, runtime.GOARCH, ext)
+	return fmt.Sprintf("infracost-%s-%s.%s", runtime.GOOS, runtime.GOARCH, ext)
 }
 
 func extractBinary(assetName string, data []byte, binaryName string) ([]byte, error) {
@@ -218,7 +218,7 @@ var replaceBinary = func(newBinary []byte) error {
 
 	// Write new binary to a temp file in the same directory (ensures same filesystem for rename).
 	dir := filepath.Dir(execPath)
-	tmp, err := os.CreateTemp(dir, ".infracost-preview-update-*")
+	tmp, err := os.CreateTemp(dir, ".infracost-update-*")
 	if err != nil {
 		return err
 	}

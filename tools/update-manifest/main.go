@@ -82,7 +82,7 @@ func main() {
 		}
 	}
 
-	re := regexp.MustCompile(fmt.Sprintf(`^%s_%s_([^_]+_[^.]+)\.`, regexp.QuoteMeta(cfg.Plugin), regexp.QuoteMeta(version)))
+	re := regexp.MustCompile(fmt.Sprintf(`^%s-([^-]+)-([^.]+)\.`, regexp.QuoteMeta(cfg.Plugin)))
 
 	v := plugins.Version{
 		Artifacts: make(map[string]plugins.Artifact),
@@ -92,10 +92,12 @@ func main() {
 		if matches == nil {
 			continue
 		}
-		osArch := matches[1]
+		// Map keys stay <goos>_<goarch> (underscore) since the runtime looks up
+		// platforms as runtime.GOOS + "_" + runtime.GOARCH.
+		osArch := fmt.Sprintf("%s_%s", matches[1], matches[2])
 
 		a := plugins.Artifact{
-			URL:  fmt.Sprintf("https://api.github.com/repos/infracost/cli/releases/assets/%d", asset.GetID()),
+			URL:  fmt.Sprintf("https://infracost.io/downloads/%s/%s", tag, asset.GetName()),
 			SHA:  strings.TrimPrefix(asset.GetDigest(), "sha256:"),
 			Name: asset.GetName(),
 		}
