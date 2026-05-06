@@ -22,7 +22,6 @@ type iconProtocol int
 const (
 	iconNone iconProtocol = iota
 	iconKitty
-	iconITerm
 )
 
 // Inline icon dimensions in terminal cells. One row keeps the icon on
@@ -76,8 +75,13 @@ func detectIconProtocol() iconProtocol {
 		switch {
 		case rasterm.IsKittyCapable():
 			iconCap = iconKitty
-		case rasterm.IsItermCapable():
-			iconCap = iconITerm
+		// iTerm2 is intentionally disabled: it raises a permission
+		// dialog ("The terminal has initiated display of a file …
+		// Allow it?") for every inline image regardless of size, and
+		// when the user denies, the protocol bytes leak onto the
+		// terminal as raw base64. That defeats the first-run delight
+		// the icons and banner are meant to add. Kitty/Ghostty/
+		// WezTerm display silently and keep working great.
 		default:
 			iconCap = iconNone
 		}
@@ -109,14 +113,6 @@ func renderIcon(w io.Writer, slug string) error {
 		return nil
 	}
 	switch proto {
-	case iconITerm:
-		return rasterm.ItermCopyFileInlineWithOptions(w, bytes.NewReader(data), rasterm.ItermImgOpts{
-			DisplayInline:     true,
-			Width:             fmt.Sprintf("%d", iconCols),
-			Height:            fmt.Sprintf("%d", iconRows),
-			IgnoreAspectRatio: true,
-			Size:              int64(len(data)),
-		})
 	case iconKitty:
 		img, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {

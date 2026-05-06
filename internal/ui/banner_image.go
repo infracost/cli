@@ -2,7 +2,6 @@ package ui
 
 import (
 	"bytes"
-	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -153,24 +152,13 @@ func imageBanner(version string) string {
 	}
 
 	var out bytes.Buffer
-	switch detectIconProtocol() {
-	case iconITerm:
-		err = rasterm.ItermCopyFileInlineWithOptions(&out, &pngBuf, rasterm.ItermImgOpts{
-			DisplayInline:     true,
-			Width:             fmt.Sprintf("%d", w),
-			Height:            fmt.Sprintf("%d", bannerRows),
-			IgnoreAspectRatio: true,
-			Size:              int64(pngBuf.Len()),
-		})
-	case iconKitty:
-		err = rasterm.KittyWriteImage(&out, canvas, rasterm.KittyImgOpts{
-			DstCols: uint32(w),
-			DstRows: uint32(bannerRows),
-		})
-	default:
+	if detectIconProtocol() != iconKitty {
 		return ""
 	}
-	if err != nil {
+	if err := rasterm.KittyWriteImage(&out, canvas, rasterm.KittyImgOpts{
+		DstCols: uint32(w),
+		DstRows: uint32(bannerRows),
+	}); err != nil {
 		return ""
 	}
 

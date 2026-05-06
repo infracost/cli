@@ -31,9 +31,12 @@ func TestDetectIconProtocol(t *testing.T) {
 			want: iconNone,
 		},
 		{
-			name: "iTerm via LC_TERMINAL",
+			// iTerm2 detection is intentionally disabled — see the
+			// comment in detectIconProtocol. The env vars iTerm2 sets
+			// must NOT activate the image path.
+			name: "iTerm2 is intentionally not capable (LC_TERMINAL)",
 			env:  map[string]string{"LC_TERMINAL": "iterm2"},
-			want: iconITerm,
+			want: iconNone,
 		},
 		{
 			name: "Kitty via KITTY_WINDOW_ID",
@@ -41,18 +44,18 @@ func TestDetectIconProtocol(t *testing.T) {
 			want: iconKitty,
 		},
 		{
-			name: "tmux blocks even when iTerm capable",
-			env:  map[string]string{"LC_TERMINAL": "iterm2", "TMUX": "/tmp/tmux"},
+			name: "tmux blocks even when Kitty capable",
+			env:  map[string]string{"KITTY_WINDOW_ID": "1", "TMUX": "/tmp/tmux"},
 			want: iconNone,
 		},
 		{
 			name: "INFRACOST_ICONS=on overrides tmux block",
-			env:  map[string]string{"LC_TERMINAL": "iterm2", "TMUX": "/tmp/tmux", "INFRACOST_ICONS": "on"},
-			want: iconITerm,
+			env:  map[string]string{"KITTY_WINDOW_ID": "1", "TMUX": "/tmp/tmux", "INFRACOST_ICONS": "on"},
+			want: iconKitty,
 		},
 		{
 			name: "INFRACOST_ICONS=off forces none",
-			env:  map[string]string{"LC_TERMINAL": "iterm2", "INFRACOST_ICONS": "off"},
+			env:  map[string]string{"KITTY_WINDOW_ID": "1", "INFRACOST_ICONS": "off"},
 			want: iconNone,
 		},
 	}
@@ -73,7 +76,7 @@ func TestDetectIconProtocol(t *testing.T) {
 }
 
 func TestRenderIconUnknownSlug(t *testing.T) {
-	t.Setenv("LC_TERMINAL", "iterm2")
+	t.Setenv("KITTY_WINDOW_ID", "1")
 	resetIconDetection(t)
 	var buf bytes.Buffer
 	if err := renderIcon(&buf, "definitely-not-a-real-slug"); err != nil {
@@ -81,21 +84,6 @@ func TestRenderIconUnknownSlug(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Fatalf("expected no output for missing slug, got %d bytes", buf.Len())
-	}
-}
-
-func TestRenderIconITermEmitsHeader(t *testing.T) {
-	t.Setenv("LC_TERMINAL", "iterm2")
-	t.Setenv("INFRACOST_ICONS", "")
-	t.Setenv("TMUX", "")
-	t.Setenv("STY", "")
-	resetIconDetection(t)
-	var buf bytes.Buffer
-	if err := renderIcon(&buf, "claude"); err != nil {
-		t.Fatalf("renderIcon: %v", err)
-	}
-	if !strings.HasPrefix(buf.String(), "\x1b]1337;File=") {
-		t.Fatalf("expected iTerm image header prefix, got %q", buf.String()[:min(40, buf.Len())])
 	}
 }
 
