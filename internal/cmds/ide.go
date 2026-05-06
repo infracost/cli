@@ -26,26 +26,91 @@ type ide struct {
 	enabled    bool                         // temporarily disable IDEs under development
 }
 
+// vscodeFamilyInstall returns an *exec.Cmd that runs the given binary's
+// `--install-extension` subcommand for the Infracost extension. Used by
+// every VS Code-based IDE (VS Code, VSCodium, Cursor, Windsurf) — they
+// all ship a `code`-style CLI that mirrors the same flag.
+func vscodeFamilyInstall(bin string) *exec.Cmd {
+	return exec.Command(bin, "--install-extension", "infracost.infracost") //nolint:gosec // bin resolved from PATH
+}
+
+// vscodeFamilyCheck reports whether the Infracost extension is installed
+// in the VS Code-style IDE backed by bin. Same `--list-extensions`
+// invocation works across the family.
+func vscodeFamilyCheck(bin string) (bool, error) {
+	var out bytes.Buffer
+	cmd := exec.Command(bin, "--list-extensions") //nolint:gosec // bin resolved from PATH
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return false, err
+	}
+	return strings.Contains(out.String(), "infracost.infracost"), nil
+}
+
+// extensionPanelManual returns the standard "Open the Extensions panel,
+// search for Infracost, click Install" instruction string used by every
+// IDE that supports the Infracost VS Code extension via UI install only
+// (e.g. Antigravity, Eclipse Theia). Wrapped in fmt.Sprintf at package
+// init time so ui.Code's escapes are baked in alongside the surrounding
+// text.
+func extensionPanelManual(name string) string {
+	return fmt.Sprintf(`To install the Infracost extension in %s:
+  1. Open the Extensions panel
+  2. Search for %s
+  3. Click %s`,
+		name,
+		ui.Code("Infracost"),
+		ui.Code("Install"))
+}
+
 var supportedIDEs = []ide{
 	{
-		name:     "VS Code",
-		icon:     "vscode",
-		binaries: []string{"code", "codium"},
-		installCmd: func(bin string) *exec.Cmd {
-			return exec.Command(bin, "--install-extension", "infracost.infracost")
-		},
-		check: func(bin string) (bool, error) {
-			var out bytes.Buffer
-			cmd := exec.Command(bin, "--list-extensions") //nolint:gosec // bin is resolved from PATH
-			cmd.Stdout = &out
-			cmd.Stderr = &out
-			if err := cmd.Run(); err != nil {
-				return false, err
-			}
-			return strings.Contains(out.String(), "infracost.infracost"), nil
-		},
+		name:       "VS Code",
+		icon:       "vscode",
+		binaries:   []string{"code"},
+		installCmd: vscodeFamilyInstall,
+		check:      vscodeFamilyCheck,
+		enabled:    true,
+		url:        "https://marketplace.visualstudio.com/items?itemName=infracost.infracost",
+	},
+	{
+		name:       "Cursor",
+		icon:       "cursor",
+		binaries:   []string{"cursor"},
+		installCmd: vscodeFamilyInstall,
+		check:      vscodeFamilyCheck,
+		enabled:    true,
+		// Cursor's marketplace mirrors VS Code's; same extension ID.
+		url: "https://marketplace.visualstudio.com/items?itemName=infracost.infracost",
+	},
+	{
+		name:       "Windsurf",
+		icon:       "windsurf",
+		binaries:   []string{"windsurf"},
+		installCmd: vscodeFamilyInstall,
+		check:      vscodeFamilyCheck,
+		enabled:    true,
+		// Windsurf bundles its own marketplace experience inside the
+		// Extensions panel; the public-facing fallback is Open VSX.
+		url: "https://open-vsx.org/extension/infracost/infracost",
+	},
+	{
+		name:       "VSCodium",
+		icon:       "vscodium",
+		binaries:   []string{"codium"},
+		installCmd: vscodeFamilyInstall,
+		check:      vscodeFamilyCheck,
+		enabled:    true,
+		// VSCodium's default registry is Open VSX (where the Infracost
+		// extension is published) rather than the VS Marketplace.
+		url: "https://open-vsx.org/extension/infracost/infracost",
+	},
+	{
+		name:    "Google Antigravity",
+		icon:    "antigravity",
+		manual:  extensionPanelManual("Google Antigravity"),
 		enabled: true,
-		url:     "https://marketplace.visualstudio.com/items?itemName=infracost.infracost",
 	},
 	{
 		name:    "JetBrains (IntelliJ, GoLand, etc.)",
@@ -53,6 +118,12 @@ var supportedIDEs = []ide{
 		url:     "https://plugins.jetbrains.com/plugin/24761-infracost",
 		enabled: true,
 		hint:    fmt.Sprintf("In a moment your browser will open the JetBrains plugin page. Click %s there, then follow the prompts in your IDE to complete setup.", ui.Code("Install")),
+	},
+	{
+		name:    "Eclipse Theia",
+		icon:    "theia",
+		manual:  extensionPanelManual("Eclipse Theia"),
+		enabled: true,
 	},
 	{
 		name:     "Zed",
@@ -155,7 +226,19 @@ func ideIconSlug(name string) string {
 
 func installIDE(i ide) error {
 	if i.manual != "" {
-		fmt.Println(i.manual)
+		// Mirror the agent manual flow: render the steps inside an
+		// InstructionsCard, gate progression on a "press enter" prompt,
+		// then replace the card with a single checklist line so the
+		// setup output stays compact.
+		card := ui.InstructionsCard("Setup instructions for "+i.name, i.manual)
+		fmt.Println()
+		fmt.Print(card)
+		rewind := strings.Count(card, "\n") + 3
+
+		if ui.PressEnter("\nPress enter to continue...") {
+			ui.EraseLastLines(rewind)
+			ui.Successf("Followed setup instructions for %s", i.name)
+		}
 		return nil
 	}
 

@@ -154,6 +154,14 @@ var supportedAgents = []agent{
 		check: func(bin string) (bool, error) {
 			return pluginCheck(bin, "infracost")
 		},
+		manual: fmt.Sprintf(`To install Infracost skills in Claude Code:
+  1. Install Claude Code: %s
+  2. Run the following commands:
+     %s
+     %s`,
+			ui.Code("https://docs.claude.com/en/docs/claude-code/setup"),
+			ui.Code("claude plugin marketplace add infracost/agent-skills"),
+			ui.Code("claude plugin install infracost@infracost")),
 		enabled: true,
 	},
 	{
@@ -172,6 +180,14 @@ var supportedAgents = []agent{
 		check: func(bin string) (bool, error) {
 			return pluginCheck(bin, "infracost")
 		},
+		manual: fmt.Sprintf(`To install Infracost skills in GitHub Copilot CLI:
+  1. Install GitHub Copilot CLI: %s
+  2. Run the following commands:
+     %s
+     %s`,
+			ui.Code("https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli"),
+			ui.Code("copilot plugin marketplace add infracost/agent-skills"),
+			ui.Code("copilot plugin install infracost@infracost")),
 		enabled: true,
 	},
 	{
@@ -216,9 +232,47 @@ var supportedAgents = []agent{
 		enabled: true,
 	},
 	{
-		name:    "Gemini CLI",
-		icon:    "gemini",
-		enabled: false,
+		name:     "Gemini CLI",
+		icon:     "gemini",
+		binaries: []string{"gemini"},
+		// Gemini CLI manages skills via a different verb namespace from
+		// Claude/Copilot's plugin marketplace, so it gets a custom setup
+		// rather than going through pluginSetup. Removal isn't documented
+		// upstream, so we surface manual instructions for that path.
+		setup: func(bin, _ string) error {
+			var actionErr error
+			if err := ui.RunWithSpinner("Installing Infracost skill...", "Skill installed", func() {
+				// `--consent` skips Gemini's interactive confirmation
+				// prompt, which would otherwise see EOF on the
+				// inherited (closed) stdin and silently cancel the
+				// install — exiting 0 with nothing actually installed.
+				actionErr = runAgentBinary(bin, "skills", "install", "--consent", infracostSkillsRepo+".git")
+			}); err != nil {
+				return err
+			}
+			if actionErr != nil && !isAlreadyConfiguredErr(actionErr) {
+				return fmt.Errorf("installing skill: %w", actionErr)
+			}
+			return nil
+		},
+		check: func(bin string) (bool, error) {
+			var out bytes.Buffer
+			cmd := exec.Command(bin, "skills", "list") //nolint:gosec // bin resolved from PATH
+			cmd.Stdout = &out
+			cmd.Stderr = &out
+			if err := cmd.Run(); err != nil {
+				return false, err
+			}
+			return strings.Contains(out.String(), "infracost"), nil
+		},
+		manual: fmt.Sprintf(`To install Infracost skills in Gemini CLI:
+  1. Install Gemini CLI: %s
+  2. Run the following command:
+     %s`,
+			ui.Code("https://geminicli.com/docs/"),
+			ui.Code("gemini skills install "+infracostSkillsRepo+".git")),
+		remove:  `To remove Infracost skills from Gemini CLI, remove the infracost skills from your Gemini configuration.`,
+		enabled: true,
 	},
 }
 
@@ -386,6 +440,25 @@ func resolveAgentBinary(cfg *config.Config, a agent) (string, error) {
 }
 
 func setupAgent(cfg *config.Config, a agent, scope string) error {
+	// Try the scriptable install first when one is available and the
+	// agent's CLI is on PATH. If the binary is missing, fall through to
+	// manual instructions so the user gets pointed at how to install
+	// the CLI itself plus the commands they'll need to run after.
+	if a.setup != nil {
+		if bin, err := resolveAgentBinary(cfg, a); err == nil {
+			if err := a.setup(bin, scope); err != nil {
+				return err
+			}
+			ui.Successf("Infracost skills enabled for %s. Restart your agent to activate.", a.name)
+			return nil
+		}
+	}
+
+	// Manual instructions — used both for tools that have no scriptable
+	// install AND as the fallback for scriptable tools whose CLI isn't
+	// installed yet. The card pauses on "press enter to continue" then
+	// collapses to a single checklist line so subsequent setup steps
+	// stay tidy.
 	if a.manual != "" {
 		card := ui.InstructionsCard("Setup instructions for "+a.name, a.manual)
 		fmt.Println()
@@ -402,36 +475,29 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 		return nil
 	}
 
+	// Legacy URL fallback: warn and open a marketplace/install page
+	// in the user's browser. Kept for entries that haven't been moved
+	// to the manual-instructions style yet.
+	if a.url != "" {
+		ui.Warnf("Could not find a CLI for %s on your PATH.", a.name)
+		if a.hint != "" {
+			fmt.Println(a.hint)
+		}
+		fmt.Printf("  %s\n", ui.Code(a.url))
+		if ui.PressEnter("\nPress Enter to open in your browser...") {
+			if err := browser.Open(a.url); err != nil {
+				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Code(a.url))
+			} else {
+				ui.Successf("Opened %s in your browser.", ui.Code(a.url))
+			}
+		}
+		return nil
+	}
+
 	if a.setup == nil {
 		return fmt.Errorf("no setup method available for %s", a.name)
 	}
-
-	bin, err := resolveAgentBinary(cfg, a)
-	if err != nil {
-		if a.url != "" {
-			ui.Warnf("Could not find a CLI for %s on your PATH.", a.name)
-			if a.hint != "" {
-				fmt.Println(a.hint)
-			}
-			fmt.Printf("  %s\n", ui.Code(a.url))
-			if ui.PressEnter("\nPress Enter to open in your browser...") {
-				if err := browser.Open(a.url); err != nil {
-					ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Code(a.url))
-				} else {
-					ui.Successf("Opened %s in your browser.", ui.Code(a.url))
-				}
-			}
-			return nil
-		}
-		return err
-	}
-
-	if err := a.setup(bin, scope); err != nil {
-		return err
-	}
-
-	ui.Successf("Infracost skills enabled for %s. Restart your agent to activate.", a.name)
-	return nil
+	return fmt.Errorf("%s CLI not found on PATH", a.name)
 }
 
 func removeAgent(cfg *config.Config, a agent, scope string) error {
