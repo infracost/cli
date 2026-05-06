@@ -84,17 +84,27 @@ func Setup(cfg *config.Config) *cobra.Command {
 				renderIdeSkipNotice()
 			}
 
-			// Step 4: CI setup. runSetupStep returns nil whether the user
-			// confirmed or declined; track the user's intent through the
-			// closure so we know whether to render a skip notice.
-			ciSkipped := true
-			if err := runSetupStep("Set up CI integration?", func() error {
-				ciSkipped = false
-				return RunCISetup(ctx, cfg, false, false)
-			}); err != nil {
-				return err
-			}
-			if ciSkipped {
+			// Step 4: CI setup. Only offered if the preflight passes (git
+			// repository with a parseable origin remote). When it doesn't,
+			// we skip the prompt entirely and fall straight through to the
+			// skip notice — asking the user a question we'd refuse to act
+			// on is worse UX than just telling them what they need.
+			//
+			// runSetupStep returns nil whether the user confirmed or
+			// declined; track the user's intent through the closure so we
+			// know whether to render a skip notice in the offered case.
+			if CISetupAvailable() {
+				ciSkipped := true
+				if err := runSetupStep("Set up CI integration?", func() error {
+					ciSkipped = false
+					return RunCISetup(ctx, cfg, false, false)
+				}); err != nil {
+					return err
+				}
+				if ciSkipped {
+					renderCiSkipNotice()
+				}
+			} else {
 				renderCiSkipNotice()
 			}
 
@@ -124,7 +134,7 @@ func renderIdeSkipNotice() {
 
 func renderCiSkipNotice() {
 	renderSkipNotice("CI",
-		"To set up CI integration later, cd into a Terraform, CloudFormation, or CDK project and run "+ui.Code("infracost ci setup")+".")
+		"To set up CI integration later, cd into a Terraform, CloudFormation, or CDK project in a git repository and run "+ui.Code("infracost ci setup")+".")
 }
 
 func renderSkipNotice(name, content string) {
