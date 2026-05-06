@@ -52,7 +52,7 @@ var supportedIDEs = []ide{
 		icon:    "jetbrains",
 		url:     "https://plugins.jetbrains.com/plugin/24761-infracost",
 		enabled: true,
-		hint:    "Click the \"Install\" button on the plugin page, then follow the prompts in your IDE.",
+		hint:    fmt.Sprintf("In a moment your browser will open the JetBrains plugin page. Click %s there, then follow the prompts in your IDE to complete setup.", ui.Code("Install")),
 	},
 	{
 		name:     "Zed",
@@ -185,15 +185,19 @@ func installIDE(i ide) error {
 		if len(i.binaries) > 0 {
 			ui.Warnf("Could not find a CLI for %s on your PATH.", i.name)
 		}
+		fmt.Println()
 		if i.hint != "" {
 			fmt.Println(i.hint)
 		}
 		fmt.Printf("  %s\n", ui.Code(i.url))
 		if ui.PressEnter("\nPress Enter to open in your browser...") {
 			if err := browser.Open(i.url); err != nil {
+				// On failure we DO show the URL — the user needs it again to
+				// follow it manually. On success we don't, since it's already
+				// on screen and re-printing it adds noise.
 				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Code(i.url))
 			} else {
-				ui.Successf("Opened %s in your browser.", ui.Code(i.url))
+				ui.Success("Opened in your browser.")
 			}
 		}
 		return nil

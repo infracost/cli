@@ -178,11 +178,15 @@ var supportedAgents = []agent{
 		name:     "GitHub Copilot (VS Code)",
 		icon:     "copilot",
 		binaries: []string{"code", "codium"},
-		manual: `To install Infracost skills in GitHub Copilot for VS Code:
-  1. Open the Command Palette (Cmd+Shift+P / Ctrl+Shift+P)
-  2. Run "Chat: Install Plugin From Source"
-  3. Enter the repository URL: ` + infracostSkillsRepo + `
+		manual: fmt.Sprintf(`To install Infracost skills in GitHub Copilot for VS Code:
+  1. Open the Command Palette (%s / %s)
+  2. Run %s
+  3. Enter the repository URL: %s
   4. Restart VS Code`,
+			ui.Code("Cmd+Shift+P"),
+			ui.Code("Ctrl+Shift+P"),
+			ui.Code(`"Chat: Install Plugin From Source"`),
+			ui.Code(infracostSkillsRepo)),
 		remove: `To remove Infracost skills from GitHub Copilot for VS Code:
   1. Open the Command Palette (Cmd+Shift+P / Ctrl+Shift+P)
   2. Run "Chat: Uninstall Plugin"
@@ -383,7 +387,9 @@ func resolveAgentBinary(cfg *config.Config, a agent) (string, error) {
 
 func setupAgent(cfg *config.Config, a agent, scope string) error {
 	if a.manual != "" {
+		fmt.Println()
 		fmt.Println(a.manual)
+		fmt.Println()
 		return nil
 	}
 
