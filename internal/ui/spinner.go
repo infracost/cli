@@ -11,8 +11,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// spinnerStyle uses the brand-primary color (#6C70F2).
-var spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#6C70F2"))
+// spinnerStyle uses the brand-primary color, picking the dark- or
+// light-terminal variant via lipgloss adaptive colors.
+var spinnerStyle = lipgloss.NewStyle().Foreground(BrandColor)
 
 // isTTY reports whether stderr is a terminal. Spinners are suppressed when
 // output is piped or running in a non-interactive environment.
