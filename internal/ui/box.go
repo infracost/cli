@@ -93,9 +93,28 @@ func wrapLine(out *strings.Builder, line string, maxWidth int) {
 		out.WriteString(line)
 		return
 	}
-	cur := 0
+
+	// Capture the original line's leading whitespace so wrapped
+	// continuation lines preserve the same indent. Without this, an
+	// indented bullet like "  →  Open …" loses its 2-space prefix once
+	// strings.FieldsSeq drops whitespace during the wrap, and the
+	// bullet visually breaks out of the surrounding list.
+	indent := ""
+	rest := line
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if c != ' ' && c != '\t' {
+			indent = line[:i]
+			rest = line[i:]
+			break
+		}
+	}
+	indentW := PrintableWidth(indent)
+
+	out.WriteString(indent)
+	cur := indentW
 	first := true
-	for word := range strings.FieldsSeq(line) {
+	for word := range strings.FieldsSeq(rest) {
 		ww := PrintableWidth(word)
 		switch {
 		case ww > maxWidth:
@@ -103,7 +122,8 @@ func wrapLine(out *strings.Builder, line string, maxWidth int) {
 			if !first {
 				if cur+1 > maxWidth {
 					out.WriteByte('\n')
-					cur = 0
+					out.WriteString(indent)
+					cur = indentW
 				} else {
 					out.WriteByte(' ')
 					cur++
@@ -114,8 +134,9 @@ func wrapLine(out *strings.Builder, line string, maxWidth int) {
 				take := maxWidth - cur
 				if take <= 0 {
 					out.WriteByte('\n')
-					cur = 0
-					take = maxWidth
+					out.WriteString(indent)
+					cur = indentW
+					take = maxWidth - indentW
 				}
 				if take > len(runes) {
 					take = len(runes)
@@ -125,13 +146,14 @@ func wrapLine(out *strings.Builder, line string, maxWidth int) {
 				runes = runes[take:]
 				if len(runes) > 0 {
 					out.WriteByte('\n')
-					cur = 0
+					out.WriteString(indent)
+					cur = indentW
 				}
 			}
 			first = false
 		case first:
 			out.WriteString(word)
-			cur = ww
+			cur = indentW + ww
 			first = false
 		case cur+1+ww <= maxWidth:
 			out.WriteByte(' ')
@@ -139,8 +161,9 @@ func wrapLine(out *strings.Builder, line string, maxWidth int) {
 			cur += 1 + ww
 		default:
 			out.WriteByte('\n')
+			out.WriteString(indent)
 			out.WriteString(word)
-			cur = ww
+			cur = indentW + ww
 		}
 	}
 }

@@ -158,7 +158,7 @@ func nextStepsContent(agentName, ideName string) string {
 	// (gradient border + brand accents) rather than three competing
 	// hues. Per-service brand colours on the product names stay since
 	// they're each option's identity, not a generic highlight.
-	arrow := "  " + ui.Brand("→") + "  "
+	arrow := "  " + ui.Brand("→") + " "
 	var b strings.Builder
 	step := func(format string, args ...any) {
 		b.WriteString(arrow)
