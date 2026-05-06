@@ -121,8 +121,8 @@ jobs:
         env:
           MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
         run: |
-          codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" bin/infracost-preview
-          codesign --verify --strict --verbose=2 bin/infracost-preview
+          codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" bin/infracost
+          codesign --verify --strict --verbose=2 bin/infracost
 
       # TODO: Restore --wait (and consider --timeout 30m) once Apple's notary
       # service completes our Team ID's first submission. First-time review is
@@ -139,7 +139,7 @@ jobs:
           MACOS_NOTARIZATION_API_ISSUER_ID: ${{ vars.MACOS_NOTARIZATION_API_ISSUER_ID }}
         run: |
           echo "$MACOS_NOTARIZATION_API_KEY" | base64 --decode > notary-key.p8
-          ditto -c -k --keepParent bin/infracost-preview notarize.zip
+          ditto -c -k --keepParent bin/infracost notarize.zip
           xcrun notarytool submit notarize.zip \
             --key notary-key.p8 \
             --key-id "$MACOS_NOTARIZATION_API_KEY_ID" \
