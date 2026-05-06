@@ -185,16 +185,22 @@ func installIDE(i ide) error {
 		if len(i.binaries) > 0 {
 			ui.Warnf("Could not find a CLI for %s on your PATH.", i.name)
 		}
-		fmt.Println()
+
+		var content strings.Builder
 		if i.hint != "" {
-			fmt.Println(i.hint)
+			content.WriteString(i.hint)
+			content.WriteString("\n\n")
 		}
-		fmt.Printf("  %s\n", ui.Code(i.url))
-		if ui.PressEnter("\nPress Enter to open in your browser...") {
+		content.WriteString(ui.Code(i.url))
+
+		fmt.Println()
+		fmt.Print(ui.InstructionsCard("Setup instructions for "+i.name, content.String()))
+
+		if ui.PressEnter("\nPress enter to continue...") {
 			if err := browser.Open(i.url); err != nil {
 				// On failure we DO show the URL — the user needs it again to
 				// follow it manually. On success we don't, since it's already
-				// on screen and re-printing it adds noise.
+				// in the instructions card.
 				ui.Failf("Failed to open browser. Visit the URL manually:\n   %s", ui.Code(i.url))
 			} else {
 				ui.Success("Opened in your browser.")

@@ -158,6 +158,92 @@ func terminalWidth() int {
 	return w
 }
 
+// InstructionsCard renders content inside a bordered card titled with
+// "title". The card is left-indented to align with the "  ✔  " /
+// "  →  " checklist text and right-padded a few cells from the terminal
+// edge. The title sits in the top border, e.g.:
+//
+//	     ╭─ Setup instructions for VS Code ─────╮
+//	     │                                       │
+//	     │   To install ...                      │
+//	     │                                       │
+//	     ╰───────────────────────────────────────╯
+//
+// Designed for the manual-instruction setup flows where the user takes
+// action outside the CLI (e.g. clicking through a marketplace page).
+func InstructionsCard(title, content string) string {
+	const (
+		// Aligns the left border with the column where checklist text
+		// starts after "  ✔  " / "  →  " (2 spaces + glyph + 2 spaces).
+		instructionLeftIndent = 5
+		// Inset from the terminal's right edge so the box doesn't kiss it.
+		instructionRightInset = 3
+		// Horizontal padding between the borders and the wrapped content.
+		instructionContentPad = 2
+		// Floor on the inner width so very narrow terminals still produce
+		// a usable card rather than a vertical sliver.
+		instructionMinInner = 30
+	)
+
+	tw := terminalWidth()
+	if tw <= 0 {
+		tw = 80
+	}
+
+	outerW := min(tw-instructionLeftIndent-instructionRightInset, MaxBoxWidth)
+	innerW := max(outerW-2, instructionMinInner)
+
+	contentW := innerW - 2*instructionContentPad
+	wrapped := WrapText(content, contentW)
+	lines := strings.Split(strings.TrimRight(wrapped, "\n"), "\n")
+
+	indent := strings.Repeat(" ", instructionLeftIndent)
+	pad := strings.Repeat(" ", instructionContentPad)
+	leftBorder := Muted("│")
+	rightBorder := Muted("│")
+	blank := strings.Repeat(" ", innerW)
+
+	// Top border: "╭─ <title> ──…──╮". Title in bold/brand for emphasis,
+	// border chars stay muted so the styles read as one piece.
+	titleW := PrintableWidth(title)
+	fillW := max(innerW-3-titleW, 0) // 3 = "─ " before + " " after the title
+
+	var b strings.Builder
+	b.WriteString(indent)
+	b.WriteString(Muted("╭─ "))
+	b.WriteString(Bold(Brand(title)))
+	b.WriteString(Muted(" " + strings.Repeat("─", fillW) + "╮"))
+	b.WriteByte('\n')
+
+	writeBlank := func() {
+		b.WriteString(indent)
+		b.WriteString(leftBorder)
+		b.WriteString(blank)
+		b.WriteString(rightBorder)
+		b.WriteByte('\n')
+	}
+
+	writeBlank()
+	for _, line := range lines {
+		gap := max(0, innerW-2*instructionContentPad-PrintableWidth(line))
+		b.WriteString(indent)
+		b.WriteString(leftBorder)
+		b.WriteString(pad)
+		b.WriteString(line)
+		b.WriteString(strings.Repeat(" ", gap))
+		b.WriteString(pad)
+		b.WriteString(rightBorder)
+		b.WriteByte('\n')
+	}
+	writeBlank()
+
+	b.WriteString(indent)
+	b.WriteString(Muted("╰" + strings.Repeat("─", innerW) + "╯"))
+	b.WriteByte('\n')
+
+	return b.String()
+}
+
 // Box wraps content in a rounded muted border with internal padding. Content
 // lines may include ANSI color codes; those don't count toward width.
 //

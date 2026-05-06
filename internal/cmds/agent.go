@@ -388,8 +388,8 @@ func resolveAgentBinary(cfg *config.Config, a agent) (string, error) {
 func setupAgent(cfg *config.Config, a agent, scope string) error {
 	if a.manual != "" {
 		fmt.Println()
-		fmt.Println(a.manual)
-		fmt.Println()
+		fmt.Print(ui.InstructionsCard("Setup instructions for "+a.name, a.manual))
+		ui.PressEnter("\nPress enter to continue...")
 		return nil
 	}
 
