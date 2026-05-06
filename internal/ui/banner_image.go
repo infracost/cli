@@ -66,11 +66,18 @@ func imageBanner(version string) string {
 	// Floor at 320px so the gradient stays legible on tiny terminals.
 	bannerPxWidth := max(w*bannerPxPerCol, 320)
 
-	// On dark terminals (the only background we currently target) the
-	// dark-coloured wordmark sits on top of the saturated brand gradient
-	// the way the marketing site uses it — high contrast against the
-	// purple/pink without the washed-out look the white wordmark gives.
-	logoData, err := iconsFS.ReadFile("icons/banner-dark.png")
+	// Logo choice flips with the surrounding terminal background:
+	//   * Dark terminals → the dark-navy wordmark (banner-dark.png)
+	//     mirrors how the marketing site renders the mark on the
+	//     saturated gradient.
+	//   * Light terminals → the white wordmark (banner-light.png) reads
+	//     as an inverted/spotlight treatment that suits the gradient
+	//     when the surrounding page is bright.
+	logoFile := "icons/banner-dark.png"
+	if !HasDarkBackground() {
+		logoFile = "icons/banner-light.png"
+	}
+	logoData, err := iconsFS.ReadFile(logoFile)
 	if err != nil {
 		return ""
 	}
@@ -85,17 +92,21 @@ func imageBanner(version string) string {
 	logo := image.NewRGBA(image.Rect(0, 0, logoW, logoPxHeight))
 	xdraw.CatmullRom.Scale(logo, logo.Bounds(), src, srcB, xdraw.Over, nil)
 
-	// Build the banner canvas, fill with a horizontal gradient.
+	// Build the banner canvas, fill with a horizontal gradient. Uses the
+	// active gradient pair from gradientStops() so the banner stays in
+	// sync with the rest of the UI's brand colours when the terminal
+	// background switches between dark and light.
 	canvas := image.NewRGBA(image.Rect(0, 0, bannerPxWidth, bannerPxHeight))
 	denom := float64(bannerPxWidth - 1)
 	if denom <= 0 {
 		denom = 1
 	}
+	gStart, gEnd := gradientStops()
 	for x := range bannerPxWidth {
 		t := float64(x) / denom
-		r := uint8(lerpChannel(gradientStart[0], gradientEnd[0], t))
-		g := uint8(lerpChannel(gradientStart[1], gradientEnd[1], t))
-		b := uint8(lerpChannel(gradientStart[2], gradientEnd[2], t))
+		r := uint8(lerpChannel(gStart[0], gEnd[0], t))
+		g := uint8(lerpChannel(gStart[1], gEnd[1], t))
+		b := uint8(lerpChannel(gStart[2], gEnd[2], t))
 		col := color.RGBA{R: r, G: g, B: b, A: 0xff}
 		for y := range bannerPxHeight {
 			canvas.SetRGBA(x, y, col)
@@ -109,17 +120,22 @@ func imageBanner(version string) string {
 	xdraw.Draw(canvas, image.Rect(logoX, logoY, logoX+logoW, logoY+logoPxHeight), logo, image.Point{}, xdraw.Over)
 
 	// Stamp the version label into the bottom-right corner using the
-	// same dark colour as the wordmark so the two read as one piece.
+	// same colour family as the wordmark so the two read as one piece —
+	// dark navy with the dark logo, white with the white logo.
 	// basicfont.Face7x13 is a no-deps bitmap font shipped with x/image;
 	// version strings are ASCII, so the limited glyph set is fine.
 	// The font has no bold variant — fake-bolding by drawing twice with
 	// a 1px horizontal offset thickens each glyph stroke and gives the
 	// label enough weight to stay legible after the protocol scales the
 	// whole banner down to terminal-cell dimensions.
+	labelColor := color.RGBA{R: 0x0D, G: 0x13, B: 0x2C, A: 0xff}
+	if !HasDarkBackground() {
+		labelColor = color.RGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xff}
+	}
 	versionLabel := "v" + strings.TrimPrefix(version, "v")
 	labelDrawer := &font.Drawer{
 		Dst:  canvas,
-		Src:  image.NewUniform(color.RGBA{R: 0x0D, G: 0x13, B: 0x2C, A: 0xff}),
+		Src:  image.NewUniform(labelColor),
 		Face: basicfont.Face7x13,
 	}
 	labelW := labelDrawer.MeasureString(versionLabel).Round()
