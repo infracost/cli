@@ -197,8 +197,8 @@ var supportedAgents = []agent{
 	{
 		name: "OpenAI Codex",
 		icon: "codex",
-		manual: `To install Infracost skills in OpenAI Codex, run the following prompt:
-  $skill-installer infracost/agent-skills`,
+		manual: fmt.Sprintf(`To install Infracost skills in OpenAI Codex, run the following prompt:
+  %s`, ui.Code("$skill-installer infracost/agent-skills")),
 		remove: `To remove Infracost skills from OpenAI Codex, remove the infracost skills from your Codex configuration.`,
 		enabled: true,
 	},
