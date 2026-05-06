@@ -88,7 +88,11 @@ func main() {
 		Artifacts: make(map[string]plugins.Artifact),
 	}
 	for _, asset := range release.Assets {
-		matches := re.FindStringSubmatch(asset.GetName())
+		name := asset.GetName()
+		if strings.HasSuffix(name, ".sha256") {
+			continue
+		}
+		matches := re.FindStringSubmatch(name)
 		if matches == nil {
 			continue
 		}
@@ -97,9 +101,9 @@ func main() {
 		osArch := fmt.Sprintf("%s_%s", matches[1], matches[2])
 
 		a := plugins.Artifact{
-			URL:  fmt.Sprintf("https://infracost.io/downloads/%s/%s", tag, asset.GetName()),
+			URL:  fmt.Sprintf("https://infracost.io/downloads/%s/%s", tag, name),
 			SHA:  strings.TrimPrefix(asset.GetDigest(), "sha256:"),
-			Name: asset.GetName(),
+			Name: name,
 		}
 		v.Artifacts[osArch] = a
 		_, _ = fmt.Fprintf(os.Stderr, "  %s: url=%s sha=%s\n", osArch, a.URL, a.SHA)
