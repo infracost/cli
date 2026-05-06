@@ -27,7 +27,7 @@ const (
 // Inline icon dimensions in terminal cells. One row keeps the icon on
 // the same line as the option label so huh's selection list stays
 // single-line per option. Two columns is wide enough for brand marks
-// to remain recognisable next to text.
+// to remain recognizable next to text.
 const (
 	iconCols = 2
 	iconRows = 1
@@ -91,7 +91,7 @@ func detectIconProtocol() iconProtocol {
 
 // HasIcons reports whether the active terminal can render embedded icons
 // AND whether the current output destination is reasonable to write
-// image escapes to (colour disabled / stdout piped both rule it out).
+// image escapes to (color disabled / stdout piped both rule it out).
 func HasIcons() bool {
 	if !ColorEnabled() {
 		return false
@@ -112,8 +112,7 @@ func renderIcon(w io.Writer, slug string) error {
 	if err != nil {
 		return nil
 	}
-	switch proto {
-	case iconKitty:
+	if proto == iconKitty {
 		img, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
 			return nil
@@ -126,24 +125,24 @@ func renderIcon(w io.Writer, slug string) error {
 	return nil
 }
 
-// brandStyle records how a service's name should be coloured. Either
-// rgb (a single solid colour as the "R;G;B" payload for a 24-bit ANSI
+// brandStyle records how a service's name should be colored. Either
+// rgb (a single solid color as the "R;G;B" payload for a 24-bit ANSI
 // escape) or gradient (a sequence of ≥2 RGB stops interpolated per
-// rune) drives the colouring; gradient takes precedence when set.
-// highlight optionally restricts the colouring to a substring of the
+// rune) drives the coloring; gradient takes precedence when set.
+// highlight optionally restricts the coloring to a substring of the
 // display name (e.g. for "OpenAI Codex" only "Codex" gets the brand
 // tint; "OpenAI" stays the default foreground). Empty highlight means
-// "colour the whole name".
+// "color the whole name".
 type brandStyle struct {
 	rgb       string
 	gradient  []rgbStop
 	highlight string
 }
 
-// rgbStop is a single colour stop in a multi-stop gradient.
+// rgbStop is a single color stop in a multi-stop gradient.
 type rgbStop [3]int
 
-// brandColors maps an icon slug to its service's primary brand colour,
+// brandColors maps an icon slug to its service's primary brand color,
 // hand-picked from each vendor's marketing material and tuned for
 // legibility on a dark terminal.
 var brandColors = map[string]brandStyle{
@@ -164,11 +163,11 @@ var brandColors = map[string]brandStyle{
 	"gemini":    {rgb: "66;133;244"},                       // #4285F4 Google blue
 }
 
-// Service wraps text in the brand colour registered for slug. When the
-// brand has a highlight substring, only that substring is coloured; the
+// Service wraps text in the brand color registered for slug. When the
+// brand has a highlight substring, only that substring is colored; the
 // rest of text passes through unchanged. Multi-stop gradients are
-// interpolated per rune across the coloured span. Returns text unchanged
-// when colour is disabled or the slug is unknown so callers can use
+// interpolated per rune across the colored span. Returns text unchanged
+// when color is disabled or the slug is unknown so callers can use
 // Service unconditionally.
 func Service(slug, text string) string {
 	if !ColorEnabled() {
@@ -188,16 +187,16 @@ func Service(slug, text string) string {
 			suffix = text[idx+len(style.highlight):]
 		}
 	}
-	var coloured string
+	var colored string
 	if len(style.gradient) >= 2 {
-		coloured = applyGradient(target, style.gradient)
+		colored = applyGradient(target, style.gradient)
 	} else {
-		coloured = fg(style.rgb) + target + reset
+		colored = fg(style.rgb) + target + reset
 	}
-	return prefix + coloured + suffix
+	return prefix + colored + suffix
 }
 
-// applyGradient colours each visible rune of text by interpolating
+// applyGradient colors each visible rune of text by interpolating
 // linearly across the supplied stops. Control characters (< 0x20) and
 // existing ANSI escapes pass through unchanged and don't advance the
 // gradient position.

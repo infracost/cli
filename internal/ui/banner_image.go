@@ -52,6 +52,21 @@ const (
 	bannerVersionBottomPx = 8
 )
 
+// clampByte saturates an int into the [0, 255] range and returns it as a
+// byte. Used to convert gradient channel values from lerpChannel — which
+// works in int to avoid intermediate overflow during interpolation —
+// into RGBA components without tripping gosec's integer-overflow check
+// on a bare uint8 conversion.
+func clampByte(v int) uint8 {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return uint8(v)
+}
+
 // imageBanner returns a printable banner string that places the embedded
 // Infracost wordmark inside a brand→pink horizontal gradient spanning
 // the full terminal width. Falls back to "" if anything goes wrong;
@@ -93,7 +108,7 @@ func imageBanner(version string) string {
 
 	// Build the banner canvas, fill with a horizontal gradient. Uses the
 	// active gradient pair from gradientStops() so the banner stays in
-	// sync with the rest of the UI's brand colours when the terminal
+	// sync with the rest of the UI's brand colors when the terminal
 	// background switches between dark and light.
 	canvas := image.NewRGBA(image.Rect(0, 0, bannerPxWidth, bannerPxHeight))
 	denom := float64(bannerPxWidth - 1)
@@ -103,23 +118,25 @@ func imageBanner(version string) string {
 	gStart, gEnd := gradientStops()
 	for x := range bannerPxWidth {
 		t := float64(x) / denom
-		r := uint8(lerpChannel(gStart[0], gEnd[0], t))
-		g := uint8(lerpChannel(gStart[1], gEnd[1], t))
-		b := uint8(lerpChannel(gStart[2], gEnd[2], t))
-		col := color.RGBA{R: r, G: g, B: b, A: 0xff}
+		col := color.RGBA{
+			R: clampByte(lerpChannel(gStart[0], gEnd[0], t)),
+			G: clampByte(lerpChannel(gStart[1], gEnd[1], t)),
+			B: clampByte(lerpChannel(gStart[2], gEnd[2], t)),
+			A: 0xff,
+		}
 		for y := range bannerPxHeight {
 			canvas.SetRGBA(x, y, col)
 		}
 	}
 
 	// Composite the logo left-aligned with a small horizontal margin,
-	// vertically centred so the padding reads evenly above and below.
+	// vertically centered so the padding reads evenly above and below.
 	logoX := bannerLeftMarginPx
 	logoY := (bannerPxHeight - logoPxHeight) / 2
 	xdraw.Draw(canvas, image.Rect(logoX, logoY, logoX+logoW, logoY+logoPxHeight), logo, image.Point{}, xdraw.Over)
 
 	// Stamp the version label into the bottom-right corner using the
-	// same colour family as the wordmark so the two read as one piece —
+	// same color family as the wordmark so the two read as one piece —
 	// dark navy with the dark logo, white with the white logo.
 	// basicfont.Face7x13 is a no-deps bitmap font shipped with x/image;
 	// version strings are ASCII, so the limited glyph set is fine.

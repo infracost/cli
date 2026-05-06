@@ -171,7 +171,7 @@ func wrapLine(out *strings.Builder, line string, maxWidth int) {
 // PrintableWidth returns the visible column count of s, ignoring ANSI escape
 // codes. Three classes of escapes are handled:
 //
-//   - CSI ("\x1b[…<final>"): styling sequences (colour, bold, etc).
+//   - CSI ("\x1b[…<final>"): styling sequences (color, bold, etc).
 //     Stripped, count as zero width.
 //   - OSC ("\x1b]…<BEL/ST>"): hyperlinks and iTerm2 image data.
 //     Stripped, count as zero width. Any visible text between two OSC
@@ -323,7 +323,7 @@ func InstructionsCard(title, content string) string {
 // GradientCard renders content in a left-indented bordered card with
 // the brand→pink gradient applied to the border. Top and bottom edges
 // sweep horizontally across the gradient; side borders sit at the
-// gradient's start (left) and end (right) stops so the colour reads as
+// gradient's start (left) and end (right) stops so the color reads as
 // one continuous shape around the card. Used for celebratory or summary
 // moments — e.g. the "setup complete" card at the end of `infracost
 // setup`.
@@ -360,7 +360,7 @@ func GradientCard(content string) string {
 		rightBorder = gradientCode(1) + "│" + reset
 	}
 
-	// Gradient takes a string and interpolates a colour per visible rune
+	// Gradient takes a string and interpolates a color per visible rune
 	// across its length, which is exactly what we want for the
 	// horizontal border edges.
 	top := Gradient("╭" + strings.Repeat("─", innerW) + "╮")

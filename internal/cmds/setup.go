@@ -166,7 +166,7 @@ func nextStepsContent(agentName, ideName string) string {
 	// Inside the gradient card we collapse the cyan info/code highlight
 	// into the heading's brand purple so the box reads as one palette
 	// (gradient border + brand accents) rather than three competing
-	// hues. Per-service brand colours on the product names stay since
+	// hues. Per-service brand colors on the product names stay since
 	// they're each option's identity, not a generic highlight.
 	arrow := "  " + ui.Brand("→") + " "
 	var b strings.Builder
@@ -197,7 +197,7 @@ func nextStepsContent(agentName, ideName string) string {
 // in front of the service name so the CTA reads naturally on terminals
 // without image support ("Open Claude Code") and gets a subtle brand
 // mark on terminals that do ("Open <logo> Claude Code"). The image
-// escape's display width is recognised by ui.PrintableWidth so the
+// escape's display width is recognized by ui.PrintableWidth so the
 // line measures correctly inside a wrapped/bordered card.
 func iconPrefix(slug string) string {
 	if icon := ui.Icon(slug); icon != "" {
