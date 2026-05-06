@@ -16,6 +16,7 @@ import (
 
 type ide struct {
 	name       string
+	icon       string                       // slug for the embedded brand icon (internal/ui/icons/<slug>.png)
 	binaries   []string                    // CLI binaries to look for on PATH
 	installCmd func(bin string) *exec.Cmd  // CLI-based install
 	check      func(bin string) (bool, error) // returns true if infracost extension is installed
@@ -28,6 +29,7 @@ type ide struct {
 var supportedIDEs = []ide{
 	{
 		name:     "VS Code",
+		icon:     "vscode",
 		binaries: []string{"code", "codium"},
 		installCmd: func(bin string) *exec.Cmd {
 			return exec.Command(bin, "--install-extension", "infracost.infracost")
@@ -47,12 +49,14 @@ var supportedIDEs = []ide{
 	},
 	{
 		name:    "JetBrains (IntelliJ, GoLand, etc.)",
+		icon:    "jetbrains",
 		url:     "https://plugins.jetbrains.com/plugin/24761-infracost",
 		enabled: true,
 		hint:    "Click the \"Install\" button on the plugin page, then follow the prompts in your IDE.",
 	},
 	{
 		name:     "Zed",
+		icon:     "zed",
 		binaries: []string{"zed"},
 		installCmd: func(bin string) *exec.Cmd {
 			return exec.Command(bin, "extension", "install", "infracost")
@@ -61,6 +65,7 @@ var supportedIDEs = []ide{
 	},
 	{
 		name:    "Neovim",
+		icon:    "neovim",
 		url:     "https://github.com/infracost/infracost.nvim/blob/main/README.md#installation",
 		hint:    "Follow the instructions to configure your Neovim setup",
 		enabled: true,
@@ -134,6 +139,18 @@ func RunIDESetup(skippable bool) (string, error) {
 		return "", err
 	}
 	return enabledIDEs[selected].name, nil
+}
+
+// ideIconSlug returns the icon slug for the IDE matching name, or "" if
+// none. Used by the post-setup CTA to inline the brand mark next to the
+// service name in static (non-bubbletea) output.
+func ideIconSlug(name string) string {
+	for _, i := range supportedIDEs {
+		if i.name == name {
+			return i.icon
+		}
+	}
+	return ""
 }
 
 func installIDE(i ide) error {

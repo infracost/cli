@@ -23,6 +23,7 @@ const (
 
 type agent struct {
 	name     string
+	icon     string                         // slug for the embedded brand icon (internal/ui/icons/<slug>.png)
 	binaries []string                       // CLI binaries to look for on PATH
 	setup    func(bin, scope string) error  // CLI-based setup
 	teardown func(bin, scope string) error  // CLI-based teardown
@@ -142,6 +143,7 @@ func runAgentBinary(bin string, args ...string) error {
 var supportedAgents = []agent{
 	{
 		name:     "Claude Code",
+		icon:     "claude",
 		binaries: []string{"claude"},
 		setup: func(bin, scope string) error {
 			return pluginSetup(bin, infracostMarketplace, infracostPlugin, scope)
@@ -156,6 +158,7 @@ var supportedAgents = []agent{
 	},
 	{
 		name:     "GitHub Copilot (CLI)",
+		icon:     "copilot",
 		binaries: []string{"copilot"},
 		// Copilot CLI's `plugin install` / `plugin uninstall` don't accept
 		// --scope (it has no per-scope concept like Claude Code does);
@@ -173,6 +176,7 @@ var supportedAgents = []agent{
 	},
 	{
 		name:     "GitHub Copilot (VS Code)",
+		icon:     "copilot",
 		binaries: []string{"code", "codium"},
 		manual: `To install Infracost skills in GitHub Copilot for VS Code:
   1. Open the Command Palette (Cmd+Shift+P / Ctrl+Shift+P)
@@ -188,6 +192,7 @@ var supportedAgents = []agent{
 	},
 	{
 		name: "OpenAI Codex",
+		icon: "codex",
 		manual: `To install Infracost skills in OpenAI Codex, run the following prompt:
   $skill-installer infracost/agent-skills`,
 		remove: `To remove Infracost skills from OpenAI Codex, remove the infracost skills from your Codex configuration.`,
@@ -195,6 +200,7 @@ var supportedAgents = []agent{
 	},
 	{
 		name: "Cursor",
+		icon: "cursor",
 		manual: `To install Infracost skills in Cursor:
   1. Open Settings → Rules
   2. Click "+New"
@@ -207,6 +213,7 @@ var supportedAgents = []agent{
 	},
 	{
 		name:    "Gemini CLI",
+		icon:    "gemini",
 		enabled: false,
 	},
 }
@@ -290,6 +297,19 @@ func agentRemove(cfg *config.Config) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope: user (global), project, or local")
 	return cmd
+}
+
+// agentIconSlug returns the icon slug for the agent matching name, or
+// "" if no enabled agent has that display name. Used by the post-setup
+// CTA to inline the brand mark next to the service name in static
+// (non-bubbletea) output.
+func agentIconSlug(name string) string {
+	for _, a := range supportedAgents {
+		if a.name == name {
+			return a.icon
+		}
+	}
+	return ""
 }
 
 func selectAgent(title string, skippable bool) (*agent, error) {

@@ -103,15 +103,29 @@ func Setup(cfg *config.Config) *cobra.Command {
 func printNextSteps(agentName, ideName string) {
 	switch {
 	case agentName != "":
+		slug := agentIconSlug(agentName)
 		ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
-		ui.Stepf("Open %s and ask it %s", ui.Code(agentName), ui.Code(`"How much does this project cost?"`))
+		ui.Stepf("Open %s%s and ask it %s", iconPrefix(slug), ui.Bold(ui.Service(slug, agentName)), ui.Code(`"How much does this project cost?"`))
 	case ideName != "":
-		ui.Stepf("Open a Terraform, CloudFormation, or CDK project in %s", ui.Code(ideName))
+		slug := ideIconSlug(ideName)
+		ui.Stepf("Open a Terraform, CloudFormation, or CDK project in %s%s", iconPrefix(slug), ui.Bold(ui.Service(slug, ideName)))
 		ui.Stepf("Open the Infracost extension from the toolbar and make sure you're logged in — you'll see cost estimates inline with your code")
 	default:
 		ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
 		ui.Stepf("Run %s to see your costs and any policy violations", ui.Code("infracost scan"))
 	}
+}
+
+// iconPrefix returns "<icon> " when the active terminal can render the
+// named brand icon, "" otherwise. Designed to be concatenated directly
+// in front of the service name so the CTA reads naturally on terminals
+// without image support ("Open Claude Code") and gets a subtle brand
+// mark on terminals that do ("Open <logo> Claude Code").
+func iconPrefix(slug string) string {
+	if icon := ui.Icon(slug); icon != "" {
+		return icon + " "
+	}
+	return ""
 }
 
 // runSetupStep prompts the user with a yes/no question. If they accept, it
