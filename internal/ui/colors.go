@@ -123,7 +123,7 @@ func init() {
 		applyPalette()
 		return
 	}
-	// Honour an explicit override (useful when terminal detection is flaky,
+	// Honor an explicit override (useful when terminal detection is flaky,
 	// e.g. inside tmux/screen, or over SSH). Accepts light/dark only.
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("INFRACOST_TERMINAL_BACKGROUND"))) {
 	case "light":
