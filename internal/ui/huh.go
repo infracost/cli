@@ -8,15 +8,22 @@ import (
 // Lipgloss color values mirroring the truecolor palette in colors.go.
 // Kept here so callers can supply consistent colors to lipgloss-based
 // libraries (huh, bubbletea, etc.) without duplicating the hex codes.
+// AdaptiveColor lets lipgloss pick the right shade for the active
+// terminal background, matching the dark/light split applied to our
+// own ANSI codes.
 var (
-	BrandColor   = lipgloss.Color("#6C70F2")
-	AccentColor  = lipgloss.Color("#B1B8F8")
-	InfoColor    = lipgloss.Color("#22D3EE")
-	SuccessColor = lipgloss.Color("#10D9A0")
-	WarnColor    = lipgloss.Color("#FFBA08")
-	FailColor    = lipgloss.Color("#EF4444")
-	MutedColor   = lipgloss.Color("#747CA2")
-	TextColor    = lipgloss.Color("#EAE9F2")
+	BrandColor   = lipgloss.AdaptiveColor{Light: hexBrandLight, Dark: hexBrandDark}
+	AccentColor  = lipgloss.AdaptiveColor{Light: hexAccentLight, Dark: hexAccentDark}
+	InfoColor    = lipgloss.AdaptiveColor{Light: hexInfoLight, Dark: hexInfoDark}
+	SuccessColor = lipgloss.AdaptiveColor{Light: hexSuccessLight, Dark: hexSuccessDark}
+	WarnColor    = lipgloss.AdaptiveColor{Light: hexWarnLight, Dark: hexWarnDark}
+	FailColor    = lipgloss.AdaptiveColor{Light: hexFailLight, Dark: hexFailDark}
+	MutedColor   = lipgloss.AdaptiveColor{Light: hexMutedLight, Dark: hexMutedDark}
+	TextColor    = lipgloss.AdaptiveColor{Light: hexTextLight, Dark: hexTextDark}
+	// FocusedButtonText is the foreground used on focused buttons whose
+	// background is the brand color. Stays light in both palettes so the
+	// label is readable on top of the saturated brand fill.
+	FocusedButtonText = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: hexTextDark}
 )
 
 // BrandTheme returns a huh form theme using the Infracost brand palette.
@@ -43,7 +50,7 @@ func BrandTheme() *huh.Theme {
 	t.Focused.SelectedOption = t.Focused.SelectedOption.Foreground(SuccessColor)
 	t.Focused.SelectedPrefix = lipgloss.NewStyle().Foreground(SuccessColor).SetString("✓ ")
 	t.Focused.UnselectedPrefix = lipgloss.NewStyle().Foreground(MutedColor).SetString("• ")
-	t.Focused.FocusedButton = t.Focused.FocusedButton.Foreground(TextColor).Background(BrandColor)
+	t.Focused.FocusedButton = t.Focused.FocusedButton.Foreground(FocusedButtonText).Background(BrandColor)
 	t.Focused.Next = t.Focused.FocusedButton
 	t.Focused.BlurredButton = t.Focused.BlurredButton.Foreground(MutedColor)
 	t.Focused.TextInput.Cursor = t.Focused.TextInput.Cursor.Foreground(InfoColor)

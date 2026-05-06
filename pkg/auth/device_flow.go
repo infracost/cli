@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/infracost/cli/internal/api/events"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth/browser"
 	"golang.org/x/oauth2"
 )
@@ -20,8 +21,8 @@ func (c *Config) DeviceFlow(ctx context.Context) (oauth2.TokenSource, *oauth2.To
 		return nil, nil, err
 	}
 
-	fmt.Printf("Please go to the following URL to log in:\n%s\n", response.VerificationURI)
-	fmt.Printf("And enter the code:\n%s\n", response.UserCode)
+	fmt.Printf("Please go to the following URL to log in:\n%s\n", ui.Code(response.VerificationURI))
+	fmt.Printf("And enter the code:\n%s\n", ui.Code(response.UserCode))
 
 	browserCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

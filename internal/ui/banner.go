@@ -6,17 +6,35 @@ import (
 	"unicode/utf8"
 )
 
-// Gradient stops: brand (#6C70F2) → magenta (#F72585). Kept private so
-// the gradient is consistent everywhere it's used.
+// Gradient stops: brand → magenta. Kept private so the gradient is
+// consistent everywhere it's used. Two stop pairs are stored — one
+// tuned for dark terminals (light, saturated) and one for light
+// terminals (darker, deeper) — so the wordmark stays readable on
+// either background.
 var (
-	gradientStart = [3]int{108, 112, 242}
-	gradientEnd   = [3]int{247, 37, 133}
+	gradientStartDark = [3]int{108, 112, 242} // #6C70F2
+	gradientEndDark   = [3]int{247, 37, 133}  // #F72585
+
+	gradientStartLight = [3]int{79, 70, 229}  // #4F46E5 indigo-600
+	gradientEndLight   = [3]int{190, 24, 93}  // #BE185D pink-700
 )
 
-// shadowCode is the ANSI truecolor escape for the iconmark shadow color
-// (#393D64). Used in place of the gradient on the masked positions so
-// the shadow stays a single solid hue across terminals.
-const shadowCode = "\x1b[38;2;57;61;100m"
+func gradientStops() (start, end [3]int) {
+	if HasDarkBackground() {
+		return gradientStartDark, gradientEndDark
+	}
+	return gradientStartLight, gradientEndLight
+}
+
+// shadowCode returns the ANSI truecolor escape for the iconmark shadow
+// color, picking the variant that has enough contrast against the
+// active background.
+func shadowCode() string {
+	if HasDarkBackground() {
+		return "\x1b[38;2;57;61;100m" // #393D64 against dark
+	}
+	return "\x1b[38;2;156;163;175m" // #9CA3AF gray-400 against light
+}
 
 // iconmark is the Infracost mark rendered in full-block glyphs
 // (U+2584/U+2588/U+2599/U+259F). Solid blocks tile edge-to-edge so the
@@ -51,9 +69,10 @@ func gradientCode(t float64) string {
 	if t > 1 {
 		t = 1
 	}
-	r := lerpChannel(gradientStart[0], gradientEnd[0], t)
-	g := lerpChannel(gradientStart[1], gradientEnd[1], t)
-	b := lerpChannel(gradientStart[2], gradientEnd[2], t)
+	start, end := gradientStops()
+	r := lerpChannel(start[0], end[0], t)
+	g := lerpChannel(start[1], end[1], t)
+	b := lerpChannel(start[2], end[2], t)
 	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
 }
 
@@ -104,7 +123,7 @@ func Banner(version string) string {
 				continue
 			}
 			if i < len(mask) && mask[i] == '#' {
-				b.WriteString(shadowCode)
+				b.WriteString(shadowCode())
 			} else {
 				t := float64(row+col) / denom
 				b.WriteString(gradientCode(t))

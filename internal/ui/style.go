@@ -94,13 +94,13 @@ func PressEnter(msg string) bool {
 // it in their browser. The user can press Ctrl+C to skip. If stdin is
 // non-interactive (e.g. in tests), the browser is not opened.
 func OpenOrContinue(url string) {
-	fmt.Printf("  %s\n", Accent(url))
+	fmt.Printf("  %s\n", Code(url))
 	if !PressEnter("\nPress Enter to open in your browser...") {
 		return
 	}
 	if err := browser.Open(url); err != nil {
-		Failf("Failed to open browser. Visit the URL manually:\n   %s", Accent(url))
+		Failf("Failed to open browser. Visit the URL manually:\n   %s", Code(url))
 	} else {
-		Successf("Opened %s in your browser.", Accent(url))
+		Successf("Opened %s in your browser.", Code(url))
 	}
 }
