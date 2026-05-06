@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/charmbracelet/huh"
@@ -85,42 +86,69 @@ func Setup(cfg *config.Config) *cobra.Command {
 			}
 
 			fmt.Println()
-			fmt.Println(ui.Bold(ui.Gradient("Setup complete.")))
-
-			fmt.Println()
-			ui.Heading("What's next?")
-			printNextSteps(agentName, ideName)
+			fmt.Print(ui.GradientCard(setupCompleteContent(agentName, ideName)))
 			return nil
 		},
 	}
 }
 
-// printNextSteps renders the post-setup CTA. The recommendation is tailored
-// to whichever integration the user just installed — the agent path (chat
-// in your coding agent) and the IDE path (inline cost estimates) deliver a
-// faster aha moment than the bare CLI for users who installed those tools.
-// Falls back to "cd + infracost scan" when nothing was installed.
-func printNextSteps(agentName, ideName string) {
+// setupCompleteContent assembles the celebration card body: the bold
+// gradient "Setup complete." line, a "What's next?" subhead, and the
+// tailored CTA steps. Returned as a single string so the caller can drop
+// it into ui.GradientCard.
+func setupCompleteContent(agentName, ideName string) string {
+	var b strings.Builder
+	b.WriteString(ui.Bold(ui.Gradient("Setup complete.")))
+	b.WriteString("\n\n")
+	b.WriteString(ui.Bold(ui.Brand("What's next?")))
+	b.WriteByte('\n')
+	b.WriteString(nextStepsContent(agentName, ideName))
+	return b.String()
+}
+
+// nextStepsContent renders the post-setup CTA as a multi-line string.
+// The recommendation is tailored to whichever integration the user just
+// installed — the agent path (chat in your coding agent) and the IDE
+// path (inline cost estimates) deliver a faster aha moment than the
+// bare CLI for users who installed those tools. Falls back to "cd +
+// infracost scan" when nothing was installed.
+func nextStepsContent(agentName, ideName string) string {
+	// Inside the gradient card we collapse the cyan info/code highlight
+	// into the heading's brand purple so the box reads as one palette
+	// (gradient border + brand accents) rather than three competing
+	// hues. Per-service brand colours on the product names stay since
+	// they're each option's identity, not a generic highlight.
+	arrow := "  " + ui.Brand("→") + "  "
+	var b strings.Builder
+	step := func(format string, args ...any) {
+		b.WriteString(arrow)
+		fmt.Fprintf(&b, format, args...)
+		b.WriteByte('\n')
+	}
+
 	switch {
 	case agentName != "":
 		slug := agentIconSlug(agentName)
-		ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
-		ui.Stepf("Open %s%s and ask it %s", iconPrefix(slug), ui.Bold(ui.Service(slug, agentName)), ui.Code(`"How much does this project cost?"`))
+		step("cd into a Terraform, CloudFormation, or CDK project")
+		step("Open %s%s and ask it %s", iconPrefix(slug), ui.Bold(ui.Service(slug, agentName)), ui.Brand(`"How much does this project cost?"`))
 	case ideName != "":
 		slug := ideIconSlug(ideName)
-		ui.Stepf("Open a Terraform, CloudFormation, or CDK project in %s%s", iconPrefix(slug), ui.Bold(ui.Service(slug, ideName)))
-		ui.Stepf("Open the Infracost extension from the toolbar and make sure you're logged in — you'll see cost estimates inline with your code")
+		step("Open a Terraform, CloudFormation, or CDK project in %s%s", iconPrefix(slug), ui.Bold(ui.Service(slug, ideName)))
+		step("Open the Infracost extension from the toolbar and make sure you're logged in — you'll see cost estimates inline with your code")
 	default:
-		ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
-		ui.Stepf("Run %s to see your costs and any policy violations", ui.Code("infracost scan"))
+		step("cd into a Terraform, CloudFormation, or CDK project")
+		step("Run %s to see your costs and any policy violations", ui.Brand("infracost scan"))
 	}
+	return b.String()
 }
 
 // iconPrefix returns "<icon> " when the active terminal can render the
 // named brand icon, "" otherwise. Designed to be concatenated directly
 // in front of the service name so the CTA reads naturally on terminals
 // without image support ("Open Claude Code") and gets a subtle brand
-// mark on terminals that do ("Open <logo> Claude Code").
+// mark on terminals that do ("Open <logo> Claude Code"). The image
+// escape's display width is recognised by ui.PrintableWidth so the
+// line measures correctly inside a wrapped/bordered card.
 func iconPrefix(slug string) string {
 	if icon := ui.Icon(slug); icon != "" {
 		return icon + " "

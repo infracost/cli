@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
@@ -15,6 +16,22 @@ import (
 const MaxBoxWidth = 120
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// apcRE matches a Kitty graphics APC ("\x1b_G…\x1b\\"). Each one carries
+// a `c=N` parameter that declares how many terminal cells the rendered
+// image will occupy horizontally; PrintableWidth credits that count so
+// layouts containing inline icons (e.g. instruction cards in setup)
+// measure correctly. Base64 image data inside the body never contains
+// \x1b, so the "anything-not-ESC" inner class terminates cleanly at
+// the closing ST. Matching only the `G` command keeps us narrow — other
+// APC namespaces aren't used in this codebase.
+var apcRE = regexp.MustCompile(`\x1b_G[^\x1b]*\x1b\\`)
+
+// oscRE matches an OSC ("\x1b]…<BEL or ST>") — used for hyperlinks and
+// the iTerm2 image protocol. Treated as zero-width: any visible text
+// between two OSC sequences (e.g. the label of a hyperlink) survives
+// the strip pass and gets counted normally.
+var oscRE = regexp.MustCompile(`\x1b\][^\x1b\x07]*(\x07|\x1b\\)`)
 
 // variationSelector16 (U+FE0F) forces emoji-presentation of the preceding
 // base codepoint. It's used in PrintableWidth to bump the cell count, since
@@ -129,14 +146,50 @@ func wrapLine(out *strings.Builder, line string, maxWidth int) {
 }
 
 // PrintableWidth returns the visible column count of s, ignoring ANSI escape
-// codes. Uses runewidth for base width then bumps by 1 per VS-16 selector:
+// codes. Three classes of escapes are handled:
+//
+//   - CSI ("\x1b[…<final>"): styling sequences (colour, bold, etc).
+//     Stripped, count as zero width.
+//   - OSC ("\x1b]…<BEL/ST>"): hyperlinks and iTerm2 image data.
+//     Stripped, count as zero width. Any visible text between two OSC
+//     sequences (a hyperlink label) is preserved and counted normally.
+//   - APC ("\x1b_…\x1b\\"): Kitty graphics protocol. Each APC declares
+//     its display width in cells via a c= parameter; that count is
+//     credited so inline icon escapes measure as their reserved cell
+//     width rather than the length of their base64 payload.
+//
+// Uses runewidth for base width then bumps by 1 per VS-16 selector:
 // runewidth (v0.0.16) doesn't credit U+FE0F for promoting an ambiguous-width
 // base (e.g. ⚠ U+26A0) to emoji presentation, but every modern terminal
 // renders the resulting glyph at 2 cells. Without this bump, ⚠️ measures as
 // 1 and box/table borders drift right by one cell on each emoji-bearing line.
 func PrintableWidth(s string) int {
-	stripped := ansiRE.ReplaceAllString(s, "")
-	return runewidth.StringWidth(stripped) + strings.Count(stripped, variationSelector16)
+	width := 0
+	// Each APC contributes its declared display width (c= keyword).
+	// Body layout after "\x1b_G": "<kv-pairs>;<base64>\x1b\\". Pairs are
+	// comma-separated k=v; the base64 (and the leading ";") is optional
+	// for delete/query commands that send keys only.
+	for _, apc := range apcRE.FindAllString(s, -1) {
+		body := apc[3 : len(apc)-2] // trim leading "\x1b_G" and trailing "\x1b\\"
+		keys := body
+		if i := strings.Index(body, ";"); i >= 0 {
+			keys = body[:i]
+		}
+		for _, kv := range strings.Split(keys, ",") {
+			if v, ok := strings.CutPrefix(kv, "c="); ok {
+				if n, err := strconv.Atoi(v); err == nil {
+					width += n
+				}
+				break
+			}
+		}
+	}
+
+	stripped := apcRE.ReplaceAllString(s, "")
+	stripped = oscRE.ReplaceAllString(stripped, "")
+	stripped = ansiRE.ReplaceAllString(stripped, "")
+	width += runewidth.StringWidth(stripped) + strings.Count(stripped, variationSelector16)
+	return width
 }
 
 // terminalWidth returns the column width of stdout, or 0 if stdout is not a
@@ -239,6 +292,86 @@ func InstructionsCard(title, content string) string {
 
 	b.WriteString(indent)
 	b.WriteString(Muted("╰" + strings.Repeat("─", innerW) + "╯"))
+	b.WriteByte('\n')
+
+	return b.String()
+}
+
+// GradientCard renders content in a left-indented bordered card with
+// the brand→pink gradient applied to the border. Top and bottom edges
+// sweep horizontally across the gradient; side borders sit at the
+// gradient's start (left) and end (right) stops so the colour reads as
+// one continuous shape around the card. Used for celebratory or summary
+// moments — e.g. the "setup complete" card at the end of `infracost
+// setup`.
+func GradientCard(content string) string {
+	const (
+		gradientLeftIndent = 5
+		gradientRightInset = 3
+		gradientContentPad = 2
+		gradientMinInner   = 30
+	)
+
+	tw := terminalWidth()
+	if tw <= 0 {
+		tw = 80
+	}
+	outerW := min(tw-gradientLeftIndent-gradientRightInset, MaxBoxWidth)
+	innerW := max(outerW-2, gradientMinInner)
+
+	contentW := innerW - 2*gradientContentPad
+	wrapped := WrapText(content, contentW)
+	lines := strings.Split(strings.TrimRight(wrapped, "\n"), "\n")
+
+	indent := strings.Repeat(" ", gradientLeftIndent)
+	pad := strings.Repeat(" ", gradientContentPad)
+	blank := strings.Repeat(" ", innerW)
+
+	// Side borders pin to the gradient's start (left) and end (right)
+	// stops so each row of the card looks visually consistent with the
+	// horizontal sweep on the top/bottom edges.
+	leftBorder := "│"
+	rightBorder := "│"
+	if ColorEnabled() {
+		leftBorder = gradientCode(0) + "│" + reset
+		rightBorder = gradientCode(1) + "│" + reset
+	}
+
+	// Gradient takes a string and interpolates a colour per visible rune
+	// across its length, which is exactly what we want for the
+	// horizontal border edges.
+	top := Gradient("╭" + strings.Repeat("─", innerW) + "╮")
+	bottom := Gradient("╰" + strings.Repeat("─", innerW) + "╯")
+
+	var b strings.Builder
+	b.WriteString(indent)
+	b.WriteString(top)
+	b.WriteByte('\n')
+
+	writeBlank := func() {
+		b.WriteString(indent)
+		b.WriteString(leftBorder)
+		b.WriteString(blank)
+		b.WriteString(rightBorder)
+		b.WriteByte('\n')
+	}
+
+	writeBlank()
+	for _, line := range lines {
+		gap := max(0, innerW-2*gradientContentPad-PrintableWidth(line))
+		b.WriteString(indent)
+		b.WriteString(leftBorder)
+		b.WriteString(pad)
+		b.WriteString(line)
+		b.WriteString(strings.Repeat(" ", gap))
+		b.WriteString(pad)
+		b.WriteString(rightBorder)
+		b.WriteByte('\n')
+	}
+	writeBlank()
+
+	b.WriteString(indent)
+	b.WriteString(bottom)
 	b.WriteByte('\n')
 
 	return b.String()
