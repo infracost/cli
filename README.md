@@ -1,11 +1,5 @@
 # cli
 
-> [!WARNING]
->
-> This repository is in early alpha. Features may change and rough edges are expected.
-> [Open a discussion thread](https://github.com/infracost/infracost/discussions) to report bugs or
-> share feedback — it is genuinely appreciated.
-
 Infracost estimates cloud costs from infrastructure as code, helping you catch cost surprises before they hit your bill.
 It currently supports Terraform, Terragrunt, and CloudFormation.
 
@@ -20,7 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/infracost/cli/main/scripts/install.
 To pin a specific version, set `INFRACOST_VERSION`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/infracost/cli/main/scripts/install.sh | INFRACOST_VERSION=v1.0.0 sh
+curl -fsSL https://raw.githubusercontent.com/infracost/cli/main/scripts/install.sh | INFRACOST_VERSION=v2.0.0 sh
 ```
 
 Or download the archive for your platform from the
@@ -83,18 +77,26 @@ If you prefer to build from source:
 Before running any commands, authenticate with Infracost:
 
 ```bash
-infracost login
+infracost auth login
 ```
 
 This opens a browser-based login flow (PKCE). The resulting token is cached locally so you only need to log in once. If
 you don't have access to a browser or localhost, use the device flow instead:
 
 ```bash
-infracost login --oauth-use-device-flow
+infracost auth login --oauth-use-device-flow
 ```
 
 For non-interactive environments (CI/CD), set the `INFRACOST_CLI_AUTHENTICATION_TOKEN` environment variable to a
 service account token or personal access token instead of using the login command.
+
+### Setup
+
+Once logged in, the interactive setup wizard walks you through configuring AI coding agents, your IDE, and CI:
+
+```bash
+infracost setup
+```
 
 ### Scan
 
@@ -105,6 +107,14 @@ infracost scan /path/to/directory
 The target must be a directory. If no argument is given, it defaults to the current working directory. The CLI will
 auto-detect the IaC type from the directory contents, or you can configure projects explicitly via an `infracost.yml`
 config file.
+
+### Inspect
+
+View a summary of the most recent scan results without re-running analysis:
+
+```bash
+infracost inspect --summary
+```
 
 ### Plugins
 
