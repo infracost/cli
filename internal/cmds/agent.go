@@ -376,11 +376,13 @@ var supportedAgents = []agent{
 	{
 		name: "Cursor",
 		icon: "cursor",
-		manual: `To install Infracost skills in Cursor:
-  1. Open Settings → Rules
-  2. Click "+New"
-  3. Select "Add from GitHub/GitLab"
-  4. Enter the repository URL: ` + infracostSkillsRepo + `.git`,
+		manual: fmt.Sprintf(`To install Infracost skills in Cursor:
+  1. Open an AI chat within Cursor
+  2. Send the following prompt:
+     %s
+     %s`,
+			ui.Code("Add the rules from the following repo as global/user skills:"),
+			ui.Code(infracostSkillsRepo+".git")),
 		remove: `To remove Infracost skills from Cursor:
   1. Open Settings → Rules
   2. Find and delete the Infracost rule`,
