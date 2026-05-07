@@ -122,7 +122,14 @@ func ciSetup(cfg *config.Config) *cobra.Command {
 			if err := requireUserLogin(cfg); err != nil {
 				return err
 			}
-			return RunCISetup(cmd.Context(), cfg, ciPipeline, yes)
+			if err := RunCISetup(cmd.Context(), cfg, ciPipeline, yes); err != nil {
+				return err
+			}
+			// Mirror the unified `infracost setup` flow's closing card —
+			// CI gets a tailored "open a PR" CTA via the ciSetUp flag.
+			fmt.Println()
+			fmt.Print(ui.GradientCard(setupCompleteContent("", "", true)))
+			return nil
 		},
 	}
 

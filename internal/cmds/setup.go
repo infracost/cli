@@ -92,9 +92,10 @@ func Setup(cfg *config.Config) *cobra.Command {
 			//
 			// runSetupStep returns nil whether the user confirmed or
 			// declined; track the user's intent through the closure so we
-			// know whether to render a skip notice in the offered case.
+			// know whether to render a skip notice in the offered case
+			// AND whether to tailor the post-setup CTA toward CI.
+			ciSkipped := true
 			if CISetupAvailable() {
-				ciSkipped := true
 				if err := runSetupStep("Set up CI integration?", func() error {
 					ciSkipped = false
 					return RunCISetup(ctx, cfg, false, false)
@@ -109,7 +110,7 @@ func Setup(cfg *config.Config) *cobra.Command {
 			}
 
 			fmt.Println()
-			fmt.Print(ui.GradientCard(setupCompleteContent(agentName, ideName)))
+			fmt.Print(ui.GradientCard(setupCompleteContent(agentName, ideName, !ciSkipped)))
 			return nil
 		},
 	}
@@ -146,23 +147,23 @@ func renderSkipNotice(name, content string) {
 // gradient "Setup complete." line, a "What's next?" subhead, and the
 // tailored CTA steps. Returned as a single string so the caller can drop
 // it into ui.GradientCard.
-func setupCompleteContent(agentName, ideName string) string {
+func setupCompleteContent(agentName, ideName string, ciSetUp bool) string {
 	var b strings.Builder
 	b.WriteString(ui.Bold(ui.Gradient("Setup complete.")))
 	b.WriteString("\n\n")
 	b.WriteString(ui.Bold(ui.Brand("What's next?")))
 	b.WriteByte('\n')
-	b.WriteString(nextStepsContent(agentName, ideName))
+	b.WriteString(nextStepsContent(agentName, ideName, ciSetUp))
 	return b.String()
 }
 
 // nextStepsContent renders the post-setup CTA as a multi-line string.
 // The recommendation is tailored to whichever integration the user just
-// installed — the agent path (chat in your coding agent) and the IDE
-// path (inline cost estimates) deliver a faster aha moment than the
-// bare CLI for users who installed those tools. Falls back to "cd +
-// infracost scan" when nothing was installed.
-func nextStepsContent(agentName, ideName string) string {
+// installed, in priority order: agent > IDE > CI > nothing-installed.
+// Earlier integrations win because they're more directly actionable
+// (chatting in your coding agent or seeing cost estimates inline beats
+// "go open a PR" for getting a first taste of Infracost).
+func nextStepsContent(agentName, ideName string, ciSetUp bool) string {
 	// Inside the gradient card we collapse the cyan info/code highlight
 	// into the heading's brand purple so the box reads as one palette
 	// (gradient border + brand accents) rather than three competing
@@ -185,6 +186,8 @@ func nextStepsContent(agentName, ideName string) string {
 		slug := ideIconSlug(ideName)
 		step("Open a Terraform, CloudFormation, or CDK project in %s%s", iconPrefix(slug), ui.Bold(ui.Service(slug, ideName)))
 		step("Open the Infracost extension from the toolbar and make sure you're logged in — you'll see cost estimates inline with your code")
+	case ciSetUp:
+		step("Open a pull request that changes your infrastructure — Infracost will comment with the cost diff")
 	default:
 		step("cd into a Terraform, CloudFormation, or CDK project")
 		step("Run %s to see your costs and any policy violations", ui.Brand("infracost scan"))

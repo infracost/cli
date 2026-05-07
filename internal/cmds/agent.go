@@ -299,8 +299,20 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Install Infracost skills for your AI coding agent",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			_, err := RunAgentSetup(cfg, scope, false)
-			return err
+			agentName, err := RunAgentSetup(cfg, scope, false)
+			if err != nil {
+				return err
+			}
+			// Mirror the unified `infracost setup` flow: a successful
+			// install closes with the gradient-bordered "Setup complete"
+			// card and a tailored "what's next?" CTA. Skipped/aborted
+			// runs produce an empty name, in which case there's nothing
+			// to celebrate so we don't render the card.
+			if agentName != "" {
+				fmt.Println()
+				fmt.Print(ui.GradientCard(setupCompleteContent(agentName, "", false)))
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope: user (global), project, or local")

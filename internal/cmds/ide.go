@@ -157,8 +157,18 @@ func ideSetup(_ *config.Config) *cobra.Command {
 		Use:   "setup",
 		Short: "Install the Infracost extension for your IDE",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			_, err := RunIDESetup(false)
-			return err
+			ideName, err := RunIDESetup(false)
+			if err != nil {
+				return err
+			}
+			// Mirror the unified `infracost setup` flow's closing card.
+			// Empty name means the user aborted/skipped — nothing to
+			// celebrate, no card.
+			if ideName != "" {
+				fmt.Println()
+				fmt.Print(ui.GradientCard(setupCompleteContent("", ideName, false)))
+			}
+			return nil
 		},
 	}
 }

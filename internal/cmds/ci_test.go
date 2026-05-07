@@ -286,6 +286,16 @@ Done. Push this commit to see Infracost on your next PR:
   git add .github/workflows/infracost-diff.yml .github/workflows/infracost-scan.yml
   git commit -m "chore: add Infracost CI integration"
   git push
+
+     ╭──────────────────────────────────────────────────────────────────────╮
+     │                                                                      │
+     │  Setup complete.                                                     │
+     │                                                                      │
+     │  What's next?                                                        │
+     │    → Open a pull request that changes your infrastructure —          │
+     │    Infracost will comment with the cost diff                         │
+     │                                                                      │
+     ╰──────────────────────────────────────────────────────────────────────╯
 `
 	assert.Equal(t, want, output)
 
@@ -415,6 +425,16 @@ Scanning repository
 This repository is already sending PR cost estimates.
 To manage settings, visit:
   https://dashboard.infracost.io/org/acme-corp/repos
+
+     ╭──────────────────────────────────────────────────────────────────────╮
+     │                                                                      │
+     │  Setup complete.                                                     │
+     │                                                                      │
+     │  What's next?                                                        │
+     │    → Open a pull request that changes your infrastructure —          │
+     │    Infracost will comment with the cost diff                         │
+     │                                                                      │
+     ╰──────────────────────────────────────────────────────────────────────╯
 `
 	assert.Equal(t, want, output)
 }
