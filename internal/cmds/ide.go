@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -15,15 +18,56 @@ import (
 )
 
 type ide struct {
-	name       string
-	icon       string                       // slug for the embedded brand icon (internal/ui/icons/<slug>.png)
-	binaries   []string                    // CLI binaries to look for on PATH
-	installCmd func(bin string) *exec.Cmd  // CLI-based install
-	check      func(bin string) (bool, error) // returns true if infracost extension is installed
-	url        string                       // marketplace/install URL fallback
-	hint       string                       // message shown before opening the URL
-	manual     string                       // manual instructions (instead of URL) e.g. neovim
-	enabled    bool                         // temporarily disable IDEs under development
+	name        string
+	icon        string                          // slug for the embedded brand icon (internal/ui/icons/<slug>.png)
+	binaries    []string                        // CLI binaries to look for on PATH
+	bundlePaths func() []string                 // OS-specific absolute paths to check when binaries aren't on PATH (e.g. Antigravity's bundled CLI inside the .app)
+	installCmd  func(bin string) *exec.Cmd     // CLI-based install
+	check       func(bin string) (bool, error) // returns true if infracost extension is installed
+	url         string                          // marketplace/install URL fallback
+	hint        string                          // message shown before opening the URL
+	manual      string                          // manual instructions (used when no scriptable path is available or its CLI isn't found)
+	enabled     bool                            // temporarily disable IDEs under development
+}
+
+// vscodeFamilyBundlePaths returns OS-specific bundle paths for a
+// VS Code-style IDE installed via its standard installer. Used to
+// resolve the IDE's CLI when it isn't on $PATH — common when the user
+// hasn't run the IDE's "Install 'X' command in PATH" command from the
+// command palette. macOS covers both the system (/Applications) and
+// per-user (~/Applications) install locations; Windows covers the
+// per-user (LOCALAPPDATA\Programs) and machine-wide (Program Files)
+// installer targets.
+//
+// Linux is intentionally left unset because distribution conventions
+// (apt/dnf/snap/flatpak/tarball/AppImage) vary too widely to guess
+// reliably — Linux users who hit this fall back to the manual card.
+//
+// appName is the .app / Programs basename (e.g. "Visual Studio Code");
+// cliName is the binary name within the bundle (e.g. "code").
+func vscodeFamilyBundlePaths(appName, cliName string) func() []string {
+	return func() []string {
+		switch runtime.GOOS {
+		case "darwin":
+			paths := []string{
+				"/Applications/" + appName + ".app/Contents/Resources/app/bin/" + cliName,
+			}
+			if home, err := os.UserHomeDir(); err == nil {
+				paths = append(paths, filepath.Join(home, "Applications", appName+".app", "Contents/Resources/app/bin", cliName))
+			}
+			return paths
+		case "windows":
+			var paths []string
+			if local := os.Getenv("LOCALAPPDATA"); local != "" {
+				paths = append(paths, filepath.Join(local, "Programs", appName, "bin", cliName+".cmd"))
+			}
+			if pf := os.Getenv("ProgramFiles"); pf != "" {
+				paths = append(paths, filepath.Join(pf, appName, "bin", cliName+".cmd"))
+			}
+			return paths
+		}
+		return nil
+	}
 }
 
 // vscodeFamilyInstall returns an *exec.Cmd that runs the given binary's
@@ -66,51 +110,64 @@ func extensionPanelManual(name string) string {
 
 var supportedIDEs = []ide{
 	{
-		name:       "VS Code",
-		icon:       "vscode",
-		binaries:   []string{"code"},
-		installCmd: vscodeFamilyInstall,
-		check:      vscodeFamilyCheck,
-		enabled:    true,
-		url:        "https://marketplace.visualstudio.com/items?itemName=infracost.infracost",
+		name:        "VS Code",
+		icon:        "vscode",
+		binaries:    []string{"code"},
+		bundlePaths: vscodeFamilyBundlePaths("Visual Studio Code", "code"),
+		installCmd:  vscodeFamilyInstall,
+		check:       vscodeFamilyCheck,
+		enabled:     true,
+		url:         "https://marketplace.visualstudio.com/items?itemName=infracost.infracost",
 	},
 	{
-		name:       "Cursor",
-		icon:       "cursor",
-		binaries:   []string{"cursor"},
-		installCmd: vscodeFamilyInstall,
-		check:      vscodeFamilyCheck,
-		enabled:    true,
+		name:        "Cursor",
+		icon:        "cursor",
+		binaries:    []string{"cursor"},
+		bundlePaths: vscodeFamilyBundlePaths("Cursor", "cursor"),
+		installCmd:  vscodeFamilyInstall,
+		check:       vscodeFamilyCheck,
+		enabled:     true,
 		// Cursor's marketplace mirrors VS Code's; same extension ID.
 		url: "https://marketplace.visualstudio.com/items?itemName=infracost.infracost",
 	},
 	{
-		name:       "Windsurf",
-		icon:       "windsurf",
-		binaries:   []string{"windsurf"},
-		installCmd: vscodeFamilyInstall,
-		check:      vscodeFamilyCheck,
-		enabled:    true,
+		name:        "Windsurf",
+		icon:        "windsurf",
+		binaries:    []string{"windsurf"},
+		bundlePaths: vscodeFamilyBundlePaths("Windsurf", "windsurf"),
+		installCmd:  vscodeFamilyInstall,
+		check:       vscodeFamilyCheck,
+		enabled:     true,
 		// Windsurf bundles its own marketplace experience inside the
 		// Extensions panel; the public-facing fallback is Open VSX.
 		url: "https://open-vsx.org/extension/infracost/infracost",
 	},
 	{
-		name:       "VSCodium",
-		icon:       "vscodium",
-		binaries:   []string{"codium"},
-		installCmd: vscodeFamilyInstall,
-		check:      vscodeFamilyCheck,
-		enabled:    true,
+		name:        "VSCodium",
+		icon:        "vscodium",
+		binaries:    []string{"codium"},
+		bundlePaths: vscodeFamilyBundlePaths("VSCodium", "codium"),
+		installCmd:  vscodeFamilyInstall,
+		check:       vscodeFamilyCheck,
+		enabled:     true,
 		// VSCodium's default registry is Open VSX (where the Infracost
 		// extension is published) rather than the VS Marketplace.
 		url: "https://open-vsx.org/extension/infracost/infracost",
 	},
 	{
-		name:    "Google Antigravity",
-		icon:    "antigravity",
-		manual:  extensionPanelManual("Google Antigravity"),
-		enabled: true,
+		name:     "Google Antigravity",
+		icon:     "antigravity",
+		binaries: []string{"antigravity"}, // power users may put the bundled CLI on PATH
+		// Antigravity ships a `code`-style CLI inside the app bundle.
+		// Apple's app sandbox keeps it out of $PATH by default, so we
+		// look at the canonical install locations directly. Linux
+		// install paths aren't confirmed yet — those users fall through
+		// to the manual card.
+		bundlePaths: vscodeFamilyBundlePaths("Antigravity", "antigravity"),
+		installCmd: vscodeFamilyInstall,
+		check:      vscodeFamilyCheck,
+		manual:     extensionPanelManual("Google Antigravity"),
+		enabled:    true,
 	},
 	{
 		name:    "JetBrains (IntelliJ, GoLand, etc.)",
@@ -129,8 +186,21 @@ var supportedIDEs = []ide{
 		name:     "Zed",
 		icon:     "zed",
 		binaries: []string{"zed"},
+		// Zed isn't a VS Code fork — its CLI lives at a different
+		// location inside the bundle and is plainly named "cli". Same
+		// per-user vs system fallback as the VS Code family.
+		bundlePaths: func() []string {
+			if runtime.GOOS != "darwin" {
+				return nil
+			}
+			paths := []string{"/Applications/Zed.app/Contents/MacOS/cli"}
+			if home, err := os.UserHomeDir(); err == nil {
+				paths = append(paths, filepath.Join(home, "Applications/Zed.app/Contents/MacOS/cli"))
+			}
+			return paths
+		},
 		installCmd: func(bin string) *exec.Cmd {
-			return exec.Command(bin, "extension", "install", "infracost")
+			return exec.Command(bin, "extension", "install", "infracost") //nolint:gosec // bin resolved via lookup
 		},
 		url: "https://zed.dev/extensions?query=infracost",
 	},
@@ -234,7 +304,50 @@ func ideIconSlug(name string) string {
 	return ""
 }
 
+// findIDEBinary resolves a path to the IDE's CLI binary. Looks on
+// PATH first (so power users can override) then falls back to the
+// per-OS bundle paths declared on the entry. Returns "" if neither
+// turns up an executable.
+func findIDEBinary(i ide) string {
+	for _, bin := range i.binaries {
+		if path, err := exec.LookPath(bin); err == nil {
+			return path
+		}
+	}
+	if i.bundlePaths != nil {
+		for _, p := range i.bundlePaths() {
+			if info, err := os.Stat(p); err == nil && !info.IsDir() {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
 func installIDE(i ide) error {
+	// Try the scriptable install first when one is available and the
+	// IDE's CLI is resolvable. This lets us prefer the automatic path
+	// over the manual card for IDEs that have both (e.g. Antigravity:
+	// scriptable via the bundled CLI on macOS, manual fallback for
+	// platforms we haven't mapped yet).
+	if i.installCmd != nil {
+		if path := findIDEBinary(i); path != "" {
+			var actionErr error
+			if err := ui.RunWithSpinner(fmt.Sprintf("Installing Infracost extension via %s...", filepath.Base(path)), "Infracost extension installed", func() {
+				cmd := i.installCmd(path)
+				cmd.Stdout = nil
+				cmd.Stderr = nil
+				actionErr = cmd.Run()
+			}); err != nil {
+				return err
+			}
+			if actionErr != nil {
+				return fmt.Errorf("installing extension: %w", actionErr)
+			}
+			return nil
+		}
+	}
+
 	if i.manual != "" {
 		// Mirror the agent manual flow: render the steps inside an
 		// InstructionsCard, gate progression on a "press enter" prompt,
@@ -249,28 +362,6 @@ func installIDE(i ide) error {
 			ui.EraseLastLines(rewind)
 			ui.Successf("Followed setup instructions for %s", i.name)
 		}
-		return nil
-	}
-
-	for _, bin := range i.binaries {
-		path, err := exec.LookPath(bin)
-		if err != nil {
-			continue
-		}
-
-		var actionErr error
-		if err := ui.RunWithSpinner(fmt.Sprintf("Installing Infracost extension via %s...", bin), "Infracost extension installed", func() {
-			cmd := i.installCmd(path)
-			cmd.Stdout = nil
-			cmd.Stderr = nil
-			actionErr = cmd.Run()
-		}); err != nil {
-			return err
-		}
-		if actionErr != nil {
-			return fmt.Errorf("installing extension: %w", actionErr)
-		}
-
 		return nil
 	}
 
