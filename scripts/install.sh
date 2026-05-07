@@ -20,6 +20,22 @@ if [ "$arch" = "aarch64" ]; then
 fi
 
 version=${INFRACOST_VERSION:-latest}
+
+# This script only installs versions >=2.0.0; older versions are at https://github.com/infracost/infracost.
+if [ "$version" != "latest" ]; then
+  major=$(echo "$version" | sed 's/^v//' | cut -d. -f1)
+  if ! echo "$major" | grep -qE '^[0-9]+$'; then
+    echo "Error: invalid version format: $version"
+    exit 1
+  fi
+  if [ "$major" -lt 2 ]; then
+    echo "Error: version $version is not supported by this script."
+    echo "This script only installs versions >=2.0.0 from the infracost/cli repository."
+    echo "For older versions, see https://github.com/infracost/infracost."
+    exit 1
+  fi
+fi
+
 url="https://infracost.io/downloads/${version}"
 tar="infracost-$os-$arch.tar.gz"
 echo "Downloading version ${version} of infracost-$os-$arch..."
