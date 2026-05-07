@@ -15,7 +15,7 @@ func Version(_ *config.Config) *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println(version.Version)
+			fmt.Printf("infracost version %s\n", version.Version)
 			return nil
 		},
 	}
