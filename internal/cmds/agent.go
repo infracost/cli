@@ -211,11 +211,36 @@ var supportedAgents = []agent{
 		enabled: true,
 	},
 	{
-		name: "OpenAI Codex",
-		icon: "codex",
-		manual: fmt.Sprintf(`To install Infracost skills in OpenAI Codex, run the following prompt:
-  %s`, ui.Code("$skill-installer infracost/agent-skills")),
-		remove: `To remove Infracost skills from OpenAI Codex, remove the infracost skills from your Codex configuration.`,
+		name:     "OpenAI Codex",
+		icon:     "codex",
+		binaries: []string{"codex"},
+		// `codex exec` runs a single prompt non-interactively and exits.
+		// `$skill-installer` is Codex's built-in skill that clones a
+		// repo and registers each skill it finds. Args go through Go's
+		// exec directly (no shell), so the literal `$` in the prompt
+		// passes through as-is.
+		setup: func(bin, _ string) error {
+			var actionErr error
+			if err := ui.RunWithSpinner("Installing Infracost skill...", "Skill installed", func() {
+				actionErr = runAgentBinary(bin, "exec", "$skill-installer infracost/agent-skills")
+			}); err != nil {
+				return err
+			}
+			if actionErr != nil && !isAlreadyConfiguredErr(actionErr) {
+				return fmt.Errorf("installing skill: %w", actionErr)
+			}
+			return nil
+		},
+		// Single-quoted in the manual so users running this in bash /
+		// zsh / fish all pass the literal `$skill-installer` to codex
+		// rather than having their shell try to expand it as a variable.
+		manual: fmt.Sprintf(`To install Infracost skills in OpenAI Codex:
+  1. Install Codex CLI: %s
+  2. Run the following command:
+     %s`,
+			ui.Code("https://developers.openai.com/codex/cli"),
+			ui.Code("codex exec '$skill-installer infracost/agent-skills'")),
+		remove:  `To remove Infracost skills from OpenAI Codex, remove the infracost skills from your Codex configuration.`,
 		enabled: true,
 	},
 	{
