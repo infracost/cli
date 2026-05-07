@@ -172,7 +172,7 @@ func installCopilotVSCodePlugin() error {
 
 	var actionErr error
 	if err := ui.RunWithSpinner("Installing Infracost plugin...", "Plugin installed", func() {
-		if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		if err := os.MkdirAll(rootDir, 0o750); err != nil {
 			actionErr = fmt.Errorf("creating %s: %w", rootDir, err)
 			return
 		}
@@ -187,7 +187,7 @@ func installCopilotVSCodePlugin() error {
 			}
 		}
 
-		cmd := exec.Command("git", "clone", "--depth=1", infracostSkillsRepo, cloneDir)
+		cmd := exec.Command("git", "clone", "--depth=1", infracostSkillsRepo, cloneDir) //nolint:gosec // repo URL is a hardcoded constant; cloneDir is derived from $HOME
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
@@ -213,7 +213,7 @@ func installCopilotVSCodePlugin() error {
 func updateAgentPluginRegistry(file, pluginDir, marketplace string) error {
 	reg := agentPluginRegistry{Version: 1}
 
-	if data, err := os.ReadFile(file); err == nil {
+	if data, err := os.ReadFile(file); err == nil { //nolint:gosec // file is the registry path under $HOME, not user-supplied
 		if err := json.Unmarshal(data, &reg); err != nil {
 			return fmt.Errorf("parsing %s: %w", file, err)
 		}
@@ -244,7 +244,7 @@ func updateAgentPluginRegistry(file, pluginDir, marketplace string) error {
 	if err != nil {
 		return fmt.Errorf("encoding registry: %w", err)
 	}
-	if err := os.WriteFile(file, data, 0o644); err != nil {
+	if err := os.WriteFile(file, data, 0o600); err != nil {
 		return fmt.Errorf("writing %s: %w", file, err)
 	}
 	return nil
