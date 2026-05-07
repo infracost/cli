@@ -2,9 +2,12 @@ package cmds
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -127,6 +130,126 @@ func pluginTeardown(bin, marketplaceName, plugin, scope string) error {
 	return errors.Join(errs...)
 }
 
+// agentPluginEntry mirrors a record in VS Code's
+// ~/.vscode/agent-plugins/installed.json.
+type agentPluginEntry struct {
+	PluginURI   string `json:"pluginUri"`
+	Marketplace string `json:"marketplace"`
+}
+
+// agentPluginRegistry is the on-disk shape of the same file. We
+// guard against unknown versions to avoid silently corrupting a
+// future schema change.
+type agentPluginRegistry struct {
+	Version   int                `json:"version"`
+	Installed []agentPluginEntry `json:"installed"`
+}
+
+// installCopilotVSCodePlugin reproduces what VS Code's Command Palette
+// "Chat: Install Plugin From Source" command does internally:
+//   - git-clone the source repo into ~/.vscode/agent-plugins/github.com/<owner>/<repo>
+//   - register it in ~/.vscode/agent-plugins/installed.json with a
+//     {pluginUri, marketplace} entry.
+//
+// The directory layout was reverse-engineered from a working install;
+// if `version` in installed.json ever moves past 1, we refuse to
+// modify the file rather than silently corrupting whatever new schema
+// VS Code has rolled out.
+//
+// Re-running this will wipe the existing clone and re-clone fresh, and
+// update (rather than duplicate) the entry in the registry — so a
+// `infracost agent setup` after a previous install pulls the latest
+// agent-skills revision instead of leaving a stale checkout in place.
+func installCopilotVSCodePlugin() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locating home directory: %w", err)
+	}
+	rootDir := filepath.Join(home, ".vscode", "agent-plugins")
+	cloneDir := filepath.Join(rootDir, "github.com", "infracost", "agent-skills")
+	pluginDir := filepath.Join(cloneDir, "plugins", "infracost")
+	registryFile := filepath.Join(rootDir, "installed.json")
+
+	var actionErr error
+	if err := ui.RunWithSpinner("Installing Infracost plugin...", "Plugin installed", func() {
+		if err := os.MkdirAll(rootDir, 0o755); err != nil {
+			actionErr = fmt.Errorf("creating %s: %w", rootDir, err)
+			return
+		}
+
+		// Always start from a clean clone so re-running setup brings
+		// the user up to the current revision rather than leaving a
+		// stale checkout on disk.
+		if _, err := os.Stat(cloneDir); err == nil {
+			if err := os.RemoveAll(cloneDir); err != nil {
+				actionErr = fmt.Errorf("removing existing clone at %s: %w", cloneDir, err)
+				return
+			}
+		}
+
+		cmd := exec.Command("git", "clone", "--depth=1", infracostSkillsRepo, cloneDir)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				actionErr = fmt.Errorf("git clone: %s", msg)
+			} else {
+				actionErr = fmt.Errorf("git clone: %w", err)
+			}
+			return
+		}
+
+		actionErr = updateAgentPluginRegistry(registryFile, pluginDir, infracostSkillsRepo)
+	}); err != nil {
+		return err
+	}
+	return actionErr
+}
+
+// updateAgentPluginRegistry parses VS Code's agent-plugins/installed.json,
+// upserts the Infracost entry (or creates the file if missing), and
+// writes it back. Existing entries that match `marketplace` get their
+// `pluginUri` refreshed so a path change after a re-clone propagates.
+func updateAgentPluginRegistry(file, pluginDir, marketplace string) error {
+	reg := agentPluginRegistry{Version: 1}
+
+	if data, err := os.ReadFile(file); err == nil {
+		if err := json.Unmarshal(data, &reg); err != nil {
+			return fmt.Errorf("parsing %s: %w", file, err)
+		}
+		if reg.Version != 1 {
+			return fmt.Errorf("VS Code agent-plugins registry is version %d (expected 1); refusing to modify — run the manual install instead", reg.Version)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("reading %s: %w", file, err)
+	}
+
+	pluginURI := "file://" + pluginDir
+	found := false
+	for i, e := range reg.Installed {
+		if e.Marketplace == marketplace {
+			reg.Installed[i].PluginURI = pluginURI
+			found = true
+			break
+		}
+	}
+	if !found {
+		reg.Installed = append(reg.Installed, agentPluginEntry{
+			PluginURI:   pluginURI,
+			Marketplace: marketplace,
+		})
+	}
+
+	data, err := json.MarshalIndent(reg, "", "\t")
+	if err != nil {
+		return fmt.Errorf("encoding registry: %w", err)
+	}
+	if err := os.WriteFile(file, data, 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", file, err)
+	}
+	return nil
+}
+
 func runAgentBinary(bin string, args ...string) error {
 	var stderr bytes.Buffer
 	cmd := exec.Command(bin, args...) //nolint:gosec // bin is user-configured or looked up on PATH
@@ -191,9 +314,16 @@ var supportedAgents = []agent{
 		enabled: true,
 	},
 	{
-		name:     "GitHub Copilot (VS Code)",
-		icon:     "copilot",
-		binaries: []string{"code", "codium"},
+		name: "GitHub Copilot (VS Code)",
+		icon: "copilot",
+		// No `binaries` — install is filesystem-driven (git clone +
+		// JSON registry update) rather than a CLI shell-out, so we run
+		// setup unconditionally regardless of whether `code` is on
+		// PATH. If VS Code isn't actually installed, the files sit in
+		// ~/.vscode/agent-plugins/ harmlessly until it is.
+		setup: func(_, _ string) error {
+			return installCopilotVSCodePlugin()
+		},
 		manual: fmt.Sprintf(`To install Infracost skills in GitHub Copilot for VS Code:
   1. Open the Command Palette (%s / %s)
   2. Run %s
@@ -477,12 +607,22 @@ func resolveAgentBinary(cfg *config.Config, a agent) (string, error) {
 }
 
 func setupAgent(cfg *config.Config, a agent, scope string) error {
-	// Try the scriptable install first when one is available and the
-	// agent's CLI is on PATH. If the binary is missing, fall through to
-	// manual instructions so the user gets pointed at how to install
-	// the CLI itself plus the commands they'll need to run after.
+	// Try the scriptable install first when one is available. For
+	// agents whose setup shells out to a CLI (Claude, Copilot CLI,
+	// Gemini, Codex), a missing binary means we can't run setup and
+	// fall through to manual instructions. For agents whose setup is
+	// filesystem-driven (Copilot VS Code), `binaries` is empty and we
+	// always run setup.
 	if a.setup != nil {
-		if bin, err := resolveAgentBinary(cfg, a); err == nil {
+		var bin string
+		runSetup := true
+		if len(a.binaries) > 0 {
+			var err error
+			if bin, err = resolveAgentBinary(cfg, a); err != nil {
+				runSetup = false
+			}
+		}
+		if runSetup {
 			if err := a.setup(bin, scope); err != nil {
 				return err
 			}
