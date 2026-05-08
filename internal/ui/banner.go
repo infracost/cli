@@ -78,8 +78,16 @@ func gradientCode(t float64) string {
 
 // Banner renders the Infracost iconmark with a diagonal brand→info
 // gradient, alongside a left-to-right gradient wordmark and the version.
-// Falls back to plain text when color is disabled.
+// Terminals that support a graphics protocol (Kitty, iTerm2, etc.) get
+// a wider banner with the rasterized wordmark composited inside a
+// full-width gradient. Falls back to plain text when color is disabled.
 func Banner(version string) string {
+	if HasIcons() {
+		if s := imageBanner(version); s != "" {
+			return s
+		}
+	}
+
 	wordmark := "Infracost CLI"
 	versionLine := "v" + strings.TrimPrefix(version, "v")
 

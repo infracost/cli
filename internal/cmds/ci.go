@@ -122,7 +122,14 @@ func ciSetup(cfg *config.Config) *cobra.Command {
 			if err := requireUserLogin(cfg); err != nil {
 				return err
 			}
-			return RunCISetup(cmd.Context(), cfg, ciPipeline, yes)
+			if err := RunCISetup(cmd.Context(), cfg, ciPipeline, yes); err != nil {
+				return err
+			}
+			// Mirror the unified `infracost setup` flow's closing card —
+			// CI gets a tailored "open a PR" CTA via the ciSetUp flag.
+			fmt.Println()
+			fmt.Print(ui.GradientCard(setupCompleteContent("", "", true)))
+			return nil
 		},
 	}
 
@@ -130,6 +137,31 @@ func ciSetup(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompts for non-interactive scripting")
 
 	return cmd
+}
+
+// CISetupAvailable reports whether the current working directory
+// satisfies the preflight requirements for `infracost ci setup`: it
+// sits inside a git repository with a parseable origin remote. The
+// unified `infracost setup` flow uses this to decide whether to even
+// offer the CI step — asking "Set up CI?" in a directory that can't
+// run setup would just frustrate the user with an error a moment later.
+func CISetupAvailable() bool {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	repoRoot := vcs.GetRepoRoot(cwd)
+	if repoRoot == "" {
+		return false
+	}
+	remoteURL := vcs.GetRemoteURL(repoRoot)
+	if remoteURL == "" {
+		return false
+	}
+	if _, err := parseRemoteURL(remoteURL); err != nil {
+		return false
+	}
+	return true
 }
 
 // RunCISetup is the core logic for `infracost ci setup`, callable from the

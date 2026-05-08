@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/charmbracelet/huh"
@@ -70,48 +71,142 @@ func Setup(cfg *config.Config) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if agentName == "" {
+				renderAgentSkipNotice()
+			}
 
 			// Step 3: IDE setup
 			ideName, err := RunIDESetup(true)
 			if err != nil {
 				return err
 			}
+			if ideName == "" {
+				renderIdeSkipNotice()
+			}
 
-			// Step 4: CI setup
-			if err := runSetupStep("Set up CI integration?", func() error {
-				return RunCISetup(ctx, cfg, false, false)
-			}); err != nil {
-				return err
+			// Step 4: CI setup. Only offered if the preflight passes (git
+			// repository with a parseable origin remote). When it doesn't,
+			// we skip the prompt entirely and fall straight through to the
+			// skip notice — asking the user a question we'd refuse to act
+			// on is worse UX than just telling them what they need.
+			//
+			// runSetupStep returns nil whether the user confirmed or
+			// declined; track the user's intent through the closure so we
+			// know whether to render a skip notice in the offered case
+			// AND whether to tailor the post-setup CTA toward CI.
+			ciSkipped := true
+			if CISetupAvailable() {
+				if err := runSetupStep("Set up CI integration?", func() error {
+					ciSkipped = false
+					return RunCISetup(ctx, cfg, false, false)
+				}); err != nil {
+					return err
+				}
+				if ciSkipped {
+					renderCiSkipNotice()
+				}
+			} else {
+				renderCiSkipNotice()
 			}
 
 			fmt.Println()
-			fmt.Println(ui.Bold(ui.Gradient("Setup complete.")))
-
-			fmt.Println()
-			ui.Heading("What's next?")
-			printNextSteps(agentName, ideName)
+			fmt.Print(ui.GradientCard(setupCompleteContent(agentName, ideName, !ciSkipped)))
 			return nil
 		},
 	}
 }
 
-// printNextSteps renders the post-setup CTA. The recommendation is tailored
-// to whichever integration the user just installed — the agent path (chat
-// in your coding agent) and the IDE path (inline cost estimates) deliver a
-// faster aha moment than the bare CLI for users who installed those tools.
-// Falls back to "cd + infracost scan" when nothing was installed.
-func printNextSteps(agentName, ideName string) {
+// Skip notices stay on screen once rendered — earlier attempts to
+// surgically remove them when the next step completed proved unreliable
+// across terminals (cursor-position queries time out, bubbletea's exit
+// state varies). Leaving them visible is the safer default; the user
+// retains a record of which steps they skipped and how to run each one
+// later.
+
+func renderAgentSkipNotice() {
+	renderSkipNotice("AI coding agents",
+		"To install AI coding agent integration later, run "+ui.Code("infracost agent setup")+".")
+}
+
+func renderIdeSkipNotice() {
+	renderSkipNotice("IDE",
+		"To install IDE integration later, run "+ui.Code("infracost ide setup")+".")
+}
+
+func renderCiSkipNotice() {
+	renderSkipNotice("CI",
+		"To set up CI integration later, cd into a Terraform, CloudFormation, or CDK project in a git repository and run "+ui.Code("infracost ci setup")+".")
+}
+
+func renderSkipNotice(name, content string) {
+	fmt.Println()
+	fmt.Print(ui.InstructionsCard("Set up "+name+" later", content))
+}
+
+// setupCompleteContent assembles the celebration card body: the bold
+// gradient "Setup complete." line, a "What's next?" subhead, and the
+// tailored CTA steps. Returned as a single string so the caller can drop
+// it into ui.GradientCard.
+func setupCompleteContent(agentName, ideName string, ciSetUp bool) string {
+	var b strings.Builder
+	b.WriteString(ui.Bold(ui.Gradient("Setup complete.")))
+	b.WriteString("\n\n")
+	b.WriteString(ui.Bold(ui.Brand("What's next?")))
+	b.WriteByte('\n')
+	b.WriteString(nextStepsContent(agentName, ideName, ciSetUp))
+	return b.String()
+}
+
+// nextStepsContent renders the post-setup CTA as a multi-line string.
+// The recommendation is tailored to whichever integration the user just
+// installed, in priority order: agent > IDE > CI > nothing-installed.
+// Earlier integrations win because they're more directly actionable
+// (chatting in your coding agent or seeing cost estimates inline beats
+// "go open a PR" for getting a first taste of Infracost).
+func nextStepsContent(agentName, ideName string, ciSetUp bool) string {
+	// Inside the gradient card we collapse the cyan info/code highlight
+	// into the heading's brand purple so the box reads as one palette
+	// (gradient border + brand accents) rather than three competing
+	// hues. Per-service brand colors on the product names stay since
+	// they're each option's identity, not a generic highlight.
+	arrow := "  " + ui.Brand("→") + " "
+	var b strings.Builder
+	step := func(format string, args ...any) {
+		b.WriteString(arrow)
+		fmt.Fprintf(&b, format, args...)
+		b.WriteByte('\n')
+	}
+
 	switch {
 	case agentName != "":
-		ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
-		ui.Stepf("Open %s and ask it %s", ui.Code(agentName), ui.Code(`"How much does this project cost?"`))
+		slug := agentIconSlug(agentName)
+		step("cd into a Terraform, CloudFormation, or CDK project")
+		step("Open %s%s and ask it %s", iconPrefix(slug), ui.Bold(ui.Service(slug, agentName)), ui.Brand(`"How much does this project cost?"`))
 	case ideName != "":
-		ui.Stepf("Open a Terraform, CloudFormation, or CDK project in %s", ui.Code(ideName))
-		ui.Stepf("Open the Infracost extension from the toolbar and make sure you're logged in — you'll see cost estimates inline with your code")
+		slug := ideIconSlug(ideName)
+		step("Open a Terraform, CloudFormation, or CDK project in %s%s", iconPrefix(slug), ui.Bold(ui.Service(slug, ideName)))
+		step("Open the Infracost extension from the toolbar and make sure you're logged in — you'll see cost estimates inline with your code")
+	case ciSetUp:
+		step("Open a pull request that changes your infrastructure — Infracost will comment with the cost diff")
 	default:
-		ui.Stepf("cd into a Terraform, CloudFormation, or CDK project")
-		ui.Stepf("Run %s to see your costs and any policy violations", ui.Code("infracost scan"))
+		step("cd into a Terraform, CloudFormation, or CDK project")
+		step("Run %s to see your costs and any policy violations", ui.Brand("infracost scan"))
 	}
+	return b.String()
+}
+
+// iconPrefix returns "<icon> " when the active terminal can render the
+// named brand icon, "" otherwise. Designed to be concatenated directly
+// in front of the service name so the CTA reads naturally on terminals
+// without image support ("Open Claude Code") and gets a subtle brand
+// mark on terminals that do ("Open <logo> Claude Code"). The image
+// escape's display width is recognized by ui.PrintableWidth so the
+// line measures correctly inside a wrapped/bordered card.
+func iconPrefix(slug string) string {
+	if icon := ui.Icon(slug); icon != "" {
+		return icon + " "
+	}
+	return ""
 }
 
 // runSetupStep prompts the user with a yes/no question. If they accept, it
