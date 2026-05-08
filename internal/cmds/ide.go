@@ -222,11 +222,17 @@ func IDE(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func ideSetup(_ *config.Config) *cobra.Command {
+func ideSetup(cfg *config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
 		Short: "Install the Infracost extension for your IDE",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireUserLogin(cfg); err != nil {
+				return err
+			}
+			if err := ensureAuthAndOrg(cmd.Context(), cfg); err != nil {
+				return err
+			}
 			ideName, err := RunIDESetup(false)
 			if err != nil {
 				return err
