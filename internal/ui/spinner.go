@@ -5,11 +5,36 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/infracost/cli/pkg/logging"
 )
+
+// activeProgram tracks the currently running spinner so nested
+// RunWithSpinnerErr calls can route their done lines through the
+// parent's Println rather than launching a competing bubbletea
+// program on the same stderr.
+var (
+	activeProgramMu sync.Mutex
+	activeProgram   *tea.Program
+)
+
+// programWriter routes Write calls to a bubbletea Program's Println so log
+// lines are painted above the spinner without being clobbered by its
+// frame redraws.
+type programWriter struct {
+	p *tea.Program
+}
+
+func (w programWriter) Write(b []byte) (int, error) {
+	// Println adds its own newline; trim ours so we don't double up.
+	w.p.Println(strings.TrimRight(string(b), "\n"))
+	return len(b), nil
+}
 
 // spinnerStyle uses the brand-primary color, picking the dark- or
 // light-terminal variant via lipgloss adaptive colors.
@@ -92,6 +117,22 @@ func RunWithSpinnerErr(ctx context.Context, title, doneTitle string, action func
 		return action(ctx)
 	}
 
+	// If a spinner is already active, don't start a competing one on the
+	// same stderr — run the action directly and emit the done line via
+	// the parent's Println so it's painted above its spinner.
+	activeProgramMu.Lock()
+	parent := activeProgram
+	activeProgramMu.Unlock()
+	if parent != nil {
+		if err := action(ctx); err != nil {
+			return err
+		}
+		if doneTitle != "" {
+			parent.Println(fmt.Sprintf("  %s  %s", Positive("✔"), doneTitle))
+		}
+		return nil
+	}
+
 	s := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle))
 
 	m := spinnerModel{
@@ -107,6 +148,21 @@ func RunWithSpinnerErr(ctx context.Context, title, doneTitle string, action func
 		tea.WithInput(&bytes.Buffer{}),    // don't read from stdin
 		tea.WithoutSignalHandler(),        // avoid signal conflicts in tests / subprocesses
 	)
+
+	// Route logs through Println so they appear above the spinner
+	// instead of getting clobbered by its redraws on stderr.
+	restore := logging.SetOutput(programWriter{p: p})
+	defer restore()
+
+	activeProgramMu.Lock()
+	activeProgram = p
+	activeProgramMu.Unlock()
+	defer func() {
+		activeProgramMu.Lock()
+		activeProgram = nil
+		activeProgramMu.Unlock()
+	}()
+
 	finalModel, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("spinner error: %w", err)

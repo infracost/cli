@@ -20,6 +20,7 @@ import (
 	"github.com/infracost/cli/internal/cmds"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/pkg/auth"
+	"github.com/infracost/cli/pkg/logging"
 	"golang.org/x/oauth2"
 )
 
@@ -117,9 +118,14 @@ func captureOutput(t *testing.T, fn func()) string {
 
 	old := os.Stdout
 	os.Stdout = w
+	// UI status helpers (Success, Step, Warn, ...) write through the
+	// logging output router so they coordinate with TUI spinners. Point
+	// it at the same pipe so the captured output matches what users see.
+	restore := logging.SetOutput(w)
 
 	fn()
 
+	restore()
 	os.Stdout = old
 	_ = w.Close()
 
