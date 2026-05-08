@@ -124,13 +124,6 @@ jobs:
           codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" bin/infracost
           codesign --verify --strict --verbose=2 bin/infracost
 
-      # TODO: Restore --wait (and consider --timeout 30m) once Apple's notary
-      # service completes our Team ID's first submission. First-time review is
-      # taking 4+ hours, which would block the runner. Submitting without --wait
-      # lets Apple process the notarization in the background while we ship the
-      # signed binary; macOS Gatekeeper does an online check at first launch and
-      # will succeed once Apple's review completes. Once Team ID reputation is
-      # warm, subsequent notarizations clear in 5-15 min and --wait is safe.
       - name: Notarize binary
         if: matrix.goos == 'darwin'
         env:
@@ -143,7 +136,9 @@ jobs:
           xcrun notarytool submit notarize.zip \
             --key notary-key.p8 \
             --key-id "$MACOS_NOTARIZATION_API_KEY_ID" \
-            --issuer "$MACOS_NOTARIZATION_API_ISSUER_ID"
+            --issuer "$MACOS_NOTARIZATION_API_ISSUER_ID" \
+            --wait \
+            --timeout 30m
           rm notary-key.p8 notarize.zip
 
       - name: Package
