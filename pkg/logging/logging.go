@@ -1,8 +1,10 @@
 package logging
 
 import (
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hashicorp/go-hclog"
@@ -15,7 +17,45 @@ var (
 
 	loggerConfigured bool
 	logger           zerolog.Logger
+
+	// output is a swappable destination so callers (e.g. the spinner)
+	// can redirect log writes through a TUI that owns stderr.
+	output = &outputRouter{target: os.Stderr}
 )
+
+type outputRouter struct {
+	mu     sync.Mutex
+	target io.Writer
+}
+
+func (w *outputRouter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	target := w.target
+	w.mu.Unlock()
+	return target.Write(p)
+}
+
+// SetOutput swaps the writer used for log output and returns a function
+// that restores the previous writer. Use this when something else owns
+// stderr (e.g. a bubbletea spinner) so log lines aren't clobbered by
+// concurrent redraws.
+func SetOutput(w io.Writer) func() {
+	output.mu.Lock()
+	prev := output.target
+	output.target = w
+	output.mu.Unlock()
+	return func() {
+		output.mu.Lock()
+		output.target = prev
+		output.mu.Unlock()
+	}
+}
+
+// Output returns the shared status writer. Use this for any status or
+// decoration output (UI checkmarks, hints, headings) so it coordinates
+// with whatever owns stderr — currently a bubbletea spinner via
+// SetOutput.
+func Output() io.Writer { return output }
 
 type Config struct {
 	WriteLevel string `env:"INFRACOST_CLI_LOG_LEVEL" default:"warn"`
@@ -56,9 +96,9 @@ func (config *Config) Process() {
 		level = zerolog.WarnLevel
 	}
 
-	logger = zerolog.New(os.Stderr).Level(level).With().Timestamp().Logger()
+	logger = zerolog.New(output).Level(level).With().Timestamp().Logger()
 	if !config.JSON {
-		logger = logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		logger = logger.Output(zerolog.ConsoleWriter{Out: output})
 	}
 
 	if err != nil {
