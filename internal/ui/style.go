@@ -12,7 +12,7 @@ import (
 
 // Success prints a green checkmark followed by the message.
 func Success(msg string) {
-	fmt.Fprintf(logging.Output(), "  %s  %s\n", Positive("✔"), msg)
+	_, _ = fmt.Fprintf(logging.Output(), "  %s  %s\n", Positive("✔"), msg)
 }
 
 // Successf prints a green checkmark followed by a formatted message.
@@ -22,7 +22,7 @@ func Successf(format string, args ...any) {
 
 // Warn prints a yellow warning symbol followed by the message.
 func Warn(msg string) {
-	fmt.Fprintf(logging.Output(), "  %s  %s\n", Caution("!"), msg)
+	_, _ = fmt.Fprintf(logging.Output(), "  %s  %s\n", Caution("!"), msg)
 }
 
 // Warnf prints a yellow warning symbol followed by a formatted message.
@@ -32,7 +32,7 @@ func Warnf(format string, args ...any) {
 
 // Fail prints a red cross followed by the message.
 func Fail(msg string) {
-	fmt.Fprintf(logging.Output(), "  %s  %s\n", Danger("✗"), msg)
+	_, _ = fmt.Fprintf(logging.Output(), "  %s  %s\n", Danger("✗"), msg)
 }
 
 // Failf prints a red cross followed by a formatted message.
@@ -42,7 +42,7 @@ func Failf(format string, args ...any) {
 
 // Step prints an info-colored arrow followed by the message.
 func Step(msg string) {
-	fmt.Fprintf(logging.Output(), "  %s  %s\n", Info("→"), msg)
+	_, _ = fmt.Fprintf(logging.Output(), "  %s  %s\n", Info("→"), msg)
 }
 
 // Stepf prints an info-colored arrow followed by a formatted message.
@@ -52,7 +52,7 @@ func Stepf(format string, args ...any) {
 
 // Heading prints a bold brand-colored section heading.
 func Heading(msg string) {
-	fmt.Fprintf(logging.Output(), "%s\n", Bold(Brand(msg)))
+	_, _ = fmt.Fprintf(logging.Output(), "%s\n", Bold(Brand(msg)))
 }
 
 // Headingf prints a bold brand-colored formatted section heading.
@@ -63,7 +63,7 @@ func Headingf(format string, args ...any) {
 // Hint prints an indented hint line with an info-colored arrow.
 // indent is the number of leading spaces before the arrow.
 func Hint(indent int, msg string) {
-	fmt.Fprintf(logging.Output(), "%s%s  %s\n", strings.Repeat(" ", indent), Info("→"), msg)
+	_, _ = fmt.Fprintf(logging.Output(), "%s%s  %s\n", strings.Repeat(" ", indent), Info("→"), msg)
 }
 
 // Hintf prints a formatted indented hint.
@@ -86,7 +86,7 @@ func IsInteractive() bool {
 // Returns true if the user pressed Enter, false on EOF or error (e.g.
 // non-interactive stdin).
 func PressEnter(msg string) bool {
-	fmt.Fprint(logging.Output(), msg)
+	_, _ = fmt.Fprint(logging.Output(), msg)
 	_, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	return err == nil
 }
@@ -95,7 +95,7 @@ func PressEnter(msg string) bool {
 // it in their browser. The user can press Ctrl+C to skip. If stdin is
 // non-interactive (e.g. in tests), the browser is not opened.
 func OpenOrContinue(url string) {
-	fmt.Fprintf(logging.Output(), "  %s\n", Code(url))
+	_, _ = fmt.Fprintf(logging.Output(), "  %s\n", Code(url))
 	if !PressEnter("\nPress Enter to open in your browser...") {
 		return
 	}
