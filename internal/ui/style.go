@@ -71,15 +71,27 @@ func Hintf(indent int, format string, args ...any) {
 	Hint(indent, fmt.Sprintf(format, args...))
 }
 
-// IsInteractive reports whether stdin is a terminal. Interactive prompts
-// (huh selects, confirms, etc.) should be skipped when this returns false
-// to avoid blocking in tests or piped environments.
+// IsInteractive reports whether the process can run interactive prompts
+// (huh selects, confirms, etc.). This is true only when stdin is a
+// terminal AND the controlling terminal is openable.
+//
+// Both checks matter: huh/bubbletea opens /dev/tty directly on Unix,
+// independent of stdin, so a stdin-only check returns true in
+// environments where the prompt will then immediately fail with
+// "could not open a new TTY: open /dev/tty: device not configured"
+// (e.g. when invoked from agent harnesses like Claude Code that pipe a
+// pty for stdin but don't expose a controlling terminal). Returning
+// false here lets callers skip the prompt and surface a useful flag
+// hint instead.
 func IsInteractive() bool {
 	info, err := os.Stdin.Stat()
 	if err != nil {
 		return false
 	}
-	return (info.Mode() & os.ModeCharDevice) != 0
+	if (info.Mode() & os.ModeCharDevice) == 0 {
+		return false
+	}
+	return canOpenControllingTTY()
 }
 
 // EraseLastLines moves the cursor up n lines and erases from there to

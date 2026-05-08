@@ -329,6 +329,9 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	}
 
 	if !yes {
+		if !ui.IsInteractive() {
+			return fmt.Errorf("cannot confirm in a non-interactive terminal — re-run with --yes to skip the confirmation prompt")
+		}
 		var confirm bool
 		err := huh.NewConfirm().
 			Title("Ready?").
@@ -397,6 +400,10 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 func promptExistingWorkflows(yes bool) (bool, error) {
 	if yes {
 		return true, nil
+	}
+
+	if !ui.IsInteractive() {
+		return false, fmt.Errorf("Infracost workflow files already exist and there is no interactive terminal to confirm overwriting — re-run with --yes to overwrite, or remove the existing files first")
 	}
 
 	const (

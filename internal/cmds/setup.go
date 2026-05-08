@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +24,24 @@ func requireUserLogin(cfg *config.Config) error {
 		return fmt.Errorf("setup requires interactive login, it cannot be used with INFRACOST_CLI_AUTHENTICATION_TOKEN — run 'infracost auth login' first, then retry")
 	}
 	return nil
+}
+
+// ensureAuthAndOrg verifies the user has a valid token and that an org
+// is selected. Setup commands call this before running their interactive
+// flows so a multi-org user without a selection gets a single actionable
+// error up front instead of a confusing failure later when the chosen
+// integration tries to make an API call.
+//
+// If no valid token is cached, the user is taken through an interactive
+// login (which itself resolves the org). When already logged in, this
+// is mostly a no-op — the user/org cache is consulted with no API call
+// unless it's stale.
+func ensureAuthAndOrg(ctx context.Context, cfg *config.Config) error {
+	if ts := cfg.Auth.TokenFromCache(ctx); ts != nil {
+		ui.Success("Already logged in")
+		return resolveOrg(ctx, cfg, ts)
+	}
+	return RunLogin(ctx, cfg)
 }
 
 func Setup(cfg *config.Config) *cobra.Command {
@@ -56,14 +75,10 @@ func Setup(cfg *config.Config) *cobra.Command {
 			}()
 			defer signal.Stop(sigCh)
 
-			// Step 1: Login
+			// Step 1: Login (and resolve org for multi-org accounts)
 			ctx := cmd.Context()
-			if ts := cfg.Auth.TokenFromCache(ctx); ts != nil {
-				ui.Success("Already logged in")
-			} else {
-				if err := RunLogin(ctx, cfg); err != nil {
-					return err
-				}
+			if err := ensureAuthAndOrg(ctx, cfg); err != nil {
+				return err
 			}
 
 			// Step 2: Agent setup

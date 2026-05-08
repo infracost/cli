@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/infracost/cli/internal/api/dashboard/mocks"
@@ -24,7 +25,12 @@ func TestSetup_RejectsAuthToken(t *testing.T) {
 }
 
 func TestSetup_AlreadyLoggedIn(t *testing.T) {
-	cfg := ciTestConfig(t, mocks.NewMockClient(t))
+	mockClient := mocks.NewMockClient(t)
+	mockClient.EXPECT().
+		CurrentUser(mock.Anything).
+		Return(singleOrgUser(), nil)
+
+	cfg := ciTestConfig(t, mockClient)
 	cmd := cmds.Setup(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true

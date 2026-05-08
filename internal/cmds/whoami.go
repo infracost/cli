@@ -2,6 +2,7 @@ package cmds
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
@@ -25,7 +26,8 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("fetching current user: %w", err)
 			}
 
-			cacheUser(cfg, user)
+			cached := cacheUser(cfg, user)
+			currentSlug, _, orgSrc := currentOrgSlug(cfg, cached.Organizations, cached.SelectedOrgID)
 
 			fmt.Println()
 			fmt.Printf("  %s  %s\n", ui.Muted("Name:"), user.Name)
@@ -42,7 +44,31 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 						break
 					}
 				}
-				fmt.Printf("  - %s %s\n", ui.Accent(org.Slug), ui.Mutedf("(%s)", role))
+				var marker, suffix string
+				if strings.EqualFold(org.Slug, currentSlug) {
+					marker = "  " + ui.Positive("✔") + "  "
+					switch orgSrc {
+					case orgSourceRepo:
+						suffix = "  " + ui.Muted("← set for this repo")
+					case orgSourceFlag:
+						suffix = "  " + ui.Muted("← --org flag")
+					case orgSourceGlobal:
+						suffix = "  " + ui.Muted("← active")
+					}
+				} else {
+					marker = "  -  "
+				}
+				fmt.Printf("%s%s %s%s\n", marker, ui.Accent(org.Slug), ui.Mutedf("(%s)", role), suffix)
+			}
+
+			if currentSlug == "" && len(user.Organizations) > 1 {
+				fmt.Println()
+				ui.Warn("No organization selected. Subsequent commands will fail with 'no organization selected'.")
+				ui.Hint(2, "Pick one with one of:")
+				ui.Hint(4, "pass --org <slug> on each command")
+				ui.Hint(4, "set INFRACOST_CLI_ORG=<slug> in the environment")
+				ui.Hint(4, "run 'infracost org switch <slug>' to save it globally")
+				ui.Hint(4, "run 'infracost org switch <slug> --repo' to pin it to this repository")
 			}
 
 			return nil

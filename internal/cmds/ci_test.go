@@ -390,7 +390,10 @@ func TestCISetup_PipelineMultipleOrgs(t *testing.T) {
 	})
 
 	require.Error(t, execErr)
-	assert.Contains(t, execErr.Error(), "multiple organizations")
+	assert.Contains(t, execErr.Error(), "no organization selected")
+	assert.Contains(t, execErr.Error(), "acme-corp")
+	assert.Contains(t, execErr.Error(), "beta-inc")
+	assert.Contains(t, execErr.Error(), "--org")
 
 	assert.Contains(t, output, "✔  GitHub repository   acme-corp/platform-infra")
 	assert.NotContains(t, output, "Infracost API key")

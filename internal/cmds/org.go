@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/pkg/logging"
 	"golang.org/x/oauth2"
@@ -74,9 +76,8 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 		return nil
 	}
 
-	// Multiple orgs, no selection — prompt in TTY, warn otherwise.
-	info, statErr := os.Stdin.Stat()
-	if statErr == nil && (info.Mode()&os.ModeCharDevice) != 0 {
+	// Multiple orgs, no selection — prompt in TTY, error otherwise.
+	if ui.IsInteractive() {
 		slug, pickErr := pickOrg(uc.Organizations, cfg, "", defaultPickOrgTitle)
 		if pickErr == nil {
 			for _, org := range uc.Organizations {
@@ -89,17 +90,32 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 					return nil
 				}
 			}
-		} else if !errors.Is(pickErr, huh.ErrUserAborted) {
-			logging.WithError(pickErr).Msg("failed to prompt for org selection")
+		}
+		if pickErr != nil && !errors.Is(pickErr, huh.ErrUserAborted) {
+			return fmt.Errorf("selecting organization: %w", pickErr)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "warning: you belong to %d organizations but none are selected.\n", len(uc.Organizations))
-	fmt.Fprintf(os.Stderr, "         To select one, run:\n")
-	fmt.Fprintf(os.Stderr, "           infracost org switch\n")
-	fmt.Fprintf(os.Stderr, "         Or set the INFRACOST_CLI_ORG environment variable.\n")
+	return errNoOrgSelected(uc.Organizations)
+}
 
-	return nil
+// errNoOrgSelected returns an actionable error for the multi-org +
+// non-interactive case. Listing the slugs inline lets the caller (or an
+// agent harness) pick a value to pass back via --org without having to
+// run a second command.
+func errNoOrgSelected(orgs []auth.CachedOrganization) error {
+	slugs := make([]string, 0, len(orgs))
+	for _, o := range orgs {
+		slugs = append(slugs, o.Slug)
+	}
+	return fmt.Errorf(
+		"no organization selected — you belong to %d (%s). Pick one with one of:\n"+
+			"  • pass --org <slug>\n"+
+			"  • set INFRACOST_CLI_ORG=<slug>\n"+
+			"  • run 'infracost org switch <slug>' to save it globally\n"+
+			"  • run 'infracost org switch <slug> --repo' to save it for this repo only",
+		len(orgs), strings.Join(slugs, ", "),
+	)
 }
 
 // ensureUserCache loads the user cache, refreshing from the API if stale or missing.

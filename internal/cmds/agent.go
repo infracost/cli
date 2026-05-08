@@ -455,7 +455,13 @@ func agentSetup(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Install Infracost skills for your AI coding agent",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireUserLogin(cfg); err != nil {
+				return err
+			}
+			if err := ensureAuthAndOrg(cmd.Context(), cfg); err != nil {
+				return err
+			}
 			agentName, err := RunAgentSetup(cfg, scope, false)
 			if err != nil {
 				return err
