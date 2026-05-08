@@ -403,7 +403,7 @@ func promptExistingWorkflows(yes bool) (bool, error) {
 	}
 
 	if !ui.IsInteractive() {
-		return false, fmt.Errorf("Infracost workflow files already exist and there is no interactive terminal to confirm overwriting — re-run with --yes to overwrite, or remove the existing files first")
+		return false, fmt.Errorf("infracost workflow files already exist and there is no interactive terminal to confirm overwriting — re-run with --yes to overwrite, or remove the existing files first")
 	}
 
 	const (

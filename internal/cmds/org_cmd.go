@@ -97,7 +97,7 @@ func orgSwitch(cfg *config.Config) *cobra.Command {
 			} else {
 				if !ui.IsInteractive() {
 					return fmt.Errorf(
-						"no org slug provided and no interactive terminal available — pass the slug as an argument, e.g. 'infracost org switch <slug>'. Run 'infracost org list' to see your orgs.",
+						"no org slug provided and no interactive terminal available — pass the slug as an argument (e.g. 'infracost org switch <slug>'); run 'infracost org list' to see your orgs",
 					)
 				}
 				slug, err = pickOrg(uc.Organizations, cfg, uc.SelectedOrgID, defaultPickOrgTitle)
