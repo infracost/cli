@@ -1,0 +1,14 @@
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  Something went wrong.                                               │
+│                                                                      │
+│  api request failed: 401 unauthorized                                │
+│                                                                      │
+│  Try one of:                                                         │
+│    • a — re-authenticate and retry                                   │
+│    • r — retry the scan                                              │
+│    • run infracost auth login to refresh credentials                 │
+│    • run infracost setup to walk through configuration               │
+│    • q — quit                                                        │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
