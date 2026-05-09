@@ -13,7 +13,7 @@ import (
 )
 
 // Scenario tests cover the Model state machine end-to-end without
-// needing teatest / a PTY. Each test synthesises the messages a real
+// needing teatest / a PTY. Each test synthesizes the messages a real
 // session would produce and asserts on the resulting model state.
 //
 // This intentionally exercises Update by value-receiver — the same
