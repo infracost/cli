@@ -1,10 +1,15 @@
-package cmds
+// Package orgresolve resolves which Infracost organization is active for a
+// given command invocation. The resolution chain (--org flag → .infracost/org
+// → user-cache selection → single-org auto-select → interactive pick) is
+// shared between the CLI commands and the TUI.
+package orgresolve
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -17,7 +22,20 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// resolveOrg resolves the active organization into cfg.OrgID using the
+// DefaultPickTitle is the title used by Pick when none is provided.
+const DefaultPickTitle = "Which organization do you want to use?"
+
+// Source identifies how the active org slug was determined.
+type Source int
+
+const (
+	SourceNone   Source = iota
+	SourceFlag          // --org flag or INFRACOST_CLI_ORG env var
+	SourceRepo          // .infracost/org file in working directory
+	SourceGlobal        // SelectedOrgID in user cache (from org switch)
+)
+
+// Resolve resolves the active organization into cfg.OrgID using the
 // following priority chain:
 //  1. --org flag / INFRACOST_CLI_ORG env var
 //  2. .infracost/org file in the working directory
@@ -25,9 +43,9 @@ import (
 //
 // If no org context is found and the user belongs to exactly one org, it is
 // used automatically. If they belong to multiple orgs, they are prompted to
-// pick one (TTY only); on non-TTY a warning is written to stderr instead.
-func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) error {
-	uc, err := ensureUserCache(ctx, cfg, source)
+// pick one (TTY only); on non-TTY a structured error is returned.
+func Resolve(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) error {
+	uc, err := EnsureUserCache(ctx, cfg, source)
 	if err != nil {
 		return err
 	}
@@ -78,7 +96,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 
 	// Multiple orgs, no selection — prompt in TTY, error otherwise.
 	if ui.IsInteractive() {
-		slug, pickErr := pickOrg(uc.Organizations, cfg, "", defaultPickOrgTitle)
+		slug, pickErr := Pick(uc.Organizations, cfg, "", DefaultPickTitle)
 		if pickErr == nil {
 			for _, org := range uc.Organizations {
 				if org.Slug == slug {
@@ -96,14 +114,14 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 		}
 	}
 
-	return errNoOrgSelected(uc.Organizations)
+	return ErrNoOrgSelected(uc.Organizations)
 }
 
-// errNoOrgSelected returns an actionable error for the multi-org +
+// ErrNoOrgSelected returns an actionable error for the multi-org +
 // non-interactive case. Listing the slugs inline lets the caller (or an
 // agent harness) pick a value to pass back via --org without having to
 // run a second command.
-func errNoOrgSelected(orgs []auth.CachedOrganization) error {
+func ErrNoOrgSelected(orgs []auth.CachedOrganization) error {
 	slugs := make([]string, 0, len(orgs))
 	for _, o := range orgs {
 		slugs = append(slugs, o.Slug)
@@ -118,8 +136,8 @@ func errNoOrgSelected(orgs []auth.CachedOrganization) error {
 	)
 }
 
-// ensureUserCache loads the user cache, refreshing from the API if stale or missing.
-func ensureUserCache(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) (*auth.UserCache, error) {
+// EnsureUserCache loads the user cache, refreshing from the API if stale or missing.
+func EnsureUserCache(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) (*auth.UserCache, error) {
 	uc, err := cfg.Auth.LoadUserCache()
 	if err != nil {
 		logging.WithError(err).Msg("failed to load user cache, fetching fresh data")
@@ -128,7 +146,7 @@ func ensureUserCache(ctx context.Context, cfg *config.Config, source oauth2.Toke
 
 	if uc == nil || len(uc.Organizations) == 0 || uc.IsStale() {
 		client := cfg.Dashboard.Client(api.Client(ctx, source, ""))
-		fresh, fetchErr := fetchAndCacheUser(ctx, cfg, client)
+		fresh, fetchErr := FetchAndCacheUser(ctx, cfg, client)
 		if fetchErr != nil {
 			if uc != nil && len(uc.Organizations) > 0 {
 				logging.WithError(fetchErr).Msg("failed to refresh user cache, using stale data")
@@ -142,16 +160,20 @@ func ensureUserCache(ctx context.Context, cfg *config.Config, source oauth2.Toke
 	return uc, nil
 }
 
-func fetchAndCacheUser(ctx context.Context, cfg *config.Config, client dashboard.Client) (*auth.UserCache, error) {
+// FetchAndCacheUser fetches the current user from the API, persists it to the
+// user cache, and returns the resulting cache snapshot.
+func FetchAndCacheUser(ctx context.Context, cfg *config.Config, client dashboard.Client) (*auth.UserCache, error) {
 	user, err := client.CurrentUser(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return cacheUser(cfg, user), nil
+	return CacheUser(cfg, user), nil
 }
 
-func cacheUser(cfg *config.Config, user dashboard.CurrentUser) *auth.UserCache {
+// CacheUser converts a dashboard.CurrentUser into an auth.UserCache, preserving
+// any existing org selection across cache refreshes, and persists the result.
+func CacheUser(cfg *config.Config, user dashboard.CurrentUser) *auth.UserCache {
 	orgs := make([]auth.CachedOrganization, len(user.Organizations))
 	for i, org := range user.Organizations {
 		roles := make([]string, len(org.Roles))
@@ -183,4 +205,45 @@ func cacheUser(cfg *config.Config, user dashboard.CurrentUser) *auth.UserCache {
 	}
 
 	return uc
+}
+
+// CurrentSlug determines the current org slug from the resolution chain:
+// --org flag/env → .infracost/org → selectedOrgID from caller.
+func CurrentSlug(cfg *config.Config, orgs []auth.CachedOrganization, selectedOrgID string) (string, string, Source) {
+	// 1. Explicit --org flag or INFRACOST_CLI_ORG env var.
+	if cfg.Org != "" {
+		_, name, err := auth.ResolveOrgID(cfg.Org, orgs)
+		if err == nil {
+			return cfg.Org, name, SourceFlag
+		}
+	}
+
+	// 2. Local .infracost/org file.
+	if wd, err := os.Getwd(); err == nil {
+		if slug, err := auth.ReadLocalOrg(wd); err == nil && slug != "" {
+			if _, name, err := auth.ResolveOrgID(slug, orgs); err == nil {
+				return slug, name, SourceRepo
+			}
+		}
+	}
+
+	// 3. SelectedOrgID passed by caller.
+	if selectedOrgID != "" {
+		for _, org := range orgs {
+			if org.ID == selectedOrgID {
+				return org.Slug, org.Name, SourceGlobal
+			}
+		}
+	}
+
+	return "", "", SourceNone
+}
+
+// Role returns the user-facing role name for an organization based on the
+// cached role flags.
+func Role(org auth.CachedOrganization) string {
+	if slices.Contains(org.Roles, "organization_owner") {
+		return "owner"
+	}
+	return "member"
 }

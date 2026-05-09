@@ -6,6 +6,7 @@ import (
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -26,8 +27,8 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("fetching current user: %w", err)
 			}
 
-			cached := cacheUser(cfg, user)
-			currentSlug, _, orgSrc := currentOrgSlug(cfg, cached.Organizations, cached.SelectedOrgID)
+			cached := orgresolve.CacheUser(cfg, user)
+			currentSlug, _, orgSrc := orgresolve.CurrentSlug(cfg, cached.Organizations, cached.SelectedOrgID)
 
 			fmt.Println()
 			fmt.Printf("  %s  %s\n", ui.Muted("Name:"), user.Name)
@@ -48,11 +49,11 @@ func WhoAmI(cfg *config.Config) *cobra.Command {
 				if strings.EqualFold(org.Slug, currentSlug) {
 					marker = "  " + ui.Positive("✔") + "  "
 					switch orgSrc {
-					case orgSourceRepo:
+					case orgresolve.SourceRepo:
 						suffix = "  " + ui.Muted("← set for this repo")
-					case orgSourceFlag:
+					case orgresolve.SourceFlag:
 						suffix = "  " + ui.Muted("← --org flag")
-					case orgSourceGlobal:
+					case orgresolve.SourceGlobal:
 						suffix = "  " + ui.Muted("← active")
 					}
 				} else {

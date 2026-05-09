@@ -76,6 +76,24 @@ func gradientCode(t float64) string {
 	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
 }
 
+// BannerHeight returns the number of terminal rows ui.Banner consumes for
+// the same version string. Required because the kitty image banner emits
+// an escape sequence that paints multiple rows at the cursor position
+// without advancing it; lipgloss.Height would only see the trailing
+// newlines. Callers laying the banner inside a vertical layout (e.g.
+// the TUI) must reserve this many rows or subsequent content will
+// collide with the banner image.
+func BannerHeight(version string) int {
+	if HasIcons() {
+		if s := imageBanner(version); s != "" {
+			// imageBanner paints bannerRows of pixels and follows with
+			// bannerRows newlines so the cursor lands below the image.
+			return bannerRows
+		}
+	}
+	return len(iconmark)
+}
+
 // Banner renders the Infracost iconmark with a diagonal brand→info
 // gradient, alongside a left-to-right gradient wordmark and the version.
 // Terminals that support a graphics protocol (Kitty, iTerm2, etc.) get
