@@ -76,6 +76,29 @@ func gradientCode(t float64) string {
 	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
 }
 
+// BannerHeight returns the number of *lines* the banner string occupies
+// when measured by lipgloss/JoinVertical — i.e. the count callers should
+// reserve when stacking the banner above other vertical sections. The
+// image-protocol banner paints bannerRows pixel rows and emits
+// bannerRows trailing newlines so the cursor lands below the image;
+// JoinVertical splits on those newlines and treats each as its own
+// (empty) line, so the total line count is bannerRows + 1. The ASCII
+// banner ends in a single trailing newline that adds one empty line
+// past the iconmark for the same reason.
+//
+// If we returned the visual row count instead, frame()'s body would be
+// off by one and the status bar would overshoot m.height by a row,
+// scrolling content up — which manifested as the "duplicate footer"
+// users saw in the empty-state picker.
+func BannerHeight(version string) int {
+	if HasIcons() {
+		if s := imageBanner(version); s != "" {
+			return bannerRows + 1
+		}
+	}
+	return len(iconmark) + 1
+}
+
 // Banner renders the Infracost iconmark with a diagonal brand→info
 // gradient, alongside a left-to-right gradient wordmark and the version.
 // Terminals that support a graphics protocol (Kitty, iTerm2, etc.) get

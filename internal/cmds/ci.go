@@ -14,6 +14,7 @@ import (
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/auth/browser"
@@ -56,12 +57,12 @@ func parseRemoteURL(remoteURL string) (repoInfo, error) {
 
 // resolveSetupOrgWithSpinner resolves the user's organization for setup
 // commands, showing a spinner while fetching the org list. The org resolution
-// step (resolveOrg) runs outside the spinner because it may prompt
-// interactively. It respects the --org flag, auto-selects when there is only
-// one org, and errors when there are multiple without --org set.
+// step runs outside the spinner because it may prompt interactively. It
+// respects the --org flag, auto-selects when there is only one org, and
+// errors when there are multiple without --org set.
 // TODO(DEV-232): Replace the multi-org error with an interactive org picker.
 func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) (dashboard.Organization, error) {
-	if err := resolveOrg(ctx, cfg, source); err != nil {
+	if err := orgresolve.Resolve(ctx, cfg, source); err != nil {
 		return dashboard.Organization{}, err
 	}
 

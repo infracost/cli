@@ -4,19 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
 )
-
-const defaultPickOrgTitle = "Which organization do you want to use?"
 
 func Org(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
@@ -39,7 +37,7 @@ func orgList(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
-			currentSlug, _, source := currentOrgSlug(cfg, uc.Organizations, uc.SelectedOrgID)
+			currentSlug, _, source := orgresolve.CurrentSlug(cfg, uc.Organizations, uc.SelectedOrgID)
 
 			fmt.Println()
 			ui.Heading("Organizations")
@@ -50,14 +48,14 @@ func orgList(cfg *config.Config) *cobra.Command {
 				var suffix string
 				if strings.EqualFold(org.Slug, currentSlug) {
 					marker = "  " + ui.Positive("✔") + "  "
-					if source == orgSourceRepo {
+					if source == orgresolve.SourceRepo {
 						suffix = "  " + ui.Muted("← set for this repo")
 					}
 				} else {
 					marker = "     " // align with "  ✔  "
 				}
 				slug := ui.Accent(fmt.Sprintf("%-20s", org.Slug))
-				role := ui.Muted(fmt.Sprintf("(%s)", orgRole(org)))
+				role := ui.Muted(fmt.Sprintf("(%s)", orgresolve.Role(org)))
 				fmt.Printf("%s%s %s%s\n", marker, slug, role, suffix)
 			}
 
@@ -100,7 +98,7 @@ func orgSwitch(cfg *config.Config) *cobra.Command {
 						"no org slug provided and no interactive terminal available — pass the slug as an argument (e.g. 'infracost org switch <slug>'); run 'infracost org list' to see your orgs",
 					)
 				}
-				slug, err = pickOrg(uc.Organizations, cfg, uc.SelectedOrgID, defaultPickOrgTitle)
+				slug, err = orgresolve.Pick(uc.Organizations, cfg, uc.SelectedOrgID, orgresolve.DefaultPickTitle)
 				if err != nil {
 					if errors.Is(err, huh.ErrUserAborted) {
 						return nil
@@ -151,16 +149,16 @@ func orgCurrent(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
-			slug, _, source := currentOrgSlug(cfg, uc.Organizations, uc.SelectedOrgID)
+			slug, _, source := orgresolve.CurrentSlug(cfg, uc.Organizations, uc.SelectedOrgID)
 			if slug == "" {
 				return fmt.Errorf("no organization selected. Run 'infracost org switch' to select one")
 			}
 
 			suffix := ""
 			switch source {
-			case orgSourceRepo:
+			case orgresolve.SourceRepo:
 				suffix = "  ← set for this repo"
-			case orgSourceFlag:
+			case orgresolve.SourceFlag:
 				suffix = "  ← --org flag"
 			}
 			fmt.Printf("%s%s\n", slug, suffix)
@@ -183,7 +181,7 @@ func ensureOrgCache(cmd *cobra.Command, cfg *config.Config) (*auth.UserCache, er
 	}
 
 	client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, ""))
-	fresh, fetchErr := fetchAndCacheUser(cmd.Context(), cfg, client)
+	fresh, fetchErr := orgresolve.FetchAndCacheUser(cmd.Context(), cfg, client)
 	if fetchErr != nil {
 		if uc != nil && len(uc.Organizations) > 0 {
 			logging.WithError(fetchErr).Msg("failed to refresh org cache, using stale data")
@@ -192,85 +190,4 @@ func ensureOrgCache(cmd *cobra.Command, cfg *config.Config) (*auth.UserCache, er
 		return nil, fmt.Errorf("fetching user data: %w", fetchErr)
 	}
 	return fresh, nil
-}
-
-type orgSource int
-
-const (
-	orgSourceNone   orgSource = iota
-	orgSourceFlag             // --org flag or INFRACOST_CLI_ORG env var
-	orgSourceRepo             // .infracost/org file in working directory
-	orgSourceGlobal           // SelectedOrgID in user cache (from org switch)
-)
-
-// currentOrgSlug determines the current org slug from the resolution chain:
-// --org flag/env → .infracost/org → selectedOrgID from caller.
-func currentOrgSlug(cfg *config.Config, orgs []auth.CachedOrganization, selectedOrgID string) (string, string, orgSource) {
-	// 1. Explicit --org flag or INFRACOST_CLI_ORG env var.
-	if cfg.Org != "" {
-		_, name, err := auth.ResolveOrgID(cfg.Org, orgs)
-		if err == nil {
-			return cfg.Org, name, orgSourceFlag
-		}
-	}
-
-	// 2. Local .infracost/org file.
-	if wd, err := os.Getwd(); err == nil {
-		if slug, err := auth.ReadLocalOrg(wd); err == nil && slug != "" {
-			if _, name, err := auth.ResolveOrgID(slug, orgs); err == nil {
-				return slug, name, orgSourceRepo
-			}
-		}
-	}
-
-	// 3. SelectedOrgID passed by caller.
-	if selectedOrgID != "" {
-		for _, org := range orgs {
-			if org.ID == selectedOrgID {
-				return org.Slug, org.Name, orgSourceGlobal
-			}
-		}
-	}
-
-	return "", "", orgSourceNone
-}
-
-func pickOrg(orgs []auth.CachedOrganization, cfg *config.Config, selectedOrgID string, title string) (string, error) {
-	currentSlug, _, _ := currentOrgSlug(cfg, orgs, selectedOrgID)
-
-	options := make([]huh.Option[string], len(orgs))
-	for i, org := range orgs {
-		label := fmt.Sprintf("%-20s (%s)", org.Slug, orgRole(org))
-		options[i] = huh.NewOption(label, org.Slug)
-	}
-
-	// Pre-select the current org if there is one.
-	var selected string
-	if idx := slices.IndexFunc(orgs, func(o auth.CachedOrganization) bool {
-		return strings.EqualFold(o.Slug, currentSlug)
-	}); idx >= 0 {
-		selected = orgs[idx].Slug
-	}
-
-	err := huh.NewSelect[string]().
-		Title(title).
-		Options(options...).
-		Value(&selected).
-		WithTheme(ui.BrandTheme()).
-		Run()
-	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return "", err
-		}
-		return "", fmt.Errorf("selecting organization: %w", err)
-	}
-
-	return selected, nil
-}
-
-func orgRole(org auth.CachedOrganization) string {
-	if slices.Contains(org.Roles, "organization_owner") {
-		return "owner"
-	}
-	return "member"
 }

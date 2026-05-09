@@ -7,6 +7,7 @@ import (
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
@@ -25,7 +26,7 @@ func Budgets(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("authenticating: %w", err)
 			}
 
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+			if err := orgresolve.Resolve(cmd.Context(), cfg, source); err != nil {
 				return err
 			}
 

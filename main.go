@@ -12,6 +12,7 @@ import (
 	"github.com/infracost/cli/internal/cmds"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/tui"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/stacktrace"
@@ -28,6 +29,7 @@ var runTrackedCommands = map[string]bool{
 	"scan":    true,
 	"price":   true,
 	"inspect": true,
+	"tui":     true,
 }
 
 // telemetryFlagAllowlist names the flags whose VALUES (not just whether
@@ -63,6 +65,37 @@ func main() {
 	os.Exit(run())
 }
 
+// shouldLaunchTUI reports whether bare `infracost` should drop into the
+// interactive Bubble Tea UI rather than printing help. All gates must hold:
+// the user invoked the root command with no args and no flags, the terminal
+// is interactive, the environment isn't a CI runner, and they haven't asked
+// for machine-readable output (--json / --llm) or opted out via
+// INFRACOST_NO_TUI / TERM=dumb.
+func shouldLaunchTUI(c *cobra.Command, cfg *config.Config, args []string) bool {
+	if len(args) > 0 {
+		return false
+	}
+	if c.Flags().NFlag() > 0 {
+		return false
+	}
+	if cfg.JSON.Value || cfg.LLM.Value {
+		return false
+	}
+	if os.Getenv("CI") != "" {
+		return false
+	}
+	if os.Getenv("INFRACOST_NO_TUI") != "" {
+		return false
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	if !ui.IsInteractive() {
+		return false
+	}
+	return true
+}
+
 func run() (exitCode int) {
 	startTime := time.Now()
 	var diags *diagnostic.Diagnostics
@@ -91,6 +124,18 @@ func run() (exitCode int) {
   $ infracost inspect --summary`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// RunE intercepts bare `infracost` (no subcommand, no flags) and
+		// launches the interactive TUI when stdout looks like a real
+		// terminal session. Every safety gate must hold; otherwise we
+		// fall through to printing help so scripts and CI keep their
+		// existing behavior.
+		RunE: func(c *cobra.Command, args []string) error {
+			if !shouldLaunchTUI(c, cfg, args) {
+				return c.Help()
+			}
+			events.RegisterMetadata("command", "tui")
+			return tui.Run(c.Context(), cfg, version.Version)
+		},
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			events.RegisterMetadata("command", cmd.Name())
 			events.RegisterMetadata("flags", func() []string {

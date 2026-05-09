@@ -12,6 +12,7 @@ import (
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/scanner"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
@@ -72,7 +73,7 @@ func Policies(cfg *config.Config) *cobra.Command {
 			repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
 			branchName := vcs.GetCurrentBranch(absoluteDirectory)
 
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+			if err := orgresolve.Resolve(cmd.Context(), cfg, source); err != nil {
 				return err
 			}
 

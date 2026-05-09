@@ -1,0 +1,28 @@
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│  Keyboard shortcuts                                            │
+│                                                                │
+│    ↑ / k           Move selection up                           │
+│    ↓ / j           Move selection down                         │
+│    home / g        Jump to first resource                      │
+│    end / G         Jump to last resource                       │
+│    pgup / pgdown   Page up / page down                         │
+│    enter           Focus the detail pane (↑↓ scroll, esc       │
+│  returns to list)                                              │
+│                                                                │
+│    /               Filter resources (substring or key=value)   │
+│    esc             Clear filter, return focus to list, back    │
+│  to picker, dismiss help                                       │
+│    tab             Switch project (multi-project scans)        │
+│    s               Cycle sort: cost ↓ → address ↑ → type ↑     │
+│    r               Refresh — re-run the scan, bypassing the    │
+│  cache                                                         │
+│    e               Open the selected resource in $EDITOR       │
+│    a               Re-authenticate (only on the error screen)  │
+│                                                                │
+│    ?               Toggle this help                            │
+│    q / ctrl+c      Quit                                        │
+│                                                                │
+│  Press ? or esc to close.                                      │
+│                                                                │
+╰────────────────────────────────────────────────────────────────╯

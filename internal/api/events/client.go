@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -67,6 +68,14 @@ func (c *client) Push(ctx context.Context, event string, extra ...interface{}) {
 
 	resp, err := c.client.Do(req) //nolint:gosec // endpoint is from CLI config, not user input
 	if err != nil {
+		// Telemetry is best-effort — when the caller's context times
+		// out or gets canceled (typical on TUI shutdown, where we
+		// give the session event ~2s before tearing down), there's
+		// nothing useful to log. Reporting it scares users who think
+		// they hit a real bug.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		logging.WithError(err).Msg("events: failed to send event")
 		return
 	}

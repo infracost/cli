@@ -179,8 +179,12 @@ func imageBanner(version string) string {
 		return ""
 	}
 
-	// Newline after the image so the cursor lands cleanly below the
-	// banner. The version label is baked into the banner itself.
-	out.WriteString("\n")
+	// The kitty graphics escape paints bannerRows of pixels at the
+	// current cursor position WITHOUT advancing the cursor. Emit
+	// bannerRows newlines so subsequent output (setup steps, the TUI's
+	// list pane, etc.) actually lands below the image rather than being
+	// drawn on top of rows 1..bannerRows-1. The version label is baked
+	// into the image itself, so no further padding is needed.
+	out.WriteString(strings.Repeat("\n", bannerRows))
 	return out.String()
 }

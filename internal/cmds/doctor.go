@@ -14,6 +14,7 @@ import (
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/doctor"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/update"
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/version"
@@ -225,8 +226,8 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						orgSlug := user.Organizations[0].Slug
 
 						// Build verbose org list, marking the selected org.
-						cached := cacheUser(cfg, user)
-						selectedSlug, _, _ := currentOrgSlug(cfg, cached.Organizations, cached.SelectedOrgID)
+						cached := orgresolve.CacheUser(cfg, user)
+						selectedSlug, _, _ := orgresolve.CurrentSlug(cfg, cached.Organizations, cached.SelectedOrgID)
 						verbose := []string{
 							fmt.Sprintf("user: %s (%s)", user.Email, user.ID),
 						}
@@ -316,7 +317,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						if err != nil {
 							return err
 						}
-						return resolveOrg(ctx, cfg, source)
+						return orgresolve.Resolve(ctx, cfg, source)
 					},
 					Run: func(_ context.Context) doctor.Result {
 						// Try to resolve org non-interactively.
@@ -325,7 +326,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 
 						// Use the API result if we have it.
 						if len(apiUser.Organizations) > 0 {
-							cached := cacheUser(cfg, apiUser)
+							cached := orgresolve.CacheUser(cfg, apiUser)
 							orgs = cached.Organizations
 							selectedOrgID = cached.SelectedOrgID
 						}
@@ -345,15 +346,15 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 							}
 						}
 
-						slug, _, source := currentOrgSlug(cfg, orgs, selectedOrgID)
+						slug, _, source := orgresolve.CurrentSlug(cfg, orgs, selectedOrgID)
 						if slug != "" {
 							var verbose []string
 							switch source {
-							case orgSourceFlag:
+							case orgresolve.SourceFlag:
 								verbose = append(verbose, "source: --org flag / INFRACOST_CLI_ORG")
-							case orgSourceRepo:
+							case orgresolve.SourceRepo:
 								verbose = append(verbose, "source: .infracost/org")
-							case orgSourceGlobal:
+							case orgresolve.SourceGlobal:
 								verbose = append(verbose, "source: infracost org switch")
 							}
 							return doctor.Result{

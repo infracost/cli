@@ -1,0 +1,13 @@
+╭──────────────────────────────────────────────────────────────────────╮
+│                                                                      │
+│  Something went wrong.                                               │
+│                                                                      │
+│  failed to scan target: parser error in main.tf                      │
+│                                                                      │
+│  Try one of:                                                         │
+│    • r — retry the scan                                              │
+│    • run infracost auth login to refresh credentials                 │
+│    • run infracost setup to walk through configuration               │
+│    • q — quit                                                        │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯

@@ -12,6 +12,7 @@ import (
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/inspect"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/scanner"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/logging"
@@ -53,7 +54,7 @@ func Price(cfg *config.Config) *cobra.Command {
 			repositoryURL := vcs.GetRemoteURL(dir)
 			branchName := vcs.GetCurrentBranch(dir)
 
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+			if err := orgresolve.Resolve(cmd.Context(), cfg, source); err != nil {
 				return err
 			}
 

@@ -5,16 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/infracost/cli/internal/api"
-	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/config"
-	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/inspect"
-	"github.com/infracost/cli/internal/scanner"
+	"github.com/infracost/cli/internal/orgresolve"
+	"github.com/infracost/cli/internal/scanrun"
 	"github.com/infracost/cli/internal/ui"
-	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
 )
@@ -60,69 +57,30 @@ func Scan(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("target is not a directory")
 			}
 
-			repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
-			branchName := vcs.GetCurrentBranch(absoluteDirectory)
-
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+			// Resolve org outside the spinner — it may prompt interactively
+			// when the user belongs to multiple orgs and has no saved selection.
+			if err := orgresolve.Resolve(cmd.Context(), cfg, source); err != nil {
 				return err
 			}
 
-			client := cfg.Dashboard.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-
-			var result *format.Result
-			var runSeconds float64
-
+			var result *scanrun.Result
 			if err := ui.RunWithSpinnerErr(cmd.Context(), "Scanning...", "Scan complete", func(ctx context.Context) error {
-				runParameters, err := client.RunParameters(ctx, repositoryURL, branchName)
-				if err != nil {
-					return fmt.Errorf("failed to retrieve run parameters: %w", err)
-				}
-
-				// If --org was not provided, use the org from RunParameters.
-				// If --org was provided, show a message when it overrides the default.
-				if cfg.Org == "" {
-					cfg.OrgID = runParameters.OrganizationID
-				} else if runParameters.OrganizationID != "" && cfg.OrgID != runParameters.OrganizationID {
-					if uc, ucErr := cfg.Auth.LoadUserCache(); ucErr != nil {
-						logging.WithError(ucErr).Msg("failed to load user cache for override message")
-					} else if uc != nil {
-						for _, org := range uc.Organizations {
-							if org.ID == cfg.OrgID {
-								ui.Stepf("%s (overriding default)", org.Slug)
-								break
-							}
-						}
-					}
-				}
-
-				events.RegisterMetadata("orgId", cfg.OrgID)
-				events.RegisterMetadata("repoId", repositoryURL)
-				events.RegisterMetadata("branchId", branchName)
-
-				s := scanner.NewScanner(cfg)
-				startTime := time.Now()
-				result, err = s.Scan(ctx, runParameters, absoluteDirectory, branchName, source)
-				if err != nil {
-					return fmt.Errorf("failed to scan target: %w", err)
-				}
-				runSeconds = time.Since(startTime).Seconds()
-				return nil
+				var runErr error
+				result, runErr = scanrun.Run(ctx, cfg, scanrun.Options{
+					AbsoluteDir: absoluteDirectory,
+					Source:      source,
+					Bypass:      true,
+					OnOverride: func(slug string) {
+						ui.Stepf("%s (overriding default)", slug)
+					},
+				})
+				return runErr
 			}); err != nil {
 				return err
 			}
 
-			output := format.ToOutput(result)
-
+			output := result.Output
 			eventsClient := cfg.Events.Client(api.Client(cmd.Context(), source, cfg.OrgID))
-
-			// Load previous result for this directory (stale allowed) for run diff counts.
-			var prevForDir *format.Output
-			if p, err := cfg.Cache.ForPathAllowStale(absoluteDirectory); err != nil {
-				logging.Infof("could not load previous run data for directory: %v", err)
-			} else {
-				logging.Infof("found previous run data for directory in cache")
-				prevForDir = p
-			}
 
 			// Diff against the previous cached result to detect fixed policy violations.
 			if prev, err := cfg.Cache.Latest(true); err != nil {
@@ -132,10 +90,6 @@ func Scan(cfg *config.Config) *cobra.Command {
 				output.TrackDiff(cmd.Context(), eventsClient, prev)
 			}
 
-			if err := cfg.Cache.Write(absoluteDirectory, &output); err != nil {
-				logging.Warn("failed to cache results: " + err.Error())
-			}
-
 			outputFormat := "text"
 			switch {
 			case cfg.LLM.Value:
@@ -143,7 +97,7 @@ func Scan(cfg *config.Config) *cobra.Command {
 			case cfg.JSON.Value:
 				outputFormat = "json"
 			}
-			output.TrackRun(cmd.Context(), eventsClient, runSeconds, outputFormat, prevForDir)
+			output.TrackRun(cmd.Context(), eventsClient, result.RunSeconds, outputFormat, result.PrevForDir)
 
 			if cfg.LLM.Value {
 				if err := output.ToTOON(os.Stdout); err != nil {
@@ -161,10 +115,10 @@ func Scan(cfg *config.Config) *cobra.Command {
 				return nil
 			}
 
-			if err := inspect.Run(os.Stdout, &output, inspect.Options{}); err != nil {
+			if err := inspect.Run(os.Stdout, output, inspect.Options{}); err != nil {
 				return err
 			}
-			printInspectHints(&output)
+			printInspectHints(output)
 			return nil
 		},
 	}

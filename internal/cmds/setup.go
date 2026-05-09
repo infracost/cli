@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/version"
 	"github.com/spf13/cobra"
@@ -39,7 +40,7 @@ func requireUserLogin(cfg *config.Config) error {
 func ensureAuthAndOrg(ctx context.Context, cfg *config.Config) error {
 	if ts := cfg.Auth.TokenFromCache(ctx); ts != nil {
 		ui.Success("Already logged in")
-		return resolveOrg(ctx, cfg, ts)
+		return orgresolve.Resolve(ctx, cfg, ts)
 	}
 	return RunLogin(ctx, cfg)
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/orgresolve"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/go-proto/pkg/rat"
@@ -51,7 +52,7 @@ func Guardrails(cfg *config.Config) *cobra.Command {
 			repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
 			branchName := vcs.GetCurrentBranch(absoluteDirectory)
 
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+			if err := orgresolve.Resolve(cmd.Context(), cfg, source); err != nil {
 				return err
 			}
 
