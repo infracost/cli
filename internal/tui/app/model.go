@@ -760,12 +760,10 @@ func (m Model) View() string {
 			// AND content via the ANSI faint attribute — the list
 			// is just background context at that point and shouldn't
 			// compete with what the user is reading on the right.
-			listBorder := styles.PaneBorder()
+			listBorder := styles.PaneBorderFocused()
 			detailBorder := styles.PaneBorder()
 			detailContent := m.detail.View()
-			if m.focusedPane == FocusList {
-				listBorder = styles.PaneBorderFocused()
-			} else {
+			if m.focusedPane == FocusDetail {
 				detailBorder = styles.PaneBorderFocused()
 				listBorder = styles.PaneBorderDimmed()
 				listContent = styles.Dimmed().Render(listContent)
@@ -836,19 +834,13 @@ func (m *Model) resize() {
 		// content row (1) + JoinVertical's between-block newline (1).
 		summaryHeight = 5
 	}
-	bodyHeight := m.height - headerHeight - summaryHeight - 1 // 1 row for status bar
-	if bodyHeight < 3 {
-		bodyHeight = 3
-	}
+	bodyHeight := max(m.height-headerHeight-summaryHeight-1, 3) // 1 row for status bar
 	// Round up so the list — the primary content pane — gets the larger
 	// half on odd terminal widths. With strict floor division the list
 	// would be 1 cell narrower than the detail pane on every odd width,
 	// which read as the list's right border drifting left of center.
 	listWidth := (m.width + 1) / 2
-	detailWidth := m.width - listWidth
-	if detailWidth < 4 {
-		detailWidth = 4
-	}
+	detailWidth := max(m.width-listWidth, 4)
 
 	listInnerWidth := listWidth - 2
 	listInnerHeight := bodyHeight - 2
