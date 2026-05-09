@@ -84,7 +84,16 @@ func probeEmojiWidth() int {
 	}
 	defer func() { _ = tty.Close() }()
 
-	fd := int(tty.Fd())
+	rawFd := tty.Fd()
+	// gosec G115 guard: tty.Fd() is a uintptr; on platforms where it
+	// could exceed math.MaxInt the int() cast below would wrap. In
+	// practice file descriptors are tiny non-negative integers, but
+	// the explicit check makes the intent obvious to the linter and
+	// any reader.
+	if rawFd > uintptr(int(^uint(0)>>1)) {
+		return 0
+	}
+	fd := int(rawFd) //nolint:gosec // bounds-checked above
 	if !term.IsTerminal(fd) {
 		return 0
 	}

@@ -20,7 +20,7 @@ func TestRenderSummary_ScopedToWeb(t *testing.T) {
 
 func TestRenderSummary_Narrow(t *testing.T) {
 	// At 50 columns the inline pairs wrap to multiple lines —
-	// captures the wrap behaviour so a future tweak to the inline
+	// captures the wrap behavior so a future tweak to the inline
 	// renderer doesn't quietly stop wrapping.
 	got := views.RenderSummary(goldenFixture(), "", 50)
 	assertGolden(t, got)

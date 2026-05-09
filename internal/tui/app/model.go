@@ -208,7 +208,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// could overflow into the area the summary now occupies.
 			m.resize()
 			// Force a clear so the loading-view's status bar doesn't
-			// linger via tea's diff-render optimisation (which can keep
+			// linger via tea's diff-render optimization (which can keep
 			// the previous frame's last row visible above the new
 			// statusbar when the body line counts shift).
 			return m, tea.ClearScreen
@@ -429,7 +429,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// ClearScreen on the picker → loading transition for
 				// the same reason as cacheLoaded → picker: avoids the
 				// previous picker frame's status-bar row leaking
-				// through tea's line-skip optimisation.
+				// through tea's line-skip optimization.
 				return m, tea.Batch(
 					tea.ClearScreen,
 					scanCmd(m.ctx, m.cfg, m.source, selected.Path, false),

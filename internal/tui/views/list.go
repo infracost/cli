@@ -278,18 +278,20 @@ func (l *List) scrollToCursor() {
 	l.clampOffset()
 }
 
-// clampOffset keeps offset within [0, max]. Called after any change to
-// the row count or pane height.
+// clampOffset keeps offset within [0, maxOffset]. Called after any
+// change to the row count or pane height.
 func (l *List) clampOffset() {
 	if l.offset < 0 {
 		l.offset = 0
 	}
-	max := len(l.rows) - l.height
-	if max < 0 {
-		max = 0
+	// `max` would shadow the Go 1.21+ builtin — name this maxOffset
+	// instead so revive's redefines-builtin-id check stays happy.
+	maxOffset := len(l.rows) - l.height
+	if maxOffset < 0 {
+		maxOffset = 0
 	}
-	if l.offset > max {
-		l.offset = max
+	if l.offset > maxOffset {
+		l.offset = maxOffset
 	}
 }
 

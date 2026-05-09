@@ -1,4 +1,4 @@
-// Package styles centralises lipgloss styles for the TUI. Color sources
+// Package styles centralizes lipgloss styles for the TUI. Color sources
 // import from internal/ui — never duplicate hex values, since the brand
 // palette and dark/light handling already live there.
 package styles
