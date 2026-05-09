@@ -45,6 +45,12 @@ type StatusBarData struct {
 	// passes m.spinner.View() so the statusbar animates without owning a
 	// spinner of its own. Ignored when Stage is empty.
 	SpinnerView string
+
+	// Shortcuts overrides the right-side keymap text. Empty falls back
+	// to the default "main view" keymap. Use this for views where the
+	// default shortcuts don't apply — the project picker, for instance,
+	// has no meaningful "refresh" or "sort", but does want / and ?.
+	Shortcuts string
 }
 
 // RenderStatusBar formats the status bar at the bottom of the TUI to fit
@@ -85,7 +91,10 @@ func RenderStatusBar(d StatusBarData, width int) string {
 	// the left side is busy: a full hint list of "/ filter   ↑↓ nav …"
 	// blew past 80 columns and the terminal would silently chop "quit"
 	// off the right edge. Middle dots also visually group each chord.
-	hints := "/ filter · ↑↓ nav · r refresh · ? help · q quit"
+	hints := d.Shortcuts
+	if hints == "" {
+		hints = "/ filter · ↑↓ nav · r refresh · ? help · q quit"
+	}
 	if d.Filter != "" {
 		hints = "esc clear · " + hints
 	}

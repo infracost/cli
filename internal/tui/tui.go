@@ -51,7 +51,19 @@ func Run(ctx context.Context, cfg *config.Config, version string) error {
 		tea.WithContext(ctx),
 		tea.WithAltScreen(),
 	)
-	_, err = p.Run()
+	finalModel, err := p.Run()
+
+	// Flush the session-summary telemetry now that the alt screen has
+	// been torn down and stdout/stderr are usable again. The event push
+	// itself runs over a short-context timeout inside PushSessionEvent
+	// so we don't block shutdown for more than a couple of seconds when
+	// the network is slow.
+	if m, ok := finalModel.(app.Model); ok {
+		if err != nil && m.SessionTerminatedReason() == "" {
+			m.MarkErrorTermination()
+		}
+		m.PushSessionEvent(cfg)
+	}
 	return err
 }
 

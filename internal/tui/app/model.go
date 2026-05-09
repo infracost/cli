@@ -18,6 +18,7 @@ import (
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/tui/discovery"
 	"github.com/infracost/cli/internal/tui/styles"
 	"github.com/infracost/cli/internal/tui/views"
 	"github.com/infracost/cli/internal/ui"
@@ -106,8 +107,29 @@ type Model struct {
 	// is taking the place of the main view. Toggled off by ? or esc.
 	helpOpen bool
 
+	// session accumulates telemetry across the lifetime of the TUI; see
+	// session.go for the field semantics.
+	session sessionStats
+
 	list   views.List
 	detail views.Detail
+
+	// Picker state. The picker is shown when bare-`infracost` is
+	// invoked outside an IaC directory; the discovery walker fills
+	// the project list in the background as it explores $HOME.
+	picker            views.Picker
+	pickerProjects    []discovery.Project
+	discoveryCh       <-chan discovery.Project
+	discoveryCancel   context.CancelFunc
+	discoveryFinished bool
+
+	// enteredViaPicker remembers whether the user got into ViewMain
+	// by selecting from the empty-state picker (vs. landing directly
+	// because cwd was an IaC dir). Drives the esc-key fallback that
+	// returns to the picker — pressing esc inside an IaC dir's main
+	// view has no useful "back", so we don't offer the affordance
+	// there.
+	enteredViaPicker bool
 
 	quitting bool
 }
@@ -139,9 +161,11 @@ func NewModel(ctx context.Context, cfg *config.Config, ver string, opts ...Optio
 		view:        ViewLoading,
 		list:        views.NewList(),
 		detail:      views.NewDetail(),
+		picker:      views.NewPicker(),
 		filterInput: ti,
 		spinner:     sp,
 		stage:       "Checking cache...",
+		session:     sessionStats{startTime: time.Now()},
 	}
 	for _, opt := range opts {
 		opt(&m)
@@ -183,18 +207,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// viewports would be sized for an output-less layout and
 			// could overflow into the area the summary now occupies.
 			m.resize()
-			return m, nil
+			// Force a clear so the loading-view's status bar doesn't
+			// linger via tea's diff-render optimisation (which can keep
+			// the previous frame's last row visible above the new
+			// statusbar when the body line counts shift).
+			return m, tea.ClearScreen
 		}
-		// Cache miss → kick off a scan so the user lands on real data
-		// without manual intervention.
-		m.stage = "Scanning " + m.projectLabel() + "... (this can take a moment)"
-		return m, scanCmd(m.ctx, m.cfg, m.source, msg.cwd, false)
+		// Cache miss. If the cwd looks like an IaC project, kick off a
+		// scan so the user lands on real data. Otherwise drop into the
+		// empty-state picker and start the $HOME discovery walker so
+		// they can pick somewhere else without leaving the TUI.
+		if discovery.IsIaCProject(msg.cwd) {
+			m.stage = "Scanning " + m.projectLabel() + "... (this can take a moment)"
+			return m, scanCmd(m.ctx, m.cfg, m.source, msg.cwd, false)
+		}
+		// Mutate via enterPicker BEFORE evaluating the return tuple —
+		// Go doesn't specify the evaluation order between bare `m` and
+		// the `m.enterPicker()` call when both appear in the same
+		// return statement, so writing `return m, m.enterPicker()`
+		// can ship the pre-mutation snapshot of m to bubbletea (with
+		// stage/view still in their cacheLoaded state).
+		//
+		// tea.ClearScreen flushes the alt-screen buffer so the
+		// previous frame's loading-view content can't show through
+		// via diff-render skipping.
+		cmd := m.enterPicker()
+		return m, tea.Batch(tea.ClearScreen, cmd)
+
+	case discoveryFoundMsg:
+		m.pickerProjects = append(m.pickerProjects, msg.project)
+		m.session.projectsDiscovered++
+		// Chain the next read so the picker keeps populating live.
+		return m, readDiscoveryCmd(m.discoveryCh)
+
+	case discoveryDoneMsg:
+		m.discoveryFinished = true
+		return m, nil
 
 	case scanStartedMsg:
 		m.stage = "Scanning..."
 		return m, nil
 
 	case scanDoneMsg:
+		prevView := m.view
 		m.output = msg.output
 		m.cwd = msg.cwd
 		m.fromCache = msg.fromCache
@@ -205,12 +260,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncDetail()
 		m.view = ViewMain
 		m.resize() // recompute pane heights now that summary box claims rows
+		// Cache hits don't run the scanner, so they aren't a "scan
+		// the user observed" — only fresh scans bump the counter.
+		if !msg.fromCache {
+			m.session.scansRun++
+		}
+		if prevView != ViewMain {
+			// Coming from ViewLoading (or an error retry); clear the
+			// alt screen so the prior layout's status bar can't leak
+			// through tea's diff render.
+			return m, tea.ClearScreen
+		}
 		return m, nil
 
 	case scanErrMsg:
 		m.scanErr = msg.err
 		m.stage = ""
 		m.view = ViewError
+		return m, nil
+
+	case authResolvedMsg:
+		// `infracost auth login` finished. If it itself errored, surface
+		// the error and stay on ViewError so the user can try again.
+		if msg.err != nil {
+			m.scanErr = fmt.Errorf("auth login failed: %w", msg.err)
+			m.view = ViewError
+			return m, nil
+		}
+		// Re-resolve credentials and retry the scan that triggered the
+		// recovery. orgresolve here is safe because login just walked
+		// the user through org selection, so the cache is populated.
+		fresh, err := refreshCredentials(m.ctx, m.cfg)
+		if err != nil {
+			m.scanErr = err
+			m.view = ViewError
+			return m, nil
+		}
+		if ts, ok := fresh.(oauth2.TokenSource); ok {
+			m.source = ts
+		}
+		m.scanErr = nil
+		m.view = ViewLoading
+		m.stage = "Retrying scan..."
+		return m, scanCmd(m.ctx, m.cfg, m.source, m.cwd, true)
+
+	case editorOpenedMsg:
+		// Surface editor failures (missing $EDITOR, bad path, etc.) in
+		// the status bar without leaving the main view — these aren't
+		// scan-fatal so blocking the rest of the UI behind ViewError
+		// would be heavy-handed. The stage clears on the next user
+		// action that updates it (refresh, sort, filter).
+		if msg.err != nil {
+			m.stage = "Editor: " + msg.err.Error()
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -246,55 +348,181 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// help can be toggled from any state.
 		if m.helpOpen {
 			switch msg.String() {
-			case "q", "ctrl+c":
+			case "q":
+				m.session.terminatedReason = "q"
+				m.quitting = true
+				return m, tea.Quit
+			case "ctrl+c":
+				m.session.terminatedReason = "ctrlC"
 				m.quitting = true
 				return m, tea.Quit
 			case "?", "esc":
 				m.helpOpen = false
-				return m, nil
+				// ClearScreen on close so the next frame draws on a
+				// fresh alt-screen — without it, repeated ?/esc
+				// cycles drifted the status bar up the screen as
+				// tea's diff renderer kept stale rows from prior
+				// frames around.
+				return m, tea.ClearScreen
 			}
 			// Swallow everything else while help is open so background
 			// keystrokes don't move the underlying list cursor.
 			return m, nil
 		}
 
+		// The picker is its own modal-feeling view; route nav + select
+		// through it before the global key handlers so j/k/G don't
+		// also bleed through to the (non-rendered) list pane.
+		if m.view == ViewPicker {
+			switch msg.String() {
+			case "q":
+				m.session.terminatedReason = "q"
+				m.quitting = true
+				return m, tea.Quit
+			case "ctrl+c":
+				m.session.terminatedReason = "ctrlC"
+				m.quitting = true
+				return m, tea.Quit
+			case "esc":
+				// Clear a committed filter even after the user has
+				// navigated away from the input box. Mirrors the
+				// main-view esc precedence so the hint shown next
+				// to the filter banner ("esc to clear") behaves the
+				// same in both contexts.
+				if m.filterExpr != "" {
+					m.filterInput.SetValue("")
+					m.filterExpr = ""
+					return m, nil
+				}
+				// No "back" from the picker — esc is a no-op when no
+				// filter is active.
+				return m, nil
+			case "?":
+				m.helpOpen = true
+				return m, tea.ClearScreen
+			case "/":
+				// `/` works in the picker too: filter projects by
+				// substring on name or path. Reuses the same filter
+				// input model as the main view, so esc/clear behave
+				// identically.
+				m.filtering = true
+				m.filterInput.Focus()
+				m.session.filterUsed = true
+				return m, textinput.Blink
+			case "enter":
+				// Re-resolve the cursor's project against the *filtered*
+				// list the user is actually looking at — otherwise the
+				// cursor index would point into the unfiltered slice.
+				projects := views.FilterPickerProjects(m.pickerProjects, m.filterExpr)
+				if len(projects) == 0 {
+					return m, nil
+				}
+				idx := m.picker.Cursor()
+				if idx < 0 || idx >= len(projects) {
+					return m, nil
+				}
+				selected := projects[idx]
+				m.cwd = selected.Path
+				m.stage = "Scanning " + selected.Name + "... (this can take a moment)"
+				m.view = ViewLoading
+				m.cancelDiscovery()
+				// ClearScreen on the picker → loading transition for
+				// the same reason as cacheLoaded → picker: avoids the
+				// previous picker frame's status-bar row leaking
+				// through tea's line-skip optimisation.
+				return m, tea.Batch(
+					tea.ClearScreen,
+					scanCmd(m.ctx, m.cfg, m.source, selected.Path, false),
+				)
+			}
+			// Pass through to the picker for nav keys. Use the
+			// filtered count so j/k can't move past the visible
+			// rows — cursor indexes the filtered slice in enter.
+			projects := views.FilterPickerProjects(m.pickerProjects, m.filterExpr)
+			m.picker.Update(msg, len(projects))
+			return m, nil
+		}
+
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
+			m.session.terminatedReason = "q"
 			m.quitting = true
+			m.cancelDiscovery()
+			return m, tea.Quit
+		case "ctrl+c":
+			m.session.terminatedReason = "ctrlC"
+			m.quitting = true
+			m.cancelDiscovery()
 			return m, tea.Quit
 		case "?":
 			m.helpOpen = true
-			return m, nil
+			// Same ClearScreen rationale as the close path: make sure
+			// the help overlay gets a clean canvas instead of inheriting
+			// any cells diff-skipped from the underlying view.
+			return m, tea.ClearScreen
 		case "/":
 			if m.view == ViewMain && m.output != nil {
 				m.filtering = true
 				m.filterInput.Focus()
 				m.resize() // shrink list by one row for the inline input
+				m.session.filterUsed = true
 				return m, textinput.Blink
 			}
 		case "esc":
+			// Esc precedence: clear an active filter first (most
+			// frequent, least surprising); then, if the user got into
+			// the main/error view via the empty-state picker, go
+			// back there so they can pick a different project
+			// without quitting; otherwise no-op. The filter check
+			// must come first so users mid-filter don't accidentally
+			// hop out to the picker.
 			if m.filterExpr != "" {
 				m.filterInput.SetValue("")
 				m.filterExpr = ""
 				m.applyRowsToList()
-				m.resize() // give the list its row back now that the banner is gone
+				m.resize()
 				return m, nil
+			}
+			if m.enteredViaPicker && (m.view == ViewMain || m.view == ViewError) {
+				m.backToPicker()
+				return m, tea.ClearScreen
 			}
 		case "s":
 			if m.view == ViewMain && m.output != nil {
 				m.sortMode = m.sortMode.next()
 				m.applyRowsToList()
+				m.session.sortChanged = true
 				return m, nil
 			}
 		case "tab":
 			if m.view == ViewMain && m.output != nil && len(m.output.Projects) > 1 {
 				m.cycleProject()
 				m.applyRowsToList()
+				m.session.projectSwitches++
 				return m, nil
+			}
+		case "e":
+			if m.view == ViewMain {
+				if sel := m.list.Selected(); sel != nil && sel.Resource != nil {
+					return m, openEditorCmd(
+						m.cwd,
+						sel.Resource.Metadata.Filename,
+						sel.Resource.Metadata.StartLine,
+					)
+				}
+			}
+		case "a":
+			// Auth recovery: run `infracost auth login` in a child
+			// process via tea.Exec, then retry the failed scan. Only
+			// offered from the error view to keep the key out of the
+			// main hot-keys hash.
+			if m.view == ViewError && isAuthError(m.scanErr) {
+				return m, runAuthLoginCmd()
 			}
 		case "r":
 			if m.view == ViewMain || m.view == ViewError {
 				m.stage = "Scanning..."
+				m.session.refreshes++
 				// Stay on ViewMain so the previous results remain
 				// visible while the new scan runs — switching to
 				// ViewLoading would blank out half the screen and
@@ -309,7 +537,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.view == ViewMain {
+			prev := m.list.Selected()
 			cmd := m.list.Update(msg)
+			cur := m.list.Selected()
+			if cur != prev {
+				m.session.detailOpened++
+			}
 			m.syncDetail()
 			return m, cmd
 		}
@@ -382,7 +615,14 @@ func (m Model) View() string {
 	}
 
 	header := views.RenderHeader(m.version)
-	statusbar := views.RenderStatusBar(views.StatusBarData{
+	// Build the status bar from view-specific state. Picker doesn't
+	// belong to any single project, so it gets none of the
+	// project-scoped labels (project name, cache age, sort) — those
+	// would still be carrying over from whichever project the user
+	// just escaped out of, which is confusing. ViewLoading suppresses
+	// stage too because the body already renders the spinner +
+	// "Scanning <project>..." prominently.
+	bar := views.StatusBarData{
 		Project:     m.projectLabel(),
 		CacheAge:    m.cacheAge,
 		FromCache:   m.fromCache,
@@ -390,7 +630,18 @@ func (m Model) View() string {
 		Filter:      m.filterExpr,
 		SortLabel:   m.sortMode.label(),
 		SpinnerView: m.spinner.View(),
-	}, m.width)
+	}
+	if m.view == ViewLoading {
+		bar.Stage = "" // spinner+stage rendered in body for ViewLoading
+	}
+	if m.view == ViewPicker {
+		bar.Project = ""
+		bar.FromCache = false
+		bar.CacheAge = 0
+		bar.SortLabel = ""
+		bar.Shortcuts = "/ filter · ↑↓ nav · enter select · ? help · q quit"
+	}
+	statusbar := views.RenderStatusBar(bar, m.width)
 
 	if m.helpOpen {
 		help := views.RenderHelp(m.width)
@@ -451,7 +702,24 @@ func (m Model) View() string {
 		sections = append(sections, body)
 		return m.frame(sections, statusbar)
 	case ViewError:
-		return m.frame([]string{header, views.RenderError(m.scanErr)}, statusbar)
+		return m.frame([]string{header, views.RenderError(m.scanErr, isAuthError(m.scanErr), m.width)}, statusbar)
+	case ViewPicker:
+		// Filter picker projects on the fly so the user can / through
+		// the discovery list without us having to maintain a parallel
+		// "filtered list" field on the model — recomputing per render
+		// is cheap given the bounded project count.
+		projects := views.FilterPickerProjects(m.pickerProjects, m.filterExpr)
+		var filterRow string
+		switch {
+		case m.filtering:
+			filterRow = m.filterInput.View()
+		case m.filterExpr != "":
+			filterRow = views.RenderFilterStatus(m.filterExpr, m.width-4)
+		}
+		body := styles.PaneBorderAccent().Width(m.width - 2).Render(
+			m.picker.View(projects, !m.discoveryFinished, filterRow, len(m.pickerProjects)),
+		)
+		return m.frame([]string{header, body}, statusbar)
 	}
 	return header
 }
@@ -526,6 +794,72 @@ func (m *Model) resize() {
 	if w := listInnerWidth - 2; w > 0 {
 		m.filterInput.Width = w
 	}
+
+	// Picker spans the full body width. Subtract 2 for the surrounding
+	// pane border, plus another 2 from the height for the top/bottom
+	// border rows so the bordered box fits between the banner and the
+	// status bar instead of pushing content under the banner.
+	pickerInnerW := m.width - 2
+	pickerInnerH := m.height - headerHeight - 1 - 2
+	if pickerInnerW < 16 {
+		pickerInnerW = 16
+	}
+	if pickerInnerH < 5 {
+		pickerInnerH = 5
+	}
+	m.picker.SetSize(pickerInnerW, pickerInnerH)
+}
+
+// enterPicker transitions the model into the empty-state picker view
+// and starts the background $HOME walker. The walker is canceled
+// when the user picks a project (or quits) so its goroutine exits
+// promptly rather than racing with shutdown.
+//
+// Picker dimensions are owned by resize() — we just construct a fresh
+// picker here and call resize so the same arithmetic that places the
+// list/detail panes in ViewMain places the picker box in ViewPicker.
+func (m *Model) enterPicker() tea.Cmd {
+	m.view = ViewPicker
+	m.stage = ""
+	m.session.pickerOpened++
+	m.enteredViaPicker = true
+	m.picker = views.NewPicker()
+	m.resize()
+
+	ch, cancel := startDiscovery(m.ctx)
+	m.discoveryCh = ch
+	m.discoveryCancel = cancel
+	m.discoveryFinished = false
+	m.pickerProjects = nil
+	return readDiscoveryCmd(ch)
+}
+
+// backToPicker returns the user from a project's main/error view to
+// the empty-state picker, preserving the previously discovered
+// project list so they don't have to wait for the walker again. We
+// only invoke this when enteredViaPicker is true — pressing esc
+// inside a normal cwd-is-an-IaC-dir session has no useful "back",
+// so the affordance is absent there.
+func (m *Model) backToPicker() {
+	m.view = ViewPicker
+	m.scanErr = nil
+	m.stage = ""
+	m.session.pickerOpened++
+	// Keep pickerProjects + discoveryFinished as-is so the user sees
+	// the same list they picked from, with the same "X projects
+	// found" footer (no spurious "still searching" hint).
+	m.resize()
+}
+
+// cancelDiscovery stops the walker goroutine. Safe to call when the
+// walker isn't running — both fields are nil-checked.
+func (m *Model) cancelDiscovery() {
+	if m.discoveryCancel != nil {
+		m.discoveryCancel()
+		m.discoveryCancel = nil
+	}
+	m.discoveryCh = nil
+	m.discoveryFinished = true
 }
 
 // summaryTitle returns the bold heading rendered at the top of the
