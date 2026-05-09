@@ -79,6 +79,38 @@ func PaneBorderAccent() lipgloss.Style {
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(brand())
 }
 
+// PaneBorderFocused renders the active split pane's border in a thick
+// white line. Pairs with PaneBorderDimmed (used on the inactive pane
+// when the detail side has focus) so the contrast is in line weight
+// + brightness rather than relying on the brand color, which the
+// summary box above already owns.
+func PaneBorderFocused() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.ThickBorder()).
+		BorderForeground(lipgloss.Color("#FFFFFF"))
+}
+
+// PaneBorderDimmed renders the inactive pane in a deliberately faded
+// rounded border. Used to "demote" the resource list when the detail
+// pane is focused — combined with the Faint render below it pushes
+// the list visually into the background so the eye lands on the
+// detail content the user is actively reading.
+func PaneBorderDimmed() lipgloss.Style {
+	color := lipgloss.Color("#3a3a4a")
+	if !ui.HasDarkBackground() {
+		color = lipgloss.Color("#cfd1d6")
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(color)
+}
+
+// Dimmed wraps content in the ANSI faint attribute so the inactive
+// pane's content reads as "background context" while the focused
+// pane's content stays full-strength.
+func Dimmed() lipgloss.Style { return lipgloss.NewStyle().Faint(true) }
+
+
 // PaneTitle styles a one-word label inserted into a pane's top border —
 // used by the list / detail panes so the user can tell at a glance which
 // pane has focus.

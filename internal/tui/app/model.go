@@ -36,6 +36,16 @@ const (
 	ViewError
 )
 
+// FocusedPane identifies which of ViewMain's split panes (list or
+// detail) currently receives nav keys. Only meaningful in ViewMain;
+// the picker and loading views own the keyboard themselves.
+type FocusedPane int
+
+const (
+	FocusList FocusedPane = iota
+	FocusDetail
+)
+
 // cacheLoadedMsg carries the result of the initial cache lookup so the
 // model can transition out of ViewLoading. Output is nil on cache miss.
 type cacheLoadedMsg struct {
@@ -113,6 +123,15 @@ type Model struct {
 
 	list   views.List
 	detail views.Detail
+
+	// focusedPane is which split-view pane currently receives nav
+	// keys. Default is FocusList — the user lands on the resource
+	// list and can drive the cursor there. Pressing enter shifts to
+	// FocusDetail so they can scroll through long policy text;
+	// pressing esc returns focus to the list. Border styling on
+	// each pane mirrors this so the active pane is visually
+	// obvious.
+	focusedPane FocusedPane
 
 	// Picker state. The picker is shown when bare-`infracost` is
 	// invoked outside an IaC directory; the discovery walker fills
@@ -426,6 +445,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stage = "Scanning " + selected.Name + "... (this can take a moment)"
 				m.view = ViewLoading
 				m.cancelDiscovery()
+				// Reset the filter on view transition. Picker filter
+				// and resource-list filter share the same input model,
+				// so leaving the picker's expression in place would
+				// pre-populate the resource list with the picker's
+				// search term.
+				m.clearFilter()
 				// ClearScreen on the picker → loading transition for
 				// the same reason as cacheLoaded → picker: avoids the
 				// previous picker frame's status-bar row leaking
@@ -469,13 +494,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, textinput.Blink
 			}
 		case "esc":
-			// Esc precedence: clear an active filter first (most
-			// frequent, least surprising); then, if the user got into
-			// the main/error view via the empty-state picker, go
-			// back there so they can pick a different project
-			// without quitting; otherwise no-op. The filter check
-			// must come first so users mid-filter don't accidentally
-			// hop out to the picker.
+			// Esc precedence (most-specific first):
+			//   1. Detail pane focused → return focus to the list.
+			//      The filter banner belongs to the list pane; while
+			//      the user is reading the detail, the list filter
+			//      isn't what they're operating on, so esc should
+			//      first back out of the focus they entered.
+			//   2. Clear an active filter — only when the list (or
+			//      filter input) has focus. Honors the inline banner
+			//      hint shown next to the filter expression.
+			//   3. Came in via the project picker → go back there.
+			//   4. Otherwise: no-op.
+			if m.view == ViewMain && m.focusedPane == FocusDetail {
+				m.focusedPane = FocusList
+				m.detail.SetFocused(false)
+				return m, nil
+			}
 			if m.filterExpr != "" {
 				m.filterInput.SetValue("")
 				m.filterExpr = ""
@@ -495,7 +529,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "tab":
-			if m.view == ViewMain && m.output != nil && len(m.output.Projects) > 1 {
+			// Only cycle projects when the resource list pane has
+			// focus — otherwise the keystroke would silently change
+			// the underlying scope while the user is reading the
+			// detail pane, which is jarring. The detail pane has
+			// no other use for tab today, so we just no-op there.
+			if m.view == ViewMain && m.focusedPane == FocusList && m.output != nil && len(m.output.Projects) > 1 {
 				m.cycleProject()
 				m.applyRowsToList()
 				m.session.projectSwitches++
@@ -510,6 +549,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						sel.Resource.Metadata.StartLine,
 					)
 				}
+			}
+		case "enter":
+			// Enter in ViewMain shifts focus to the detail pane so
+			// the user can scroll through long policy descriptions
+			// without bumping the list cursor. Esc returns focus to
+			// the list. No-op when the detail is empty (no
+			// resources / no selection).
+			if m.view == ViewMain && m.focusedPane == FocusList {
+				if m.list.Selected() != nil {
+					m.focusedPane = FocusDetail
+					m.detail.SetFocused(true)
+				}
+				return m, nil
 			}
 		case "a":
 			// Auth recovery: run `infracost auth login` in a child
@@ -537,6 +589,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.view == ViewMain {
+			// Route nav keys to the focused pane: detail viewport
+			// scrolls, or list cursor moves. Selection sync only
+			// happens when the list moves — scrolling the detail
+			// shouldn't disturb which resource is being shown.
+			if m.focusedPane == FocusDetail {
+				cmd := m.detail.Update(msg)
+				return m, cmd
+			}
 			prev := m.list.Selected()
 			cmd := m.list.Update(msg)
 			cur := m.list.Selected()
@@ -694,9 +754,25 @@ func (m Model) View() string {
 				// reset it.
 				listContent = views.RenderFilterStatus(m.filterExpr, listInnerWidth) + "\n" + listContent
 			}
+			// Focus styling: thick white border on the active pane,
+			// muted rounded on the inactive pane. When the detail
+			// side has focus we also fade the list pane's border
+			// AND content via the ANSI faint attribute — the list
+			// is just background context at that point and shouldn't
+			// compete with what the user is reading on the right.
+			listBorder := styles.PaneBorder()
+			detailBorder := styles.PaneBorder()
+			detailContent := m.detail.View()
+			if m.focusedPane == FocusList {
+				listBorder = styles.PaneBorderFocused()
+			} else {
+				detailBorder = styles.PaneBorderFocused()
+				listBorder = styles.PaneBorderDimmed()
+				listContent = styles.Dimmed().Render(listContent)
+			}
 			body = lipgloss.JoinHorizontal(lipgloss.Top,
-				styles.PaneBorder().Width(listInnerWidth).Render(listContent),
-				styles.PaneBorder().Width(detailInnerWidth).Render(m.detail.View()),
+				listBorder.Width(listInnerWidth).Render(listContent),
+				detailBorder.Width(detailInnerWidth).Render(detailContent),
 			)
 		}
 		sections = append(sections, body)
@@ -845,10 +921,25 @@ func (m *Model) backToPicker() {
 	m.scanErr = nil
 	m.stage = ""
 	m.session.pickerOpened++
+	// Reset the filter so the picker doesn't open with the
+	// resource-list filter expression pre-populated. The two views
+	// share the same input model, so we own the lifecycle here.
+	m.clearFilter()
 	// Keep pickerProjects + discoveryFinished as-is so the user sees
 	// the same list they picked from, with the same "X projects
 	// found" footer (no spurious "still searching" hint).
 	m.resize()
+}
+
+// clearFilter resets the filter input + committed expression state.
+// Used on view transitions where carrying the previous view's filter
+// across would surface the wrong default ("filter projects by foo"
+// reading like "filter resources by foo", or vice versa).
+func (m *Model) clearFilter() {
+	m.filtering = false
+	m.filterInput.SetValue("")
+	m.filterInput.Blur()
+	m.filterExpr = ""
 }
 
 // cancelDiscovery stops the walker goroutine. Safe to call when the

@@ -17,14 +17,19 @@ import (
 // policies (when present), total cost, cost components, sub-resources,
 // tags, and the source file:line. Lays out against its assigned width so
 // it reflows on terminal resize.
+//
+// Focused state controls whether key events are routed to the embedded
+// viewport. The parent (root model) toggles it on enter / esc and uses
+// the same flag to swap the surrounding border color.
 type Detail struct {
 	resource *format.ResourceOutput
 	issues   ResourceIssues
 	currency string
 
-	vp     viewport.Model
-	width  int
-	height int
+	vp      viewport.Model
+	width   int
+	height  int
+	focused bool
 }
 
 // NewDetail returns an empty detail pane.
@@ -55,16 +60,54 @@ func (d *Detail) SetRow(row *ResourceRow, currency string) {
 	d.refresh()
 }
 
-// Update forwards messages to the embedded viewport (so PgUp/PgDown
-// scroll the detail pane independently of the list).
+// SetFocused toggles whether the pane will accept scroll keys via
+// Update. The parent model is responsible for routing key events
+// based on focus, but the pane keeps the flag for its own rendering
+// (scroll indicators only show when focused — they'd be visual noise
+// when the user is navigating the list pane).
+func (d *Detail) SetFocused(focused bool) { d.focused = focused }
+
+// Focused reports the current focus state.
+func (d Detail) Focused() bool { return d.focused }
+
+// Update forwards messages to the embedded viewport. Only invoke this
+// when the detail pane has focus; otherwise scroll keys would move
+// the detail viewport invisibly while the list cursor is active.
 func (d *Detail) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	d.vp, cmd = d.vp.Update(msg)
 	return cmd
 }
 
-// View renders the detail pane.
-func (d Detail) View() string { return d.vp.View() }
+// View renders the detail pane. When the content is taller than the
+// viewport, the first and/or last visible rows are replaced with a
+// scroll indicator showing how many lines are off-screen above /
+// below — same idiom the resource list uses, so the affordance reads
+// the same in both panes. Indicators only show when the pane is
+// focused; an unfocused pane's scroll position is irrelevant to the
+// user (they'd need to focus it to scroll), so quiet borders win.
+func (d Detail) View() string {
+	rendered := d.vp.View()
+	if !d.focused {
+		return rendered
+	}
+	above := d.vp.YOffset
+	below := d.vp.TotalLineCount() - d.vp.YOffset - d.vp.Height
+	if above <= 0 && below <= 0 {
+		return rendered
+	}
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		return rendered
+	}
+	if above > 0 {
+		lines[0] = scrollIndicator(fmt.Sprintf("↑ %d more lines above", above), d.width)
+	}
+	if below > 0 {
+		lines[len(lines)-1] = scrollIndicator(fmt.Sprintf("↓ %d more lines below", below), d.width)
+	}
+	return strings.Join(lines, "\n")
+}
 
 // refresh re-renders the detail content into the viewport.
 func (d *Detail) refresh() {

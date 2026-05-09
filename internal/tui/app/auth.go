@@ -59,7 +59,11 @@ func runAuthLoginCmd() tea.Cmd {
 	if err != nil || bin == "" {
 		bin = "infracost"
 	}
-	c := exec.Command(bin, "auth", "login")
+	// gosec G204 false positive: bin is the path to our own running
+	// binary (or the literal "infracost" fallback); arguments are
+	// hard-coded. No user input flows into either, so this isn't a
+	// command-injection risk.
+	c := exec.Command(bin, "auth", "login") //nolint:gosec
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr

@@ -72,7 +72,13 @@ func openEditorCmd(cwd, file string, line int) tea.Cmd {
 		args = append(args, file)
 	}
 
-	c := exec.Command(bin, args...)
+	// gosec G204 false positive: bin comes from the user's own
+	// $EDITOR env var (or "vi" as a fallback). args carry a
+	// resource-file path that's already on the user's local
+	// filesystem (they scanned it). The whole point of `e` is to
+	// run the user's chosen editor against a file they own — there
+	// is no untrusted-input boundary to enforce here.
+	c := exec.Command(bin, args...) //nolint:gosec
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return editorOpenedMsg{err: err}
 	})
