@@ -84,6 +84,11 @@ func newTestScanner(t *testing.T, opts testScannerOpts) *Scanner {
 		m.EXPECT().ListFinopsPolicies(mock.Anything, mock.Anything).Return(&provider.ListFinopsPoliciesResponse{
 			Policies: policies,
 		}, nil).Maybe()
+		// Optional — scanner.Scan calls this once for ARM-typed projects to
+		// populate the parser's InitializeRequest. .Maybe() so non-ARM tests
+		// don't trip over an unexpected-call assertion.
+		m.EXPECT().ListSupportedResources(mock.Anything, mock.Anything).
+			Return(&provider.ListSupportedResourcesResponse{}, nil).Maybe()
 		processCall := m.EXPECT().Process(mock.Anything, mock.Anything)
 		if opts.processValidator != nil {
 			processCall.Run(func(_ context.Context, in *provider.ProcessRequest, _ ...grpc.CallOption) {

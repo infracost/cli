@@ -161,7 +161,15 @@ func (c *Config) parseARM(ctx context.Context, path string, project *repoconfig.
 		return nil, fmt.Errorf("failed to load parser plugin: %w", err)
 	}
 
-	if _, err := client.Initialize(ctx, new(api.InitializeRequest)); err != nil {
+	// Pass the providers binary's ARM supported set into Initialize
+	// when the scanner has populated one. Without this, the parser
+	// defaults to "everything supported" and any ARM resource type
+	// the providers binary doesn't cost gets silently dropped on
+	// the unhandled-fallthrough — see parser/TODO.md.
+	initReq := &api.InitializeRequest{
+		ArmSupportedResources: c.SupportedARMResources,
+	}
+	if _, err := client.Initialize(ctx, initReq); err != nil {
 		return nil, fmt.Errorf("failed to initialize parser: %w", err)
 	}
 
