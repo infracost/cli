@@ -13,6 +13,7 @@ import (
 	"github.com/infracost/cli/pkg/logging"
 	repoconfig "github.com/infracost/config"
 	"github.com/infracost/proto/gen/go/infracost/parser/api"
+	armpb "github.com/infracost/proto/gen/go/infracost/parser/arm"
 	"github.com/infracost/proto/gen/go/infracost/parser/cloudformation"
 	"github.com/infracost/proto/gen/go/infracost/parser/options"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
@@ -42,6 +43,20 @@ func (c *Config) Parse(ctx context.Context, path string, cfg *repoconfig.Config,
 }
 
 func (c *Config) parseWithoutCache(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
+	// When the project config declares a type, honour it. Autodetect
+	// populates Type for every project it discovers, so this is the
+	// fast path. Extension-based dispatch below is a fallback for
+	// callers that pass a bare path without going through autodetect
+	// (eg. the LSP single-file flow).
+	switch project.Type {
+	case repoconfig.ProjectTypeTerraform, repoconfig.ProjectTypeTerragrunt:
+		return c.parseTerraform(ctx, terraformDir(path), cfg, project, level, options)
+	case repoconfig.ProjectTypeCloudFormation:
+		return c.parseCloudFormation(ctx, path, project, level, options)
+	case repoconfig.ProjectTypeARM:
+		return c.parseARM(ctx, path, project, level, options)
+	}
+
 	// If the path points to a directory, assume Terraform.
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return c.parseTerraform(ctx, path, cfg, project, level, options)
@@ -63,7 +78,17 @@ func (c *Config) parseWithoutCache(ctx context.Context, path string, cfg *repoco
 		return c.parseCloudFormation(ctx, path, project, level, options)
 	}
 
-	return nil, fmt.Errorf("unsupported file type: %s, only Terraform and CloudFormation are supported", ext)
+	return nil, fmt.Errorf("unsupported file type: %s, only Terraform, CloudFormation, and ARM are supported", ext)
+}
+
+// terraformDir resolves the directory to hand to the terraform parser.
+// Terraform projects are directory-shaped (the parser loads every .tf
+// file alongside), so if path is a file we walk up one level.
+func terraformDir(path string) string {
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return path
+	}
+	return filepath.Dir(path)
 }
 
 func (c *Config) parseTerraform(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
@@ -123,6 +148,61 @@ func (c *Config) parseTerraform(ctx context.Context, path string, cfg *repoconfi
 	})
 	if err != nil {
 		return response, fmt.Errorf("failed to parse terraform: %w", err)
+	}
+	return response, nil
+}
+
+func (c *Config) parseARM(ctx context.Context, path string, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
+	client, stop, err := c.Load(level)
+	if stop != nil {
+		defer stop()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to load parser plugin: %w", err)
+	}
+
+	if _, err := client.Initialize(ctx, new(api.InitializeRequest)); err != nil {
+		return nil, fmt.Errorf("failed to initialize parser: %w", err)
+	}
+
+	// Bicep input is not handled here. Callers transpile to ARM JSON
+	// first (mirroring how CDK output is consumed as CloudFormation).
+	// The parser's pkg/arm/bicep wrapper is available for callers that
+	// want to script the transpile step.
+	var azureContext *armpb.AzureContext
+	if project.Azure.SubscriptionID != "" ||
+		project.Azure.TenantID != "" ||
+		project.Azure.ResourceGroupName != "" ||
+		project.Azure.Location != "" ||
+		project.Azure.ManagementGroupID != "" {
+		azureContext = &armpb.AzureContext{
+			SubscriptionId:    project.Azure.SubscriptionID,
+			TenantId:          project.Azure.TenantID,
+			ResourceGroupName: project.Azure.ResourceGroupName,
+			Location:          project.Azure.Location,
+			ManagementGroupId: project.Azure.ManagementGroupID,
+		}
+	}
+
+	response, err := client.Parse(ctx, &api.ParseRequest{
+		RepoDirectory:    options.RepoDirectory,
+		WorkingDirectory: options.WorkingDirectory,
+		Target: &api.ParseRequestTarget{
+			Value: &api.ParseRequestTarget_Arm{
+				Arm: &armpb.Target{
+					TemplatePath: path,
+					Flags:        0, // empty by default
+					Options: &armpb.Options{
+						Generic:         options,
+						InputParameters: nil, // TODO: load these from somewhere
+						AzureContext:    azureContext,
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return response, fmt.Errorf("failed to parse arm: %w", err)
 	}
 	return response, nil
 }

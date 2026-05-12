@@ -83,6 +83,11 @@ func projectConfigToString(project *repoconfig.Project) string {
 			project.AWS.StackName,
 			project.AWS.Region,
 			project.AWS.AccountID,
+			project.Azure.SubscriptionID,
+			project.Azure.TenantID,
+			project.Azure.ResourceGroupName,
+			project.Azure.Location,
+			project.Azure.ManagementGroupID,
 		},
 		"\x00",
 	)

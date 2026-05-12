@@ -137,6 +137,8 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		projectResult.RemoteModuleCalls = extractRemoteModuleCalls(result.Terraform)
 	case *parserpb.ParseResponseResult_Cloudformation:
 		requiredProviders = []provider.Provider{provider.Provider_PROVIDER_AWS}
+	case *parserpb.ParseResponseResult_Arm:
+		requiredProviders = []provider.Provider{provider.Provider_PROVIDER_AZURERM}
 	default:
 		return nil, fmt.Errorf("unsupported parse result type: %T", result)
 	}
