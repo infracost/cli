@@ -985,7 +985,7 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 					fmt.Fprintln(&inner)
 					rows := []kvRow{{"Issue", issue.Description}}
 					if issue.MonthlySavings != nil && !issue.MonthlySavings.IsZero() {
-						rows = append(rows, kvRow{"Savings", humanDollar(issue.MonthlySavings) + "/mo"})
+						rows = append(rows, kvRow{"Savings", humanMoney(issue.MonthlySavings, data.Currency) + "/mo"})
 					}
 					if issue.Address != "" {
 						rows = append(rows, kvRow{"Address", issue.Address})

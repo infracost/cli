@@ -196,6 +196,19 @@ func TestSummaryJSON(t *testing.T) {
 	assertGolden(t, buf.String())
 }
 
+func TestSummaryGBP(t *testing.T) {
+	data := testData()
+	data.Currency = "GBP"
+	var buf bytes.Buffer
+
+	err := WriteSummary(&buf, data, Options{})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.NotContains(t, out, "$", "summary should not display $ when currency is GBP")
+	assert.Contains(t, out, "£", "summary should display £ when currency is GBP")
+}
+
 func TestGroupByType(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer

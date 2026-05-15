@@ -193,7 +193,7 @@ func WriteSummary(w io.Writer, data *format.Output, opts Options) error {
 	}
 	rows = append(rows,
 		kvRow{"Resources", resourceVal},
-		kvRow{"Monthly cost", humanDollar(s.MonthlyCost)},
+		kvRow{"Monthly cost", humanMoney(s.MonthlyCost, data.Currency)},
 		kvRow{},
 		kvRow{"FinOps", flagCount(s.FinopsPolicies, s.FailingPolicies, warnEmoji)},
 		kvRow{"Tagging", flagCount(s.TaggingPolicies, s.FailingTaggingPolicies, warnEmoji)},
@@ -212,7 +212,7 @@ func WriteSummary(w io.Writer, data *format.Output, opts Options) error {
 
 	if s.Projects > 1 {
 		fmt.Fprintln(&inner)
-		writeProjectTable(&inner, s.ProjectDetails)
+		writeProjectTable(&inner, s.ProjectDetails, data.Currency)
 	}
 
 	if usesWarn || usesStop || usesMoney || usesCrit {
@@ -270,7 +270,7 @@ func diagnosticsValue(critical, warning int) string {
 // writeProjectTable renders the per-project breakdown using an ANSI-aware,
 // per-column-aligned renderer (text/tabwriter measures by raw byte count and
 // can't handle colored cells correctly).
-func writeProjectTable(w io.Writer, projects []projectSummary) {
+func writeProjectTable(w io.Writer, projects []projectSummary, currency string) {
 	cols := []tableCol{
 		{header: "Project", right: false},
 		{header: "Resources", right: true},
@@ -287,7 +287,7 @@ func writeProjectTable(w io.Writer, projects []projectSummary) {
 		rows = append(rows, []string{
 			name,
 			humanInt(ps.Resources),
-			humanDollar(ps.MonthlyCost),
+			humanMoney(ps.MonthlyCost, currency),
 			flagCount(ps.FinopsPolicies, ps.FinopsFailingPolicies, warnEmoji),
 			flagCount(ps.TaggingPolicies, ps.TaggingFailingPolicies, warnEmoji),
 		})

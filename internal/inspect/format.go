@@ -83,12 +83,6 @@ func humanMoney(r *rat.Rat, currency string) string {
 	return sym + humanInt(n)
 }
 
-// humanDollar is the USD shorthand for humanMoney — used by summary code
-// where the data model doesn't yet carry currency.
-func humanDollar(r *rat.Rat) string {
-	return humanMoney(r, "USD")
-}
-
 // tableCol describes one column for renderTable.
 //   right         — right-align cells (numbers, currency).
 //   truncateRight — when the column is shrunk to fit, drop characters from
