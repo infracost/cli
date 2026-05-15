@@ -25,11 +25,9 @@ import (
 	"golang.org/x/oauth2"
 )
 
-var (
-	pj = protojson.UnmarshalOptions{
-		DiscardUnknown: true,
-	}
-)
+var pj = protojson.UnmarshalOptions{
+	DiscardUnknown: true,
+}
 
 type Scanner struct {
 	plugins         *plugins.Config
@@ -60,7 +58,6 @@ type TaggingPolicy struct {
 }
 
 func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters, providers []provider.Provider) ([]FinOpsPolicy, []TaggingPolicy, error) {
-
 	var tagPolicies []*event.TagPolicy
 	var finopsPolicySettings []*event.FinopsPolicySettings
 	var hasRunParameters bool
@@ -182,6 +179,9 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	if len(branchName) > 0 {
 		repoConfigOpts = append(repoConfigOpts, repoconfig.WithBranch(branchName))
 	}
+	if runParameters.ConfigTemplate != "" {
+		repoConfigOpts = append(repoConfigOpts, repoconfig.WithTemplate(runParameters.ConfigTemplate))
+	}
 
 	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(absoluteDirectory, repoConfigOpts...)
 	if err != nil {
@@ -243,7 +243,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	}
 
 	cacheDir := filepath.Join(os.TempDir(), ".infracost", "cache")
-	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 

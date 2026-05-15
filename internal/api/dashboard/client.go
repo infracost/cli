@@ -39,6 +39,7 @@ type RunParameters struct {
 	FinopsPolicies    []json.RawMessage `json:"finopsPolicies"`
 	Guardrails        []json.RawMessage `json:"guardrails"`
 	Budgets           []json.RawMessage `json:"budgets"`
+	ConfigTemplate    string            `json:"configTemplate"`
 }
 
 type Client interface {
@@ -47,9 +48,7 @@ type Client interface {
 	HasRepo(ctx context.Context, orgID, repoName string) (bool, error)
 }
 
-var (
-	_ Client = (*client)(nil)
-)
+var _ Client = (*client)(nil)
 
 type client struct {
 	client *http.Client
@@ -103,6 +102,7 @@ func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) 
     finopsPolicies
     guardrails
     budgets
+		configTemplate
   }
 }`
 
