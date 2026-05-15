@@ -102,7 +102,7 @@ func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) 
     finopsPolicies
     guardrails
     budgets
-		configTemplate
+    configTemplate
   }
 }`
 
