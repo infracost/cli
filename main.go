@@ -13,6 +13,7 @@ import (
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/ui"
+	"github.com/infracost/cli/internal/update"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/stacktrace"
 	"github.com/infracost/cli/version"
@@ -67,6 +68,20 @@ func run() (exitCode int) {
 	startTime := time.Now()
 	var diags *diagnostic.Diagnostics
 	cfg := new(config.Config)
+
+	// Kick off the latest-version check in parallel so it overlaps with the
+	// user's command. Buffered so the goroutine can send even if we never
+	// read (e.g. on panic).
+	updateMessageChan := make(chan *update.Info, 1)
+	go func() {
+		info, err := update.CheckForUpdate(context.Background())
+		if err != nil {
+			updateMessageChan <- nil
+			return
+		}
+		updateMessageChan <- info
+	}()
+
 	defer func() {
 		if r := recover(); r != nil {
 			client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
@@ -203,6 +218,21 @@ func run() (exitCode int) {
 	}
 
 	format.Diagnostics(diags)
+
+	// Print update notice last so it doesn't get lost above the command's
+	// own output. Skip for `infracost update` itself — that command already
+	// reports the version it's moving to.
+	if command, ok := events.GetMetadata[string]("command"); !ok || command != "update" {
+		if info := <-updateMessageChan; info != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "\n%s A new version of Infracost is available: %s → %s\n  %s\n",
+				ui.Caution("Update:"),
+				ui.Bold(version.Version),
+				ui.Bold(info.LatestVersion),
+				info.Cmd,
+			)
+		}
+	}
+
 	if diags.Critical().Len() > 0 {
 		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
 		for _, diag := range diags.Critical().Unwrap() {

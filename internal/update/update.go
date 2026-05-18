@@ -61,6 +61,10 @@ func CheckLatestVersion(ctx context.Context) (VersionInfo, error) {
 }
 
 func Update(ctx context.Context) error {
+	if method := DetectInstallMethod(); method.ManagedExternally() {
+		return fmt.Errorf("this binary was installed via a package manager — run %q to upgrade", strings.TrimPrefix(method.UpgradeCommand(), "$ "))
+	}
+
 	var info VersionInfo
 	if err := ui.RunWithSpinnerErr(ctx, "Checking for updates...", "Update check complete", func(ctx context.Context) error {
 		var err error
