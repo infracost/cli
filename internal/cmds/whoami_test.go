@@ -106,7 +106,7 @@ func TestWhoAmI(t *testing.T) {
 				Return(tt.user, tt.err)
 
 			cfg := testConfig(t, mockClient)
-			cmd := cmds.WhoAmI(cfg)
+			cmd := cmds.WhoAmICmd(cfg)
 			cmd.SetContext(context.Background())
 
 			err := cmd.Execute()

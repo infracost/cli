@@ -100,14 +100,14 @@ func labelMCPCommandMiddleware() mcp.Middleware {
 }
 
 // registerMCPTools attaches infracost's MCP tools to srv. Each tool is a
-// thin wrapper over a pure Go function; the auth source and cache
-// store are pre-prepared at startup and threaded into every handler so
-// individual tools don't need to re-derive them.
+// thin wrapper over the pure Go function the matching CLI command also
+// uses, so MCP output and CLI --json output stay in lockstep. The auth
+// source and cache store are pre-prepared at startup and threaded into
+// every handler so individual tools don't need to re-derive them.
 //
-// The skeleton ships two org-management tools (fetch_orgs and set_org)
-// so an agent can introspect and change the active organization
-// mid-session. Domain tools (scan, price, inspect_*, etc.) are added by
-// the typed-result refactor PRs.
+// fetch_orgs and set_org let an agent introspect and change the active
+// organization mid-session. Domain tools (scan, price, inspect_*, etc.)
+// are added by the typed-result refactor PRs.
 func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSource, _ cache.Store) {
 	mcp.AddTool(srv,
 		&mcp.Tool{
@@ -131,6 +131,19 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 			result, err := setOrg(ctx, cfg, source, in)
 			if err != nil {
 				return nil, SetOrgResult{}, err
+			}
+			return nil, result, nil
+		})
+
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name:        "whoami",
+			Description: "Show the authenticated Infracost user and the organization the MCP server is operating against.",
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in WhoAmIInput) (*mcp.CallToolResult, WhoAmIResult, error) {
+			result, err := WhoAmI(ctx, cfg, in)
+			if err != nil {
+				return nil, WhoAmIResult{}, err
 			}
 			return nil, result, nil
 		})
