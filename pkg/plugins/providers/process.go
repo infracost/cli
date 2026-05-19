@@ -14,9 +14,11 @@ func (c *Config) ProcessInput(ctx context.Context, provider proto.Provider, inpu
 
 	var cache protocache.Cache[*proto.Output]
 
-	// TODO: we probably want to include the provider plugin version in the cache key, but we need to decide how to get that - we could add a new method to the plugin interface that returns the version
-	providerVersion := ""
-	key := createCacheKey(provider, input, providerVersion)
+	// Bind the cache key to the provider plugin binary's mtime as a
+	// stand-in for a real plugin version (mirrors the same pattern in
+	// pkg/plugins/parser). Without this, rebuilding a provider plugin
+	// during local iteration silently returns the prior cached output.
+	key := createCacheKey(provider, input, c.providerCacheVersion(provider))
 	if loaded, err := cache.Load(key); err == nil {
 		return loaded.Resources, loaded.FinopsResults, nil
 	} else if !errors.Is(err, protocache.ErrCacheMiss) {

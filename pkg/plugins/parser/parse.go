@@ -23,9 +23,13 @@ func (c *Config) Parse(ctx context.Context, path string, cfg *repoconfig.Config,
 
 	var cache protocache.Cache[*api.ParseResponse]
 
-	// TODO: we probably want to include the parser plugin version in the cache key, but we need to decide how to get that - we could add a new method to the plugin interface that returns the version
-	parserPluginVersion := ""
-	cacheKey := createCacheKey(path, parserPluginVersion, cfg, project)
+	// Bind the cache key to the plugin binary's mtime — a deterministic
+	// stand-in for a real plugin version. Without this, iterating on the
+	// parser plugin (rebuild, re-scan) silently returns the old cached
+	// response. A proper Version RPC on the plugin would be cleaner, but
+	// mtime gives us correctness today and falls back to "" cleanly when
+	// the path isn't statable.
+	cacheKey := createCacheKey(path, pluginCacheVersion(c.Plugin), cfg, project)
 	if response, err := cache.Load(cacheKey); err == nil {
 		return response, nil
 	} else if !errors.Is(err, protocache.ErrCacheMiss) {
