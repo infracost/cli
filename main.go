@@ -174,6 +174,7 @@ func run() (exitCode int) {
 	addCmd(cmds.Guardrails(cfg), "workspace")
 
 	addCmd(cmds.Doctor(cfg), "maintain")
+	addCmd(cmds.MCPCmd(cfg), "maintain")
 	addCmd(cmds.Update(cfg), "maintain")
 
 	cmd.AddCommand(cmds.Version(cfg))
