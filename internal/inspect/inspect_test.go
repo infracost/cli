@@ -128,8 +128,9 @@ func testData() *format.Output {
 					},
 				},
 				Diagnostics: []format.DiagnosticOutput{
-					{Prefix: "HCL parse error", Message: "failed to parse main.tf:42", Severity: "critical"},
+					{Prefix: "HCL parse error", Message: "failed to parse expression", Severity: "critical", Location: "main.tf:42"},
 					{Prefix: "Warning", Message: "skipping unsupported provider: foo", Severity: "warning"},
+					{Prefix: "Info", Message: "evaluated synthesized value for missing reference", Severity: "info", Location: "variables.tf:7"},
 				},
 			},
 			{

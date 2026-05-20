@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/infracost/cli/internal/format/toon"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 	"github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/go-proto/pkg/rat"
+	"github.com/infracost/proto/gen/go/infracost/parser"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 )
 
@@ -100,10 +102,16 @@ type CostComponentOutput struct {
 type DiagnosticOutput struct {
 	// Prefix is the human-readable category for this diagnostic (e.g. "HCL
 	// parse error", "Module fetch error"). Falls back to "Error" / "Warning"
-	// when the diagnostic type has no friendly prefix mapped in go-proto.
+	// / "Info" when the diagnostic type has no friendly prefix mapped in
+	// go-proto, picked from severity so info-level entries don't shout.
 	Prefix   string `json:"prefix"`
 	Message  string `json:"message"`
 	Severity string `json:"severity"`
+	// Location is the source position the diagnostic refers to, formatted as
+	// "filename:line" or "filename:start-end", or the raw URL when the
+	// filename is a remote module reference. Empty when the underlying
+	// diagnostic has no SourceRange attached.
+	Location string `json:"location,omitempty"`
 }
 
 type FinopsOutput struct {
@@ -528,25 +536,51 @@ func convertDiagnostic(d *diagnostic.Diagnostic) DiagnosticOutput {
 		severity = "warning"
 	}
 	return DiagnosticOutput{
-		Prefix:   diagnosticPrefix(d),
+		Prefix:   diagnosticPrefix(d, severity),
 		Message:  d.Error,
 		Severity: severity,
+		Location: formatSourceRange(d.SourceRange),
 	}
 }
 
 // diagnosticPrefix returns the user-facing category label for a diagnostic.
-// Uses go-proto's MessagePrefix mapping when one exists, falling back to a
-// plain "Error" / "Warning" so the line still reads naturally for diagnostic
-// types we haven't mapped yet.
-func diagnosticPrefix(d *diagnostic.Diagnostic) string {
+// Uses go-proto's MessagePrefix mapping when one exists; otherwise falls back
+// to a severity-derived label ("Error" / "Warning" / "Info") so unclassified
+// diagnostics don't all read as errors regardless of severity.
+func diagnosticPrefix(d *diagnostic.Diagnostic, severity string) string {
 	prefix := diagnostic.MessagePrefix(d.Type)
 	if strings.HasPrefix(prefix, "DIAGNOSTIC_TYPE_") {
-		if d.Warning {
+		switch severity {
+		case "critical":
+			return "Error"
+		case "warning":
 			return "Warning"
+		default:
+			return "Info"
 		}
-		return "Error"
 	}
 	return prefix
+}
+
+// formatSourceRange renders a diagnostic's SourceRange as "filename:line" (or
+// "filename:start-end" when the range spans multiple lines). Remote module
+// URLs are returned as-is — no line range applies. Returns "" when no usable
+// location data is present.
+func formatSourceRange(s *parser.SourceRange) string {
+	if s == nil {
+		return ""
+	}
+	if s.StartLine == 0 && s.EndLine == 0 && s.StartColumn == 0 && s.EndColumn == 0 && s.Filename == "" {
+		return ""
+	}
+	if strings.Contains(s.Filename, "://") {
+		return s.Filename
+	}
+	lineRange := strconv.Itoa(int(s.StartLine))
+	if s.StartLine != s.EndLine {
+		lineRange += "-" + strconv.Itoa(int(s.EndLine))
+	}
+	return s.Filename + ":" + lineRange
 }
 
 func convertTaggingResult(tr event.TaggingPolicyResult) TaggingOutput {

@@ -18,9 +18,17 @@ func Diagnostics(diags *diagnostic.Diagnostics) {
 
 // Diagnostic prints a diagnostic to stderr.
 func Diagnostic(diag *diagnostic.Diagnostic) {
-	prefix := diagnosticPrefix(diag)
-	colorize := severityColorize(diag.Warning)
-	_, _ = fmt.Fprintf(os.Stderr, "%s %s\n", colorize(prefix+":"), diag.Error)
+	severity := "info"
+	switch {
+	case diag.Critical:
+		severity = "critical"
+	case diag.Warning:
+		severity = "warning"
+	}
+	prefix := diagnosticPrefix(diag, severity)
+	colorize := severityColorize(severity)
+	location := formatSourceRange(diag.SourceRange)
+	_, _ = fmt.Fprintln(os.Stderr, formatDiagnosticLine(colorize, prefix, diag.Error, location, ""))
 }
 
 // WriteDiagnosticOutput writes a converted diagnostic to w in the same
@@ -36,13 +44,29 @@ func WriteDiagnosticOutput(w io.Writer, d DiagnosticOutput) {
 // muted "(project-name)" onto each line when more than one project is in
 // the result.
 func WriteDiagnosticOutputWithSuffix(w io.Writer, d DiagnosticOutput, suffix string) {
-	colorize := severityColorize(d.Severity == "warning")
-	_, _ = fmt.Fprintf(w, "%s %s%s\n", colorize(d.Prefix+":"), d.Message, suffix)
+	colorize := severityColorize(d.Severity)
+	_, _ = fmt.Fprintln(w, formatDiagnosticLine(colorize, d.Prefix, d.Message, d.Location, suffix))
 }
 
-func severityColorize(warning bool) func(string) string {
-	if warning {
-		return ui.Caution
+// formatDiagnosticLine assembles a single rendered diagnostic line:
+// "<colorized prefix>: <message>[ — <muted location>][<suffix>]". Location is
+// rendered in muted style so it reads as metadata; suffix is appended verbatim
+// (callers already style it — e.g. the inspect view passes a muted "(project)").
+func formatDiagnosticLine(colorize func(string) string, prefix, message, location, suffix string) string {
+	line := colorize(prefix+":") + " " + message
+	if location != "" {
+		line += " " + ui.Muted("— "+location)
 	}
-	return ui.Danger
+	return line + suffix
+}
+
+func severityColorize(severity string) func(string) string {
+	switch severity {
+	case "critical":
+		return ui.Danger
+	case "warning":
+		return ui.Caution
+	default:
+		return ui.Muted
+	}
 }

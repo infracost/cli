@@ -1,4 +1,5 @@
-Diagnostics  (2)
+Diagnostics  (3)
 
-HCL parse error: failed to parse main.tf:42 (web-app)
+HCL parse error: failed to parse expression — main.tf:42 (web-app)
 Warning: skipping unsupported provider: foo (web-app)
+Info: evaluated synthesized value for missing reference — variables.tf:7 (web-app)

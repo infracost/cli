@@ -5,8 +5,10 @@ import (
 	"time"
 
 	repoconfig "github.com/infracost/config"
+	"github.com/infracost/go-proto/pkg/diagnostic"
 	"github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/go-proto/pkg/rat"
+	"github.com/infracost/proto/gen/go/infracost/parser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -204,4 +206,58 @@ func taggingPolicyFixture(name string, addresses ...string) []TaggingOutput {
 		failing = append(failing, FailingTaggingResourceOutput{Address: a, MissingMandatoryTags: []string{"team"}})
 	}
 	return []TaggingOutput{{PolicyName: name, FailingResources: failing}}
+}
+
+func TestConvertDiagnostic(t *testing.T) {
+	t.Run("classified critical type with friendly prefix", func(t *testing.T) {
+		d := diagnostic.FromError(parser.DiagnosticType_DIAGNOSTIC_TYPE_HCL_PARSE_ERROR, assert.AnError).
+			WithSourceRange(&parser.SourceRange{Filename: "main.tf", StartLine: 42, EndLine: 42})
+
+		got := convertDiagnostic(d)
+
+		assert.Equal(t, "HCL parse error", got.Prefix)
+		assert.Equal(t, "critical", got.Severity)
+		assert.Equal(t, "main.tf:42", got.Location)
+	})
+
+	t.Run("classified warning type with friendly prefix", func(t *testing.T) {
+		d := diagnostic.FromError(parser.DiagnosticType_DIAGNOSTIC_TYPE_MISSING_INPUT_VARIABLE, assert.AnError)
+
+		got := convertDiagnostic(d)
+
+		assert.Equal(t, "Missing input variable", got.Prefix)
+		assert.Equal(t, "warning", got.Severity)
+		assert.Empty(t, got.Location)
+	})
+
+	t.Run("unclassified type falls back to severity-derived prefix", func(t *testing.T) {
+		// FAILED_FUNCTION_CALL and MISSING_REFERENCE are unmapped in go-proto —
+		// they exit FromError as info-severity (not critical, not warning) and
+		// without a friendly prefix. The fallback must label them "Info", not
+		// "Error", so they don't read as criticals in the inspect view.
+		d := diagnostic.FromError(parser.DiagnosticType_DIAGNOSTIC_TYPE_FAILED_FUNCTION_CALL, assert.AnError)
+
+		got := convertDiagnostic(d)
+
+		assert.Equal(t, "Info", got.Prefix)
+		assert.Equal(t, "info", got.Severity)
+	})
+
+	t.Run("source range spanning multiple lines uses start-end format", func(t *testing.T) {
+		d := diagnostic.FromError(parser.DiagnosticType_DIAGNOSTIC_TYPE_HCL_PARSE_ERROR, assert.AnError).
+			WithSourceRange(&parser.SourceRange{Filename: "main.tf", StartLine: 10, EndLine: 14})
+
+		got := convertDiagnostic(d)
+
+		assert.Equal(t, "main.tf:10-14", got.Location)
+	})
+
+	t.Run("remote module url is preserved verbatim", func(t *testing.T) {
+		d := diagnostic.FromError(parser.DiagnosticType_DIAGNOSTIC_TYPE_HCL_PARSE_ERROR, assert.AnError).
+			WithSourceRange(&parser.SourceRange{Filename: "git::https://example.com/mod.git//main.tf"})
+
+		got := convertDiagnostic(d)
+
+		assert.Equal(t, "git::https://example.com/mod.git//main.tf", got.Location)
+	})
 }
