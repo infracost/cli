@@ -209,3 +209,36 @@ func TestGuardrailsToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 }
+
+// TestInspectSummaryToolOutputSchema covers [inspect.Summary], which has
+// many rat.Rat fields (top-level monthly cost / total monthly savings,
+// per-project monthly cost) plus rat.Rat fields embedded in the drill-in
+// format.GuardrailOutput / format.BudgetOutput lists. The rat.Rat ->
+// string override must cover every nested occurrence for the schema to
+// build cleanly.
+func TestInspectSummaryToolOutputSchema(t *testing.T) {
+	schema, err := inspectSummaryToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
+
+// TestInspectFailingToolOutputSchema covers [inspect.FailingPanorama]
+// — much leaner than Summary, but still embeds format.GuardrailOutput
+// / format.BudgetOutput so the rat.Rat override remains load-bearing.
+func TestInspectFailingToolOutputSchema(t *testing.T) {
+	schema, err := inspectFailingToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
+
+// TestInspectDiagnosticsToolOutputSchema verifies the bare envelope
+// schema is finite. No rat.Rat to worry about — DiagnosticEntry carries
+// text only.
+func TestInspectDiagnosticsToolOutputSchema(t *testing.T) {
+	schema, err := inspectDiagnosticsToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}

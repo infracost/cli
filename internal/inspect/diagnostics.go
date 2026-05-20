@@ -21,7 +21,7 @@ type DiagnosticEntry struct {
 // follow-up shown beneath a scan/price summary goes through
 // WriteSummaryDiagnostics instead.
 func WriteDiagnostics(w io.Writer, data *format.Output, opts Options) error {
-	entries := collectDiagnostics(data, true)
+	entries := CollectDiagnostics(data, true)
 
 	if opts.Structured() {
 		return writeStructured(w, entries, opts)
@@ -46,7 +46,7 @@ func WriteDiagnostics(w io.Writer, data *format.Output, opts Options) error {
 // Returns silently when there's nothing to show — the summary already
 // reports zero counts and an empty section would be noise.
 func WriteSummaryDiagnostics(w io.Writer, data *format.Output, includeWarnings bool) {
-	entries := collectDiagnostics(data, includeWarnings)
+	entries := CollectDiagnostics(data, includeWarnings)
 	if len(entries) == 0 {
 		return
 	}
@@ -56,7 +56,13 @@ func WriteSummaryDiagnostics(w io.Writer, data *format.Output, includeWarnings b
 	writeDiagnosticEntries(w, entries, hasMultipleProjects(data))
 }
 
-func collectDiagnostics(data *format.Output, includeWarnings bool) []DiagnosticEntry {
+// CollectDiagnostics returns every per-project diagnostic from the latest
+// scan that matches the includeWarnings filter. When includeWarnings is
+// true, info / warning / critical entries are included; otherwise only
+// critical entries are kept. Pairs with the `inspect_diagnostics` MCP
+// tool and backs WriteDiagnostics / WriteSummaryDiagnostics inside this
+// package.
+func CollectDiagnostics(data *format.Output, includeWarnings bool) []DiagnosticEntry {
 	var entries []DiagnosticEntry
 	for _, p := range data.Projects {
 		for _, d := range p.Diagnostics {

@@ -19,7 +19,7 @@ var (
 	fieldsSummary = []string{
 		"projects", "projects_with_errors",
 		"resources", "costed_resources", "free_resources",
-		"monthly_cost",
+		"monthly_cost", "total_monthly_savings",
 		"finops_policies", "failing_policies", "distinct_failing_finops_resources",
 		"tagging_policies", "failing_tagging_policies", "distinct_failing_tagging_resources",
 		"guardrails", "triggered_guardrails",
