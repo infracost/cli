@@ -509,7 +509,7 @@ func WriteBudgetDetail(w io.Writer, data *format.Output, opts Options) error {
 	for _, br := range data.BudgetResults {
 		if matchesPolicy(br.BudgetName, br.BudgetID, opts.Budget) {
 			if opts.Structured() {
-				return writeStructured(w, buildBudgetDetailJSON(data, br), opts)
+				return writeStructured(w, BuildBudgetDetail(data, br), opts)
 			}
 			return writeBudgetDetail(w, data, br)
 		}

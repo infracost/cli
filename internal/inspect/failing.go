@@ -25,7 +25,7 @@ import (
 // from FinopsResults / TaggingResults.
 func WriteFailing(w io.Writer, data *format.Output, opts Options) error {
 	if opts.Structured() {
-		return writeStructured(w, failingPanoramaJSONFor(data), opts)
+		return writeStructured(w, BuildFailingPanorama(data), opts)
 	}
 	policyRows := collectPolicyRows(data)
 	distinctPolicies := countDistinctPolicies(policyRows)

@@ -8,10 +8,10 @@ import (
 	"github.com/infracost/cli/internal/ui"
 )
 
-// diagnosticEntry pairs a project name with one of its diagnostics so the
+// DiagnosticEntry pairs a project name with one of its diagnostics so the
 // flat list can preserve the per-project attribution that the rendered view
 // shows in muted parentheses.
-type diagnosticEntry struct {
+type DiagnosticEntry struct {
 	Project    string                  `json:"project"`
 	Diagnostic format.DiagnosticOutput `json:"diagnostic"`
 }
@@ -56,14 +56,14 @@ func WriteSummaryDiagnostics(w io.Writer, data *format.Output, includeWarnings b
 	writeDiagnosticEntries(w, entries, hasMultipleProjects(data))
 }
 
-func collectDiagnostics(data *format.Output, includeWarnings bool) []diagnosticEntry {
-	var entries []diagnosticEntry
+func collectDiagnostics(data *format.Output, includeWarnings bool) []DiagnosticEntry {
+	var entries []DiagnosticEntry
 	for _, p := range data.Projects {
 		for _, d := range p.Diagnostics {
 			if d.Severity != "critical" && !includeWarnings {
 				continue
 			}
-			entries = append(entries, diagnosticEntry{
+			entries = append(entries, DiagnosticEntry{
 				Project:    p.ProjectName,
 				Diagnostic: d,
 			})
@@ -76,7 +76,7 @@ func hasMultipleProjects(data *format.Output) bool {
 	return len(data.Projects) > 1
 }
 
-func writeDiagnosticEntries(w io.Writer, entries []diagnosticEntry, showProject bool) {
+func writeDiagnosticEntries(w io.Writer, entries []DiagnosticEntry, showProject bool) {
 	for _, e := range entries {
 		if showProject {
 			format.WriteDiagnosticOutputWithSuffix(w, e.Diagnostic, " "+ui.Muted("("+e.Project+")"))

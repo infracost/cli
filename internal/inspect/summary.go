@@ -35,7 +35,7 @@ type ProjectSummary struct {
 //
 // Drill-in detail (which specific policies failed, which guardrails
 // triggered, which budgets are over) is intentionally not on SummaryView —
-// see summaryData for the inspect-only superset that adds those lists for
+// see Summary for the inspect-only superset that adds those lists for
 // `inspect --json` consumers. MCP callers reach for the per-domain tools
 // (policies, guardrails, budgets) when they need that detail.
 type SummaryView struct {
@@ -60,23 +60,23 @@ type SummaryView struct {
 	WarningDiags                    int              `json:"warning_diagnostics"`
 }
 
-// summaryData is the inspect-only superset of SummaryView. The embedded view
+// Summary is the inspect-only superset of SummaryView. The embedded view
 // keeps the headline JSON wire format flat (no breaking change for existing
 // `inspect --json` consumers); the additional fields surface drill-in detail
 // requested by inspect's JSON callers so they don't need a follow-up call to
 // list the failing items.
-type summaryData struct {
+type Summary struct {
 	SummaryView
-	FailingPolicyList      []failingPolicyEntry     `json:"failing_policy_list,omitempty"`
+	FailingPolicyList      []FailingPolicyEntry     `json:"failing_policy_list,omitempty"`
 	TriggeredGuardrailList []format.GuardrailOutput `json:"triggered_guardrail_list,omitempty"`
 	OverBudgetList         []format.BudgetOutput    `json:"over_budget_list,omitempty"`
 }
 
-// failingPolicyEntry is one failing policy + its failing resources, used in
+// FailingPolicyEntry is one failing policy + its failing resources, used in
 // the enriched summary JSON. Per-resource detail (issues / missing+invalid
 // tags) lives at the resource level so downstream consumers don't need a
 // separate drill-in call.
-type failingPolicyEntry struct {
+type FailingPolicyEntry struct {
 	Kind    string `json:"kind"`
 	Name    string `json:"name"`
 	Slug    string `json:"slug,omitempty"`
@@ -107,7 +107,7 @@ func ResourceCost(r *format.ResourceOutput) *rat.Rat {
 // summaryFieldValue returns the canonical-name → string-value mapping
 // for one scalar summary field. Keys must match fieldsSummary (validated
 // at the call site by validateFields).
-func summaryFieldValue(s summaryData, field, currency string) string {
+func summaryFieldValue(s Summary, field, currency string) string {
 	switch field {
 	case "projects":
 		return fmt.Sprintf("%d", s.Projects)
@@ -154,7 +154,7 @@ func summaryFieldValue(s summaryData, field, currency string) string {
 // chrome). Multiple fields → "key: value" lines (matches the existing
 // summary view's idiom). Structured output → flat {field: value} object,
 // keys in the caller-specified order.
-func writeSummaryProjection(w io.Writer, s summaryData, fields []string, opts Options, currency string) error {
+func writeSummaryProjection(w io.Writer, s Summary, fields []string, opts Options, currency string) error {
 	if opts.Structured() {
 		out := make(orderedFields, 0, len(fields))
 		for _, f := range fields {
@@ -175,7 +175,7 @@ func writeSummaryProjection(w io.Writer, s summaryData, fields []string, opts Op
 }
 
 func WriteSummary(w io.Writer, data *format.Output, opts Options) error {
-	s := buildSummary(data)
+	s := BuildSummary(data)
 
 	// --fields short-circuit: project to just the requested scalars.
 	// Single field → value alone (so a model can `wc -l` or read it
@@ -320,7 +320,7 @@ func writeProjectTable(w io.Writer, projects []ProjectSummary, currency string) 
 // "Scan Summary" box (counts, monthly cost, per-project breakdown,
 // diagnostic counts). Drill-in lists for failing policies/guardrails/
 // budgets are not included here; they live on the inspect-only superset
-// produced by buildSummary.
+// produced by BuildSummary.
 func BuildSummaryView(data *format.Output) SummaryView {
 	s := SummaryView{MonthlyCost: rat.Zero}
 
@@ -414,18 +414,18 @@ func BuildSummaryView(data *format.Output) SummaryView {
 	return s
 }
 
-// buildSummary returns the inspect-only superset of [BuildSummaryView],
+// BuildSummary returns the inspect-only superset of [BuildSummaryView],
 // adding the failing-policy / triggered-guardrail / over-budget drill-in
 // lists used by `inspect --json` so its consumers don't need a follow-up
 // call to enumerate the failures. The aggregate counts shared with the MCP
 // summary view are computed exactly once, by [BuildSummaryView].
-func buildSummary(data *format.Output) summaryData {
-	s := summaryData{SummaryView: BuildSummaryView(data)}
+func BuildSummary(data *format.Output) Summary {
+	s := Summary{SummaryView: BuildSummaryView(data)}
 
 	for _, p := range data.Projects {
 		for _, f := range p.FinopsResults {
 			if len(f.FailingResources) > 0 {
-				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
+				s.FailingPolicyList = append(s.FailingPolicyList, FailingPolicyEntry{
 					Kind:          "finops",
 					Name:          f.PolicyName,
 					Slug:          f.PolicySlug,
@@ -437,7 +437,7 @@ func buildSummary(data *format.Output) summaryData {
 		}
 		for _, t := range p.TaggingResults {
 			if len(t.FailingResources) > 0 {
-				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
+				s.FailingPolicyList = append(s.FailingPolicyList, FailingPolicyEntry{
 					Kind:           "tagging",
 					Name:           t.PolicyName,
 					Message:        t.Message,
