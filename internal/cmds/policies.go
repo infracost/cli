@@ -491,16 +491,6 @@ func resolveProviderFilter(names []string, taggingOnly bool) ([]provider.Provide
 	return out, nil
 }
 
-// filterToHumanReadableString is the proto-flavored entry point kept for
-// callers (e.g. guardrails) that still hand around `event.StringFilter`.
-// Bridges into [stringFilterHuman] so the human phrasing lives in one place.
-func filterToHumanReadableString(plural string, f *event.StringFilter) string {
-	if f == nil {
-		return stringFilterHuman(plural, nil)
-	}
-	return stringFilterHuman(plural, &PolicyStringFilter{Include: f.Include, Exclude: f.Exclude})
-}
-
 // stringFilterHuman renders a [PolicyStringFilter] for the human view.
 // Returns a "All branches" / "Only X branches" / "All branches except X"
 // phrasing, matching the previous renderer's tone.

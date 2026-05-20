@@ -237,6 +237,28 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 			}
 			return nil, result, nil
 		})
+
+	guardrailsSchema, err := guardrailsToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "guardrails",
+			Description: "List the cost guardrails the active organization has configured for the directory's resolved VCS " +
+				"repo + branch. Each entry includes the guardrail's id, name, optional message, scope (\"repo\" or " +
+				"\"project\"), thresholds (total_threshold / increase_threshold / increase_percent_threshold — at most one " +
+				"per guardrail in practice), configured actions (pr_comment / block_pr), and the project filter when the " +
+				"guardrail is project-scoped.",
+			OutputSchema: guardrailsSchema,
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in GuardrailsInput) (*mcp.CallToolResult, GuardrailsResult, error) {
+			result, err := Guardrails(ctx, cfg, source, in)
+			if err != nil {
+				return nil, GuardrailsResult{}, err
+			}
+			return nil, result, nil
+		})
 }
 
 // FetchOrgsInput is the input shape for fetch_orgs. Currently empty —
