@@ -167,7 +167,7 @@ func run() (exitCode int) {
 
 	addCmd(cmds.ScanCmd(cfg), "analyze")
 	addCmd(cmds.Inspect(cfg), "analyze")
-	addCmd(cmds.Price(cfg), "analyze")
+	addCmd(cmds.PriceCmd(cfg), "analyze")
 
 	addCmd(cmds.Policies(cfg), "workspace")
 	addCmd(cmds.Budgets(cfg), "workspace")

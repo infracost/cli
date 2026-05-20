@@ -58,3 +58,88 @@ func scanToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// MCPPriceOutput is the wire shape returned by the MCP `price` tool. Unlike
+// MCPScanOutput, it carries the per-resource breakdown directly because the
+// agent has shipped a small piece of IaC and almost always wants to know
+// what's expensive about *those resources* — making them call a separate
+// inspect tool to drill back into their own input would be a needless
+// round-trip. For whole-repo scans the cost of that detail would be
+// prohibitive, so the scan tool keeps its lean summary-only shape.
+type MCPPriceOutput struct {
+	Currency  string              `json:"currency"`
+	Summary   inspect.SummaryView `json:"summary"`
+	Resources []MCPResource       `json:"resources"`
+}
+
+// MCPResource is the flat, schema-friendly version of [format.ResourceOutput]
+// used by the MCP `price` tool. Subresources are pre-summed into
+// TotalMonthlyCost rather than nested — that gets rid of the
+// jsonschema-go-unsupported cycle in ResourceOutput and matches the way no
+// human-facing renderer ever lists subresources individually (they only
+// contribute to totals).
+type MCPResource struct {
+	Name                string                       `json:"name"`
+	Type                string                       `json:"type"`
+	IsSupported         bool                         `json:"is_supported"`
+	IsFree              bool                         `json:"is_free"`
+	TotalMonthlyCost    *rat.Rat                     `json:"total_monthly_cost,omitempty"`
+	CostComponents      []format.CostComponentOutput `json:"cost_components,omitempty"`
+	Tags                map[string]string            `json:"tags,omitempty"`
+	SupportsTags        bool                         `json:"supports_tags,omitempty"`
+	SupportsDefaultTags bool                         `json:"supports_default_tags,omitempty"`
+	Metadata            format.ResourceMetadata      `json:"metadata"`
+}
+
+// toMCPPriceOutput projects a *format.Output to the MCP price tool's wire
+// shape. The summary view mirrors what the human renderer prints; the flat
+// Resources slice walks every project's resources and pre-sums their
+// subresource costs so the agent gets one row per top-level resource with a
+// TotalMonthlyCost that already accounts for any nested LaunchTemplate /
+// EBS volume / etc. children produced by the plugin layer.
+func toMCPPriceOutput(o *format.Output) MCPPriceOutput {
+	out := MCPPriceOutput{
+		Currency: o.Currency,
+		Summary:  inspect.BuildSummaryView(o),
+	}
+	for _, p := range o.Projects {
+		for _, r := range p.Resources {
+			out.Resources = append(out.Resources, toMCPResource(r))
+		}
+	}
+	return out
+}
+
+// toMCPResource flattens a single resource. The TotalMonthlyCost field rolls
+// up cost components plus all nested subresources via inspect.ResourceCost so
+// the wire shape loses the hierarchy but not the totals.
+func toMCPResource(r format.ResourceOutput) MCPResource {
+	return MCPResource{
+		Name:                r.Name,
+		Type:                r.Type,
+		IsSupported:         r.IsSupported,
+		IsFree:              r.IsFree,
+		TotalMonthlyCost:    inspect.ResourceCost(&r),
+		CostComponents:      r.CostComponents,
+		Tags:                r.Tags,
+		SupportsTags:        r.SupportsTags,
+		SupportsDefaultTags: r.SupportsDefaultTags,
+		Metadata:            r.Metadata,
+	}
+}
+
+// priceToolOutputSchema returns the JSON schema describing [MCPPriceOutput].
+// Same rat.Rat -> string override as scanToolOutputSchema; MCPResource and
+// CostComponentOutput both carry monetary fields that need the same
+// treatment.
+func priceToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[MCPPriceOutput](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building price tool output schema: %w", err)
+	}
+	return schema, nil
+}

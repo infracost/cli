@@ -171,6 +171,30 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 			}
 			return nil, toMCPScanOutput(result), nil
 		})
+
+	priceSchema, err := priceToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "price",
+			Description: "Price a snippet of Infrastructure-as-Code without writing it to disk. The agent passes the raw " +
+				"Terraform source in the `iac` field and gets back monthly cost plus a per-resource breakdown for the " +
+				"resources it just sent. Use this when you have a small piece of IaC in hand and want to know what it " +
+				"would cost; for whole-directory scans use the `scan` tool instead.",
+			OutputSchema: priceSchema,
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in PriceInput) (*mcp.CallToolResult, MCPPriceOutput, error) {
+			if in.Currency == "" {
+				in.Currency = cfg.Currency
+			}
+			result, err := Price(ctx, cfg, source, store, in, "mcp")
+			if err != nil {
+				return nil, MCPPriceOutput{}, err
+			}
+			return nil, toMCPPriceOutput(result), nil
+		})
 }
 
 // FetchOrgsInput is the input shape for fetch_orgs. Currently empty —
