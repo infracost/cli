@@ -157,3 +157,19 @@ func policiesToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// budgetsToolOutputSchema returns the JSON schema describing
+// [BudgetsResult]. Same rat.Rat -> string override as scan/price —
+// BudgetEntry.Amount and BudgetEntry.CurrentCost serialize as
+// number-formatted strings via rat.Rat.MarshalJSON.
+func budgetsToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[BudgetsResult](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building budgets tool output schema: %w", err)
+	}
+	return schema, nil
+}

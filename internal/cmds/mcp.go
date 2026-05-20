@@ -216,6 +216,27 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 			}
 			return nil, result, nil
 		})
+
+	budgetsSchema, err := budgetsToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "budgets",
+			Description: "List the cost budgets configured for the active organization. Each entry includes the budget's id, " +
+				"name, amount, current spend, over-budget flag, period (started_at / ended_at, YYYY-MM-DD), the tag selector " +
+				"that scopes which resources count against it, and whether PR-comment alerts are enabled. Org-wide — not " +
+				"scoped by directory or branch.",
+			OutputSchema: budgetsSchema,
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in BudgetsInput) (*mcp.CallToolResult, BudgetsResult, error) {
+			result, err := Budgets(ctx, cfg, source, in)
+			if err != nil {
+				return nil, BudgetsResult{}, err
+			}
+			return nil, result, nil
+		})
 }
 
 // FetchOrgsInput is the input shape for fetch_orgs. Currently empty —
