@@ -262,3 +262,33 @@ func TestInspectTopSavingsToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 }
+
+// TestInspectPolicyDetailToolOutputSchema covers [inspect.PolicyDetail].
+// Carries rat.Rat indirectly via format.FinopsIssueOutput's
+// monthly_savings field.
+func TestInspectPolicyDetailToolOutputSchema(t *testing.T) {
+	schema, err := inspectPolicyDetailToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
+
+// TestInspectBudgetDetailToolOutputSchema covers [inspect.BudgetDetail].
+// Has multiple rat.Rat surfaces (amount + current_cost on the embedded
+// BudgetOutput, monthly_cost on the matching resources, savings).
+func TestInspectBudgetDetailToolOutputSchema(t *testing.T) {
+	schema, err := inspectBudgetDetailToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
+
+// TestInspectGuardrailDetailToolOutputSchema covers
+// [format.GuardrailOutput] returned by inspect_guardrail_detail.
+// rat.Rat appears on the total_monthly_cost field.
+func TestInspectGuardrailDetailToolOutputSchema(t *testing.T) {
+	schema, err := inspectGuardrailDetailToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}

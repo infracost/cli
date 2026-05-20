@@ -361,3 +361,80 @@ func inspectTopSavingsToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// InspectPolicyDetailInput is the input shape for the
+// `inspect_policy_detail` MCP tool. Policy is the identifier — name or
+// slug; both finops and tagging policies match. Resource narrows the
+// per-resource list when set.
+type InspectPolicyDetailInput struct {
+	Path     string `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
+	Policy   string `json:"policy" jsonschema:"Policy name or slug (matches either). Required."`
+	Resource string `json:"resource,omitempty" jsonschema:"Optional resource address; narrows the failing-resources list to just this address."`
+	Project  string `json:"project,omitempty" jsonschema:"Filter to a specific project by name before drilling in."`
+	Filter   string `json:"filter,omitempty" jsonschema:"Generic AND'd filter expression."`
+}
+
+// InspectBudgetDetailInput is the input shape for the
+// `inspect_budget_detail` MCP tool.
+type InspectBudgetDetailInput struct {
+	Path    string `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
+	Budget  string `json:"budget" jsonschema:"Budget name or ID. Required."`
+	Project string `json:"project,omitempty" jsonschema:"Filter to a specific project by name before drilling in."`
+	Filter  string `json:"filter,omitempty" jsonschema:"Generic AND'd filter expression."`
+}
+
+// InspectGuardrailDetailInput is the input shape for the
+// `inspect_guardrail_detail` MCP tool.
+type InspectGuardrailDetailInput struct {
+	Path      string `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
+	Guardrail string `json:"guardrail" jsonschema:"Guardrail name or ID. Required."`
+	Project   string `json:"project,omitempty" jsonschema:"Filter to a specific project by name before drilling in."`
+	Filter    string `json:"filter,omitempty" jsonschema:"Generic AND'd filter expression."`
+}
+
+// inspectPolicyDetailToolOutputSchema returns the schema for
+// [inspect.PolicyDetail]. Carries rat.Rat indirectly via
+// format.FinopsIssueOutput (monthly_savings) so the override applies.
+func inspectPolicyDetailToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[inspect.PolicyDetail](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building inspect_policy_detail tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// inspectBudgetDetailToolOutputSchema returns the schema for
+// [inspect.BudgetDetail]. Carries rat.Rat both directly (amount /
+// current_cost on the embedded BudgetOutput) and via the matching
+// resources / savings rows.
+func inspectBudgetDetailToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[inspect.BudgetDetail](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building inspect_budget_detail tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// inspectGuardrailDetailToolOutputSchema returns the schema for
+// [format.GuardrailOutput] — the raw guardrail entry, matching the CLI
+// behavior where --guardrail X --json prints just the matching
+// guardrail with no extra enrichment.
+func inspectGuardrailDetailToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[format.GuardrailOutput](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building inspect_guardrail_detail tool output schema: %w", err)
+	}
+	return schema, nil
+}
