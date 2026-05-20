@@ -128,7 +128,8 @@ func testData() *format.Output {
 					},
 				},
 				Diagnostics: []format.DiagnosticOutput{
-					{Message: "something critical", Severity: "critical"},
+					{Prefix: "HCL parse error", Message: "failed to parse main.tf:42", Severity: "critical"},
+					{Prefix: "Warning", Message: "skipping unsupported provider: foo", Severity: "warning"},
 				},
 			},
 			{
@@ -194,6 +195,73 @@ func TestSummaryJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	assertGolden(t, buf.String())
+}
+
+func TestDiagnostics(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteDiagnostics(&buf, data, Options{})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestDiagnosticsJSON(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteDiagnostics(&buf, data, Options{JSON: true})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestDiagnosticsEmpty(t *testing.T) {
+	data := testData()
+	for i := range data.Projects {
+		data.Projects[i].Diagnostics = nil
+	}
+	var buf bytes.Buffer
+
+	err := WriteDiagnostics(&buf, data, Options{})
+	require.NoError(t, err)
+
+	assert.Contains(t, buf.String(), "No diagnostics")
+}
+
+func TestSummaryDiagnosticsCriticalOnly(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	WriteSummaryDiagnostics(&buf, data, false)
+
+	out := buf.String()
+	assert.Contains(t, out, "HCL parse error")
+	assert.NotContains(t, out, "skipping unsupported provider", "warnings should be hidden without --include-warnings")
+}
+
+func TestSummaryDiagnosticsWithWarnings(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	WriteSummaryDiagnostics(&buf, data, true)
+
+	out := buf.String()
+	assert.Contains(t, out, "HCL parse error")
+	assert.Contains(t, out, "skipping unsupported provider")
+}
+
+func TestSummaryDiagnosticsNoneIsSilent(t *testing.T) {
+	data := testData()
+	for i := range data.Projects {
+		data.Projects[i].Diagnostics = nil
+	}
+	var buf bytes.Buffer
+
+	WriteSummaryDiagnostics(&buf, data, true)
+
+	assert.Empty(t, buf.String(), "with no diagnostics the block should be empty (no header noise)")
 }
 
 func TestSummaryGBP(t *testing.T) {

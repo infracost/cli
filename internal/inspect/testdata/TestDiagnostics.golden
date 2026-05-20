@@ -1,0 +1,4 @@
+Diagnostics  (2)
+
+HCL parse error: failed to parse main.tf:42 (web-app)
+Warning: skipping unsupported provider: foo (web-app)

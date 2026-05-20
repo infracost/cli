@@ -21,6 +21,12 @@ type Options struct {
 	JSON      bool
 	LLM       bool
 
+	// Diagnostics renders the per-project diagnostics from the latest scan
+	// (critical + warnings). The critical-only follow-up shown beneath a
+	// scan/price summary is rendered by WriteSummaryDiagnostics directly, not
+	// through this option.
+	Diagnostics bool
+
 	// Aggregation views (mutually exclusive with each other; --top-savings
 	// is the only one that takes a count).
 	TotalSavings bool // sum monthly_savings across every FinOps issue
@@ -60,6 +66,13 @@ func Run(w io.Writer, data *format.Output, opts Options) error {
 		return err
 	}
 	filtered := Filter(data, opts)
+
+	// --diagnostics is the dedicated per-project diagnostics view; it short-
+	// circuits everything else so flag combinations like --diagnostics
+	// --group-by don't silently fall through to a different renderer.
+	if opts.Diagnostics {
+		return WriteDiagnostics(w, filtered, opts)
+	}
 
 	// Aggregation views run before the policy/budget/guardrail dispatch
 	// because they're orthogonal to those — they aggregate over whatever

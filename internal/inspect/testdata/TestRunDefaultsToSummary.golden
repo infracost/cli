@@ -10,7 +10,7 @@
 │   Tagging:       1 (⚠️ x1)                                       │
 │   Guardrails:    1 (🛑 x1)                                       │
 │   Budgets:       2 (💸 x1)                                       │
-│   Diagnostics:   ❗ x1                                           │
+│   Diagnostics:   ❗ x1, 1 warning                                │
 │                                                                  │
 │   Project      Resources  Monthly Cost  FinOps     Tagging       │
 │   web-app ❗           4           $60  1 (⚠️ x1)  1 (⚠️ x1)     │

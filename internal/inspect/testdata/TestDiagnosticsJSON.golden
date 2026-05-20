@@ -1,0 +1,18 @@
+[
+  {
+    "project": "web-app",
+    "diagnostic": {
+      "prefix": "HCL parse error",
+      "message": "failed to parse main.tf:42",
+      "severity": "critical"
+    }
+  },
+  {
+    "project": "web-app",
+    "diagnostic": {
+      "prefix": "Warning",
+      "message": "skipping unsupported provider: foo",
+      "severity": "warning"
+    }
+  }
+]

@@ -40,7 +40,7 @@
   "budgets": 2,
   "over_budget": 1,
   "critical_diagnostics": 1,
-  "warning_diagnostics": 0,
+  "warning_diagnostics": 1,
   "failing_policy_list": [
     {
       "kind": "finops",

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/infracost/cli/internal/format/toon"
 	"github.com/infracost/go-proto/pkg/diagnostic"
@@ -97,6 +98,10 @@ type CostComponentOutput struct {
 }
 
 type DiagnosticOutput struct {
+	// Prefix is the human-readable category for this diagnostic (e.g. "HCL
+	// parse error", "Module fetch error"). Falls back to "Error" / "Warning"
+	// when the diagnostic type has no friendly prefix mapped in go-proto.
+	Prefix   string `json:"prefix"`
 	Message  string `json:"message"`
 	Severity string `json:"severity"`
 }
@@ -523,9 +528,25 @@ func convertDiagnostic(d *diagnostic.Diagnostic) DiagnosticOutput {
 		severity = "warning"
 	}
 	return DiagnosticOutput{
-		Message:  d.String(),
+		Prefix:   diagnosticPrefix(d),
+		Message:  d.Error,
 		Severity: severity,
 	}
+}
+
+// diagnosticPrefix returns the user-facing category label for a diagnostic.
+// Uses go-proto's MessagePrefix mapping when one exists, falling back to a
+// plain "Error" / "Warning" so the line still reads naturally for diagnostic
+// types we haven't mapped yet.
+func diagnosticPrefix(d *diagnostic.Diagnostic) string {
+	prefix := diagnostic.MessagePrefix(d.Type)
+	if strings.HasPrefix(prefix, "DIAGNOSTIC_TYPE_") {
+		if d.Warning {
+			return "Warning"
+		}
+		return "Error"
+	}
+	return prefix
 }
 
 func convertTaggingResult(tr event.TaggingPolicyResult) TaggingOutput {
