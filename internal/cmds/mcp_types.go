@@ -143,3 +143,17 @@ func priceToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// policiesToolOutputSchema returns the JSON schema describing
+// [PoliciesResult]. PoliciesResult is built from clean Go-defined types
+// (FinopsPolicyEntry / TaggingPolicyEntry / PolicyStringFilter / …) with
+// no proto embeds or rat.Rat fields, so no per-type overrides are needed
+// — but the helper exists for symmetry with the scan and price schemas
+// and so the registration call site looks the same.
+func policiesToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[PoliciesResult](nil)
+	if err != nil {
+		return nil, fmt.Errorf("building policies tool output schema: %w", err)
+	}
+	return schema, nil
+}

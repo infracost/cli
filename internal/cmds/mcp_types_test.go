@@ -175,3 +175,15 @@ func TestMCPPriceOutputJSON(t *testing.T) {
 	assert.Equal(t, "aws_instance.web", res["name"])
 	assert.NotContains(t, res, "subresources", "MCPResource is flat by design")
 }
+
+// TestPoliciesToolOutputSchema is the canary for any future proto-embedded
+// type accidentally getting added to PoliciesResult. The clean-shape
+// projection in toFinopsPolicyEntry / toTaggingPolicyEntry exists
+// specifically to keep the wire schema readable; a regression would either
+// break this test or surface raw proto field names to agent consumers.
+func TestPoliciesToolOutputSchema(t *testing.T) {
+	schema, err := policiesToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
