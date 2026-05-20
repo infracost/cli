@@ -11,7 +11,11 @@ import (
 	"github.com/infracost/go-proto/pkg/rat"
 )
 
-type projectSummary struct {
+// ProjectSummary is the per-project row of [SummaryView.ProjectDetails],
+// matching the multi-project table rendered beneath the scan/price summary
+// box. Returned as part of the typed summary so MCP tool callers can read it
+// without parsing the rendered table.
+type ProjectSummary struct {
 	Name                   string   `json:"name"`
 	Path                   string   `json:"path"`
 	Resources              int      `json:"resources"`
@@ -23,33 +27,49 @@ type projectSummary struct {
 	HasErrors              bool     `json:"has_errors"`
 }
 
-type summaryData struct {
-	Projects               int              `json:"projects"`
-	ProjectsWithError      int              `json:"projects_with_errors"`
-	ProjectDetails         []projectSummary `json:"project_details"`
-	Resources              int              `json:"resources"`
-	CostedResources        int              `json:"costed_resources"`
-	FreeResources          int              `json:"free_resources"`
-	MonthlyCost            *rat.Rat         `json:"monthly_cost"`
+// SummaryView is the typed shape of the scan/price summary view — the same
+// data the human renderer prints into the "Scan Summary" box (headline
+// counts, monthly cost, policy/guardrail/budget tallies, diagnostic counts,
+// and the per-project breakdown). Shared between the inspect summary
+// renderer and the MCP scan tool so both surfaces show the same numbers.
+//
+// Drill-in detail (which specific policies failed, which guardrails
+// triggered, which budgets are over) is intentionally not on SummaryView —
+// see summaryData for the inspect-only superset that adds those lists for
+// `inspect --json` consumers. MCP callers reach for the per-domain tools
+// (policies, guardrails, budgets) when they need that detail.
+type SummaryView struct {
+	Projects                        int              `json:"projects"`
+	ProjectsWithError               int              `json:"projects_with_errors"`
+	ProjectDetails                  []ProjectSummary `json:"project_details"`
+	Resources                       int              `json:"resources"`
+	CostedResources                 int              `json:"costed_resources"`
+	FreeResources                   int              `json:"free_resources"`
+	MonthlyCost                     *rat.Rat         `json:"monthly_cost"`
 	FinopsPolicies                  int              `json:"finops_policies"`
 	FailingPolicies                 int              `json:"failing_policies"`
 	DistinctFailingFinopsResources  int              `json:"distinct_failing_finops_resources,omitempty"`
 	TaggingPolicies                 int              `json:"tagging_policies"`
 	FailingTaggingPolicies          int              `json:"failing_tagging_policies"`
 	DistinctFailingTaggingResources int              `json:"distinct_failing_tagging_resources,omitempty"`
-	Guardrails             int              `json:"guardrails"`
-	TriggeredGuardrails    int              `json:"triggered_guardrails"`
-	Budgets                int              `json:"budgets"`
-	OverBudget             int              `json:"over_budget"`
-	CriticalDiags          int              `json:"critical_diagnostics"`
-	WarningDiags           int              `json:"warning_diagnostics"`
+	Guardrails                      int              `json:"guardrails"`
+	TriggeredGuardrails             int              `json:"triggered_guardrails"`
+	Budgets                         int              `json:"budgets"`
+	OverBudget                      int              `json:"over_budget"`
+	CriticalDiags                   int              `json:"critical_diagnostics"`
+	WarningDiags                    int              `json:"warning_diagnostics"`
+}
 
-	// Detail lists for `inspect --json` consumers (LLMs, scripts) that need
-	// to act on the failures. The aggregate counts above stay as-is so
-	// existing consumers keep working.
-	FailingPolicyList     []failingPolicyEntry      `json:"failing_policy_list,omitempty"`
+// summaryData is the inspect-only superset of SummaryView. The embedded view
+// keeps the headline JSON wire format flat (no breaking change for existing
+// `inspect --json` consumers); the additional fields surface drill-in detail
+// requested by inspect's JSON callers so they don't need a follow-up call to
+// list the failing items.
+type summaryData struct {
+	SummaryView
+	FailingPolicyList      []failingPolicyEntry     `json:"failing_policy_list,omitempty"`
 	TriggeredGuardrailList []format.GuardrailOutput `json:"triggered_guardrail_list,omitempty"`
-	OverBudgetList        []format.BudgetOutput     `json:"over_budget_list,omitempty"`
+	OverBudgetList         []format.BudgetOutput    `json:"over_budget_list,omitempty"`
 }
 
 // failingPolicyEntry is one failing policy + its failing resources, used in
@@ -270,7 +290,7 @@ func diagnosticsValue(critical, warning int) string {
 // writeProjectTable renders the per-project breakdown using an ANSI-aware,
 // per-column-aligned renderer (text/tabwriter measures by raw byte count and
 // can't handle colored cells correctly).
-func writeProjectTable(w io.Writer, projects []projectSummary, currency string) {
+func writeProjectTable(w io.Writer, projects []ProjectSummary, currency string) {
 	cols := []tableCol{
 		{header: "Project", right: false},
 		{header: "Resources", right: true},
@@ -295,8 +315,14 @@ func writeProjectTable(w io.Writer, projects []projectSummary, currency string) 
 	renderTable(w, cols, rows, ui.ContentWidth())
 }
 
-func buildSummary(data *format.Output) summaryData {
-	s := summaryData{MonthlyCost: rat.Zero}
+// BuildSummaryView computes the headline summary view from a scan/price
+// Output. Pure function — same data the human renderer prints into the
+// "Scan Summary" box (counts, monthly cost, per-project breakdown,
+// diagnostic counts). Drill-in lists for failing policies/guardrails/
+// budgets are not included here; they live on the inspect-only superset
+// produced by buildSummary.
+func BuildSummaryView(data *format.Output) SummaryView {
+	s := SummaryView{MonthlyCost: rat.Zero}
 
 	// Track distinct resource addresses across projects so the same address
 	// failing in two projects (or two policies) doesn't double-count.
@@ -305,7 +331,7 @@ func buildSummary(data *format.Output) summaryData {
 
 	for _, p := range data.Projects {
 		s.Projects++
-		ps := projectSummary{
+		ps := ProjectSummary{
 			Name:        p.ProjectName,
 			Path:        p.Path,
 			MonthlyCost: rat.Zero,
@@ -350,14 +376,6 @@ func buildSummary(data *format.Output) summaryData {
 				for _, fr := range f.FailingResources {
 					failingFinopsAddrs[fr.Name] = struct{}{}
 				}
-				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
-					Kind:          "finops",
-					Name:          f.PolicyName,
-					Slug:          f.PolicySlug,
-					Message:       f.PolicyMessage,
-					Project:       p.ProjectName,
-					FailingFinops: f.FailingResources,
-				})
 			}
 		}
 
@@ -370,14 +388,6 @@ func buildSummary(data *format.Output) summaryData {
 				for _, tr := range t.FailingResources {
 					failingTaggingAddrs[tr.Address] = struct{}{}
 				}
-				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
-					Kind:           "tagging",
-					Name:           t.PolicyName,
-					Message:        t.Message,
-					Project:        p.ProjectName,
-					TagSchema:      t.TagSchema,
-					FailingTagging: t.FailingResources,
-				})
 			}
 		}
 
@@ -388,7 +398,6 @@ func buildSummary(data *format.Output) summaryData {
 		s.Guardrails++
 		if gr.Triggered {
 			s.TriggeredGuardrails++
-			s.TriggeredGuardrailList = append(s.TriggeredGuardrailList, gr)
 		}
 	}
 
@@ -396,12 +405,61 @@ func buildSummary(data *format.Output) summaryData {
 		s.Budgets++
 		if br.OverBudget {
 			s.OverBudget++
-			s.OverBudgetList = append(s.OverBudgetList, br)
 		}
 	}
 
 	s.DistinctFailingFinopsResources = len(failingFinopsAddrs)
 	s.DistinctFailingTaggingResources = len(failingTaggingAddrs)
+
+	return s
+}
+
+// buildSummary returns the inspect-only superset of [BuildSummaryView],
+// adding the failing-policy / triggered-guardrail / over-budget drill-in
+// lists used by `inspect --json` so its consumers don't need a follow-up
+// call to enumerate the failures. The aggregate counts shared with the MCP
+// summary view are computed exactly once, by [BuildSummaryView].
+func buildSummary(data *format.Output) summaryData {
+	s := summaryData{SummaryView: BuildSummaryView(data)}
+
+	for _, p := range data.Projects {
+		for _, f := range p.FinopsResults {
+			if len(f.FailingResources) > 0 {
+				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
+					Kind:          "finops",
+					Name:          f.PolicyName,
+					Slug:          f.PolicySlug,
+					Message:       f.PolicyMessage,
+					Project:       p.ProjectName,
+					FailingFinops: f.FailingResources,
+				})
+			}
+		}
+		for _, t := range p.TaggingResults {
+			if len(t.FailingResources) > 0 {
+				s.FailingPolicyList = append(s.FailingPolicyList, failingPolicyEntry{
+					Kind:           "tagging",
+					Name:           t.PolicyName,
+					Message:        t.Message,
+					Project:        p.ProjectName,
+					TagSchema:      t.TagSchema,
+					FailingTagging: t.FailingResources,
+				})
+			}
+		}
+	}
+
+	for _, gr := range data.GuardrailResults {
+		if gr.Triggered {
+			s.TriggeredGuardrailList = append(s.TriggeredGuardrailList, gr)
+		}
+	}
+
+	for _, br := range data.BudgetResults {
+		if br.OverBudget {
+			s.OverBudgetList = append(s.OverBudgetList, br)
+		}
+	}
 
 	return s
 }

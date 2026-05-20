@@ -47,7 +47,7 @@ func breakdownShim(cfg *config.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  %s  `infracost breakdown` is deprecated, running `infracost scan` instead.\n", ui.Caution("!"))
 
-			scan := Scan(cfg)
+			scan := ScanCmd(cfg)
 			scan.SetContext(cmd.Context())
 			scan.SetIn(cmd.InOrStdin())
 			scan.SetOut(cmd.OutOrStdout())

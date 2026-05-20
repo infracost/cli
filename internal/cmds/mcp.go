@@ -108,7 +108,7 @@ func labelMCPCommandMiddleware() mcp.Middleware {
 // fetch_orgs and set_org let an agent introspect and change the active
 // organization mid-session. Domain tools (scan, price, inspect_*, etc.)
 // are added by the typed-result refactor PRs.
-func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSource, _ cache.Store) {
+func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSource, store cache.Store) {
 	mcp.AddTool(srv,
 		&mcp.Tool{
 			Name:        "fetch_orgs",
@@ -146,6 +146,30 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 				return nil, WhoAmIResult{}, err
 			}
 			return nil, result, nil
+		})
+
+	scanSchema, err := scanToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "scan",
+			Description: "Scan an Infrastructure-as-Code directory for monthly cost, FinOps and tagging policy violations, " +
+				"triggered guardrails, over-budget items, and parse diagnostics. Returns the same headline summary the " +
+				"`infracost scan` CLI prints to a human (no per-resource detail). For drill-in detail use the policies, " +
+				"guardrails, budgets, or inspect_* tools.",
+			OutputSchema: scanSchema,
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in ScanInput) (*mcp.CallToolResult, MCPScanOutput, error) {
+			if in.Currency == "" {
+				in.Currency = cfg.Currency
+			}
+			result, err := Scan(ctx, cfg, source, store, in, "mcp")
+			if err != nil {
+				return nil, MCPScanOutput{}, err
+			}
+			return nil, toMCPScanOutput(result), nil
 		})
 }
 

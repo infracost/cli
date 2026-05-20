@@ -10,7 +10,6 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/api/dashboard"
-	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/trace"
 	"github.com/infracost/cli/pkg/logging"
@@ -29,22 +28,16 @@ var pj = protojson.UnmarshalOptions{
 	DiscardUnknown: true,
 }
 
+// Scanner is the per-invocation scanning context. Callers populate the
+// fields directly so the scanner doesn't depend on the full config.Config
+// — useful for callers that want to vary one piece (e.g. swapping the
+// currency for an MCP tool call) without rebuilding a Config.
 type Scanner struct {
-	plugins         *plugins.Config
-	logging         logging.Config
-	dashboard       dashboard.Config
-	currency        string
-	pricingEndpoint string
-}
-
-func NewScanner(config *config.Config) *Scanner {
-	return &Scanner{
-		plugins:         &config.Plugins,
-		logging:         config.Logging,
-		dashboard:       config.Dashboard,
-		currency:        config.Currency,
-		pricingEndpoint: config.PricingEndpoint,
-	}
+	Plugins         *plugins.Config
+	Logging         logging.Config
+	Dashboard       dashboard.Config
+	Currency        string
+	PricingEndpoint string
 }
 
 type FinOpsPolicy struct {
@@ -85,9 +78,9 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 	}
 
 	pluginLoaders := map[provider.Provider]func(hclog.Level) (provider.ProviderServiceClient, func(), error){
-		provider.Provider_PROVIDER_AWS:     s.plugins.Providers.LoadAWS,
-		provider.Provider_PROVIDER_GOOGLE:  s.plugins.Providers.LoadGoogle,
-		provider.Provider_PROVIDER_AZURERM: s.plugins.Providers.LoadAzurerm,
+		provider.Provider_PROVIDER_AWS:     s.Plugins.Providers.LoadAWS,
+		provider.Provider_PROVIDER_GOOGLE:  s.Plugins.Providers.LoadGoogle,
+		provider.Provider_PROVIDER_AZURERM: s.Plugins.Providers.LoadAzurerm,
 	}
 
 	if providers == nil {
@@ -104,11 +97,11 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		if !ok {
 			continue
 		}
-		if err := s.plugins.EnsureProvider(prov); err != nil {
+		if err := s.Plugins.EnsureProvider(prov); err != nil {
 			logging.WithError(err).Msgf("failed to ensure provider %s", prov)
 			continue
 		}
-		providerFinopsPolicies, err := s.plugins.Providers.ListFinopsPolicies(ctx, pluginLoader)
+		providerFinopsPolicies, err := s.Plugins.Providers.ListFinopsPolicies(ctx, pluginLoader)
 		if err != nil {
 			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", prov)
 			continue
@@ -188,8 +181,8 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		return nil, fmt.Errorf("repository configuration error: %w", err)
 	}
 	result.Config = repoConfig
-	if s.currency != "" {
-		result.Config.Currency = s.currency
+	if s.Currency != "" {
+		result.Config.Currency = s.Currency
 	}
 	if result.Config.Currency == "" {
 		result.Config.Currency = "USD"
@@ -257,7 +250,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			BranchName:        branchName,
 			RepositoryName:    repositoryName,
 			OrgID:             runParameters.OrganizationID,
-			PricingEndpoint:   s.pricingEndpoint,
+			PricingEndpoint:   s.PricingEndpoint,
 			Currency:          result.Config.Currency,
 			TraceID:           trace.ID,
 			ProductionFilters: productionFilters,
@@ -265,8 +258,8 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			TagPolicies:       tagPolicies,
 			UsageDefaults:     usageDefaults,
 			RepoUsage:         repoUsage,
-			Plugins:           s.plugins,
-			Logging:           s.logging,
+			Plugins:           s.Plugins,
+			Logging:           s.Logging,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan project %q: %w", project.Name, err)
