@@ -18,7 +18,7 @@ import (
 	"github.com/infracost/go-proto/pkg/rat"
 )
 
-type tableRow struct {
+type GroupedRow struct {
 	Columns map[string]string `json:"columns"`
 	Cost    *rat.Rat          `json:"cost,omitempty"`
 	Count   int               `json:"count,omitempty"`
@@ -30,7 +30,7 @@ type tableRow struct {
 // instead of the consolidated bullet-list rendering. Dedupes rows by
 // the projected key set, which means `--group-by policy --fields policy`
 // yields one row per distinct policy without `| sort -u`.
-func writeGroupByProjection(w io.Writer, rows []tableRow, opts Options) error {
+func writeGroupByProjection(w io.Writer, rows []GroupedRow, opts Options) error {
 	available := groupByAvailableFields(rows)
 	fields, err := effectiveFields(opts, available)
 	if err != nil {
@@ -90,10 +90,10 @@ func writeGroupByProjection(w io.Writer, rows []tableRow, opts Options) error {
 }
 
 // groupByAvailableFields returns the union of all column keys appearing
-// across rows, plus the synthetic count / monthly_cost fields tableRow
+// across rows, plus the synthetic count / monthly_cost fields GroupedRow
 // carries outside Columns. Order is stable: rows[0]'s columns first,
 // then any extras seen later, then the synthetics.
-func groupByAvailableFields(rows []tableRow) []string {
+func groupByAvailableFields(rows []GroupedRow) []string {
 	seen := map[string]struct{}{}
 	var out []string
 	for _, r := range rows {
@@ -115,7 +115,7 @@ func groupByAvailableFields(rows []tableRow) []string {
 	return out
 }
 
-func groupByCellValue(r tableRow, field string) string {
+func groupByCellValue(r GroupedRow, field string) string {
 	if v, ok := r.Columns[field]; ok {
 		return v
 	}
@@ -133,12 +133,52 @@ func groupByCellValue(r tableRow, field string) string {
 
 var detailColumns = []string{"kind", string(GroupByResource), string(GroupByFile), "message"}
 
-func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
+// GroupedResult is the typed return of [GroupedFor]. Currency travels
+// on the envelope so MCP callers can interpret the Cost strings
+// without context; GroupBy mirrors the input dimensions so consumers
+// know which columns make up the aggregation key.
+type GroupedResult struct {
+	Currency string       `json:"currency"`
+	GroupBy  []string     `json:"group_by"`
+	Groups   []GroupedRow `json:"groups"`
+}
+
+// GroupedFor applies the inspect filter pipeline and runs the
+// group-by collect / aggregate / sort / top pipeline, returning the
+// typed result that backs the `inspect_resources` MCP tool in its
+// grouped mode. The CLI's WriteGroupBy uses the same buildGroupedRows
+// helper so structured and human-rendered output stay byte-equivalent.
+func GroupedFor(data *format.Output, opts Options) (GroupedResult, error) {
+	if err := ParseFilter(opts.Filter, &opts); err != nil {
+		return GroupedResult{}, err
+	}
+	data = Filter(data, opts)
+	rows := buildGroupedRows(data, opts)
+	return GroupedResult{
+		Currency: data.Currency,
+		GroupBy:  opts.GroupBy,
+		Groups:   rows,
+	}, nil
+}
+
+// buildGroupedRows is the shared collect → resource-filter → aggregate
+// → sort → top pipeline used by both [WriteGroupBy] (CLI render) and
+// [GroupedFor] (MCP typed return). The pipeline:
+//
+//  1. Pick the right collector based on which group-by dimension is
+//     present (policy / budget / guardrail / default resource).
+//  2. Drop rows that don't match the --resource filter.
+//  3. Aggregate rows by the dimension list — except for policy /
+//     budget / guardrail dimensions, which carry per-pairing rows the
+//     renderers consume directly.
+//  4. Sort by cost desc (ties broken by the first dimension's value).
+//  5. Apply the --top cap.
+func buildGroupedRows(data *format.Output, opts Options) []GroupedRow {
 	hasPolicyDim := slices.Contains(opts.GroupBy, string(GroupByPolicy))
 	hasBudgetDim := slices.Contains(opts.GroupBy, string(GroupByBudget))
 	hasGuardrailDim := slices.Contains(opts.GroupBy, string(GroupByGuardrail))
 
-	var rows []tableRow
+	var rows []GroupedRow
 	switch {
 	case hasBudgetDim:
 		rows = collectBudgetRows(data)
@@ -183,6 +223,17 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 	if opts.Top > 0 && opts.Top < len(rows) {
 		rows = rows[:opts.Top]
 	}
+	return rows
+}
+
+func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
+	hasPolicyDim := slices.Contains(opts.GroupBy, string(GroupByPolicy))
+	hasBudgetDim := slices.Contains(opts.GroupBy, string(GroupByBudget))
+	hasGuardrailDim := slices.Contains(opts.GroupBy, string(GroupByGuardrail))
+
+	dims := opts.GroupBy
+	aggregate := !hasPolicyDim && !hasBudgetDim && !hasGuardrailDim
+	rows := buildGroupedRows(data, opts)
 
 	// --fields short-circuits the rich consolidated/table renderings
 	// because the user's asking for a flat tabular projection (typically
@@ -294,7 +345,7 @@ func WriteGroupBy(w io.Writer, data *format.Output, opts Options) error {
 // Blank line between blocks. Empty lines are skipped (e.g. no message → no
 // message line). The left indent is 3 spaces so detail/message lines align
 // under the policy name (after the 2-cell icon + 1 space).
-func writePolicyGroupRows(w io.Writer, rows []tableRow, dims []string) {
+func writePolicyGroupRows(w io.Writer, rows []GroupedRow, dims []string) {
 	const indent = "   "
 	maxWidth := ui.TerminalContentWidth()
 	for i, r := range rows {
@@ -365,7 +416,7 @@ type policyConsolidationResource struct {
 // consolidatePolicyRows groups rows by policy in first-seen order. Used by
 // `--group-by policy` so a policy with N failing resources renders as one
 // block with N bullets, not N near-duplicate blocks repeating the message.
-func consolidatePolicyRows(rows []tableRow) []policyConsolidationGroup {
+func consolidatePolicyRows(rows []GroupedRow) []policyConsolidationGroup {
 	groups := map[string]*policyConsolidationGroup{}
 	var order []string
 	for _, r := range rows {
@@ -576,11 +627,11 @@ func addressesFailingPolicy(data *format.Output, policyNeedle string) []string {
 	return out
 }
 
-func collectResourceRows(data *format.Output) []tableRow {
-	var rows []tableRow
+func collectResourceRows(data *format.Output) []GroupedRow {
+	var rows []GroupedRow
 	for _, p := range data.Projects {
 		for _, r := range p.Resources {
-			rows = append(rows, tableRow{
+			rows = append(rows, GroupedRow{
 				Columns: map[string]string{
 					string(GroupByProject):  p.ProjectName,
 					string(GroupByType):     r.Type,
@@ -595,8 +646,8 @@ func collectResourceRows(data *format.Output) []tableRow {
 	return rows
 }
 
-func collectPolicyRows(data *format.Output) []tableRow {
-	var rows []tableRow
+func collectPolicyRows(data *format.Output) []GroupedRow {
+	var rows []GroupedRow
 	for _, p := range data.Projects {
 		metaByName := make(map[string]format.ResourceMetadata, len(p.Resources))
 		for _, r := range p.Resources {
@@ -606,7 +657,7 @@ func collectPolicyRows(data *format.Output) []tableRow {
 		for _, f := range p.FinopsResults {
 			for _, fr := range f.FailingResources {
 				meta := metaByName[fr.Name]
-				rows = append(rows, tableRow{
+				rows = append(rows, GroupedRow{
 					Columns: map[string]string{
 						string(GroupByProject):  p.ProjectName,
 						string(GroupByPolicy):   f.PolicyName,
@@ -622,7 +673,7 @@ func collectPolicyRows(data *format.Output) []tableRow {
 		}
 		for _, t := range p.TaggingResults {
 			for _, tr := range t.FailingResources {
-				rows = append(rows, tableRow{
+				rows = append(rows, GroupedRow{
 					Columns: map[string]string{
 						string(GroupByProject):  p.ProjectName,
 						string(GroupByPolicy):   t.PolicyName,
@@ -641,14 +692,14 @@ func collectPolicyRows(data *format.Output) []tableRow {
 	return rows
 }
 
-func collectGuardrailRows(data *format.Output) []tableRow {
-	rows := make([]tableRow, 0, len(data.GuardrailResults))
+func collectGuardrailRows(data *format.Output) []GroupedRow {
+	rows := make([]GroupedRow, 0, len(data.GuardrailResults))
 	for _, gr := range data.GuardrailResults {
 		status := "not triggered"
 		if gr.Triggered {
 			status = "TRIGGERED"
 		}
-		rows = append(rows, tableRow{
+		rows = append(rows, GroupedRow{
 			Columns: map[string]string{
 				string(GroupByGuardrail): gr.GuardrailName,
 				"status":                 status,
@@ -659,14 +710,14 @@ func collectGuardrailRows(data *format.Output) []tableRow {
 	return rows
 }
 
-func collectBudgetRows(data *format.Output) []tableRow {
-	rows := make([]tableRow, 0, len(data.BudgetResults))
+func collectBudgetRows(data *format.Output) []GroupedRow {
+	rows := make([]GroupedRow, 0, len(data.BudgetResults))
 	for _, br := range data.BudgetResults {
 		status := "under"
 		if br.OverBudget {
 			status = "OVER"
 		}
-		row := tableRow{
+		row := GroupedRow{
 			Columns: map[string]string{
 				string(GroupByBudget): br.BudgetName,
 				"status":              status,
@@ -691,8 +742,8 @@ func formatBudgetTagScope(tags []format.BudgetTagOutput) string {
 	return strings.Join(parts, ", ")
 }
 
-func filterRowsByResource(rows []tableRow, resource string) []tableRow {
-	var filtered []tableRow
+func filterRowsByResource(rows []GroupedRow, resource string) []GroupedRow {
+	var filtered []GroupedRow
 	for _, r := range rows {
 		if strings.HasSuffix(r.Columns[string(GroupByResource)], resource) {
 			filtered = append(filtered, r)
@@ -701,7 +752,7 @@ func filterRowsByResource(rows []tableRow, resource string) []tableRow {
 	return filtered
 }
 
-func aggregateRows(rows []tableRow, dims []string) []tableRow {
+func aggregateRows(rows []GroupedRow, dims []string) []GroupedRow {
 	type aggData struct {
 		columns map[string]string
 		cost    *rat.Rat
@@ -731,15 +782,15 @@ func aggregateRows(rows []tableRow, dims []string) []tableRow {
 		}
 	}
 
-	result := make([]tableRow, 0, len(groups))
+	result := make([]GroupedRow, 0, len(groups))
 	for _, key := range order {
 		g := groups[key]
-		result = append(result, tableRow{Columns: g.columns, Cost: g.cost, Count: g.count})
+		result = append(result, GroupedRow{Columns: g.columns, Cost: g.cost, Count: g.count})
 	}
 	return result
 }
 
-func compositeKey(r tableRow, dims []string) string {
+func compositeKey(r GroupedRow, dims []string) string {
 	parts := make([]string, len(dims))
 	for i, d := range dims {
 		parts[i] = r.Columns[d]
@@ -747,7 +798,7 @@ func compositeKey(r tableRow, dims []string) string {
 	return strings.Join(parts, "\x00")
 }
 
-func (r tableRow) count() int {
+func (r GroupedRow) count() int {
 	if r.Count > 0 {
 		return r.Count
 	}

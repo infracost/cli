@@ -118,7 +118,7 @@ func writeSectionHeading(w io.Writer, label, count string) {
 
 // countDistinctPolicies counts unique policies across rows. Used for the
 // panorama heading "(N policies · M resources)".
-func countDistinctPolicies(rows []tableRow) int {
+func countDistinctPolicies(rows []GroupedRow) int {
 	seen := map[string]struct{}{}
 	for _, r := range rows {
 		key := r.Columns["kind"] + "\x00" + r.Columns[string(GroupByPolicy)]

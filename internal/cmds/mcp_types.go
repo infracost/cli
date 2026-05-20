@@ -275,3 +275,60 @@ func inspectDiagnosticsToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// InspectResourcesInput is the input shape for the unified
+// `inspect_resources` MCP tool. The tool runs in one of two modes
+// depending on whether group_by is set:
+//
+//   - Flat mode (group_by empty): returns one row per matching
+//     resource (resource-shaped predicates filter the set).
+//   - Grouped mode (group_by populated): returns one row per group
+//     using the same group-by / top pipeline as `inspect --group-by`.
+//
+// Both modes share the same Project / Provider / Filter / Resource /
+// CostsOnly scoping. Resource-shaped predicates (MissingTag /
+// InvalidTag / MinCost / MaxCost) only apply in flat mode; Top only
+// applies in grouped mode.
+type InspectResourcesInput struct {
+	Path       string   `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
+	Project    string   `json:"project,omitempty" jsonschema:"Filter to a specific project by name."`
+	Provider   string   `json:"provider,omitempty" jsonschema:"Filter to a specific provider (aws, azurerm, google)."`
+	Resource   string   `json:"resource,omitempty" jsonschema:"Filter to a specific resource address."`
+	Filter     string   `json:"filter,omitempty" jsonschema:"Generic AND'd filter expression (e.g. \"tag.team=missing,provider=aws\")."`
+	CostsOnly  bool     `json:"costs_only,omitempty" jsonschema:"Exclude free resources."`
+	MissingTag string   `json:"missing_tag,omitempty" jsonschema:"Flat mode only: limit to resources missing the given tag key."`
+	InvalidTag string   `json:"invalid_tag,omitempty" jsonschema:"Flat mode only: limit to resources where the given tag is set but its value is outside the policy's allowed list."`
+	MinCost    float64  `json:"min_cost,omitempty" jsonschema:"Flat mode only: limit to resources with monthly cost >= N."`
+	MaxCost    float64  `json:"max_cost,omitempty" jsonschema:"Flat mode only: limit to resources with monthly cost <= N."`
+	GroupBy    []string `json:"group_by,omitempty" jsonschema:"Switches the tool into grouped mode. Valid values: type, provider, project, file, policy, budget, guardrail. Multiple dimensions are AND'd into a single aggregation key."`
+	Top        int      `json:"top,omitempty" jsonschema:"Grouped mode only: limit results to the top N rows by cost (descending)."`
+}
+
+// InspectResourcesResult is the wire shape for the unified
+// `inspect_resources` tool. Mode discriminates between flat and
+// grouped payloads — exactly one of Resources / Groups is populated
+// per call. Count is the length of whichever slice the mode names so
+// LLMs can read it without inspecting both branches.
+type InspectResourcesResult struct {
+	Mode      string                `json:"mode"`
+	Currency  string                `json:"currency,omitempty"`
+	GroupBy   []string              `json:"group_by,omitempty"`
+	Resources []inspect.ResourceRow `json:"resources,omitempty"`
+	Groups    []inspect.GroupedRow  `json:"groups,omitempty"`
+	Count     int                   `json:"count"`
+}
+
+// inspectResourcesToolOutputSchema returns the schema for the unified
+// inspect_resources output. ResourceRow carries a monthly_cost rat.Rat;
+// GroupedRow carries a Cost rat.Rat. The override covers both.
+func inspectResourcesToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[InspectResourcesResult](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building inspect_resources tool output schema: %w", err)
+	}
+	return schema, nil
+}

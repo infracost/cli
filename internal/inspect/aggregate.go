@@ -249,37 +249,64 @@ func WriteFilteredResources(w io.Writer, data *format.Output, opts Options) erro
 	return nil
 }
 
-// selectFilteredResources is the multi-field replacement for
-// selectFilteredAddresses. Returns one row (map of canonical field →
-// rendered string) per resource matching the predicates, in deterministic
-// (alphabetical-by-address) order.
-func selectFilteredResources(data *format.Output, opts Options) []map[string]string {
-	type rowEntry struct {
-		address string
-		row     map[string]string
+// ResourceRow is one entry in [ResourcesResult]. Synthetic tagging
+// failures (addresses that match a tagging-policy failure but don't
+// appear in any project's resource list) populate only the Address
+// field; the other fields stay zero / nil.
+type ResourceRow struct {
+	Address     string   `json:"address"`
+	Type        string   `json:"type,omitempty"`
+	Project     string   `json:"project,omitempty"`
+	MonthlyCost *rat.Rat `json:"monthly_cost,omitempty"`
+	IsFree      bool     `json:"is_free,omitempty"`
+}
+
+// ResourcesResult is the typed return of [ResourcesFor]. Currency
+// travels on the envelope so MCP callers don't need to interpret the
+// rat.Rat MonthlyCost strings without context. Count is the length of
+// the Resources slice, exposed up front so an LLM can read "did this
+// match anything?" without parsing the list.
+type ResourcesResult struct {
+	Currency  string        `json:"currency"`
+	Resources []ResourceRow `json:"resources"`
+	Count     int           `json:"count"`
+}
+
+// ResourcesFor applies the inspect filter pipeline and the
+// resource-shaped predicates (MissingTag / InvalidTag / MinCost /
+// MaxCost) and returns the deduped, alphabetically-sorted list of
+// matching resources. Pairs with the `inspect_resources` MCP tool's
+// flat mode.
+//
+// selectFilteredResources (used by the CLI's --json / TSV renderer)
+// projects this typed result to its existing []map[string]string shape
+// so the two surfaces stay byte-identical.
+func ResourcesFor(data *format.Output, opts Options) ResourcesResult {
+	if err := ParseFilter(opts.Filter, &opts); err == nil {
+		data = Filter(data, opts)
 	}
+
 	seen := map[string]struct{}{}
-	var rows []rowEntry
+	var rows []ResourceRow
 
-	add := func(addr string, row map[string]string) {
-		if addr == "" {
+	add := func(row ResourceRow) {
+		if row.Address == "" {
 			return
 		}
-		if _, ok := seen[addr]; ok {
+		if _, ok := seen[row.Address]; ok {
 			return
 		}
-		seen[addr] = struct{}{}
-		rows = append(rows, rowEntry{address: addr, row: row})
+		seen[row.Address] = struct{}{}
+		rows = append(rows, row)
 	}
 
-	rowFor := func(p format.ProjectOutput, r format.ResourceOutput) map[string]string {
-		cost := ResourceCost(&r)
-		return map[string]string{
-			"address":      r.Name,
-			"type":         r.Type,
-			"project":      p.ProjectName,
-			"monthly_cost": humanMoney(cost, data.Currency),
-			"is_free":      fmt.Sprintf("%v", r.IsFree),
+	rowFor := func(p format.ProjectOutput, r format.ResourceOutput) ResourceRow {
+		return ResourceRow{
+			Address:     r.Name,
+			Type:        r.Type,
+			Project:     p.ProjectName,
+			MonthlyCost: ResourceCost(&r),
+			IsFree:      r.IsFree,
 		}
 	}
 	resByAddress := map[string]struct {
@@ -299,13 +326,13 @@ func selectFilteredResources(data *format.Output, opts Options) []map[string]str
 			return
 		}
 		if hit, ok := resByAddress[addr]; ok {
-			add(addr, rowFor(hit.project, hit.resource))
+			add(rowFor(hit.project, hit.resource))
 			return
 		}
 		// Tagging failures may include addresses we don't have a
 		// matching resource record for (synthetic entries); fall back
 		// to address-only.
-		add(addr, map[string]string{"address": addr})
+		add(ResourceRow{Address: addr})
 	}
 
 	if opts.MissingTag != "" {
@@ -313,7 +340,7 @@ func selectFilteredResources(data *format.Output, opts Options) []map[string]str
 			for _, r := range p.Resources {
 				v, ok := r.Tags[opts.MissingTag]
 				if !ok || v == "" {
-					add(r.Name, rowFor(p, r))
+					add(rowFor(p, r))
 				}
 			}
 		}
@@ -344,15 +371,33 @@ func selectFilteredResources(data *format.Output, opts Options) []map[string]str
 				if opts.MaxCost > 0 && cost > opts.MaxCost {
 					continue
 				}
-				add(r.Name, rowFor(p, r))
+				add(rowFor(p, r))
 			}
 		}
 	}
 
-	sort.Slice(rows, func(i, j int) bool { return rows[i].address < rows[j].address })
-	out := make([]map[string]string, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, r.row)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Address < rows[j].Address })
+	return ResourcesResult{Currency: data.Currency, Resources: rows, Count: len(rows)}
+}
+
+// selectFilteredResources projects [ResourcesFor]'s typed result to the
+// []map[string]string shape the CLI's --json and TSV renderers consume.
+func selectFilteredResources(data *format.Output, opts Options) []map[string]string {
+	result := ResourcesFor(data, opts)
+	out := make([]map[string]string, 0, len(result.Resources))
+	for _, r := range result.Resources {
+		row := map[string]string{"address": r.Address}
+		if r.Type != "" {
+			row["type"] = r.Type
+		}
+		if r.Project != "" {
+			row["project"] = r.Project
+		}
+		if r.MonthlyCost != nil {
+			row["monthly_cost"] = humanMoney(r.MonthlyCost, result.Currency)
+			row["is_free"] = fmt.Sprintf("%v", r.IsFree)
+		}
+		out = append(out, row)
 	}
 	return out
 }

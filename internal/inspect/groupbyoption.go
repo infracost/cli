@@ -7,7 +7,7 @@ import (
 )
 
 // GroupByOption is a valid value for the --group-by flag. Each option is also
-// the column key used to look the value up on a tableRow inside groupby.go,
+// the column key used to look the value up on a GroupedRow inside groupby.go,
 // so the same constant is used for both validation and lookup.
 type GroupByOption string
 
