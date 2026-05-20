@@ -252,3 +252,13 @@ func TestInspectResourcesToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 }
+
+// TestInspectTopSavingsToolOutputSchema covers [inspect.TopSavingsResult].
+// Multiple rat.Rat fields (each item's monthly_savings plus the headline
+// total) need the rat.Rat -> string override to produce an honest schema.
+func TestInspectTopSavingsToolOutputSchema(t *testing.T) {
+	schema, err := inspectTopSavingsToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
