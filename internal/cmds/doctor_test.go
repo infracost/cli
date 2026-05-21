@@ -46,7 +46,7 @@ func TestHealth_AllPass(t *testing.T) {
 		}, nil)
 
 	cfg := healthTestConfig(t, mockClient)
-	cmd := cmds.Doctor(cfg)
+	cmd := cmds.DoctorCmd(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -79,7 +79,7 @@ func TestHealth_NoCredentials(t *testing.T) {
 	}
 	// No token source set, no AuthenticationToken — no credentials.
 
-	cmd := cmds.Doctor(cfg)
+	cmd := cmds.DoctorCmd(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -123,7 +123,7 @@ func TestHealth_AuthenticationToken(t *testing.T) {
 		},
 	}
 
-	cmd := cmds.Doctor(cfg)
+	cmd := cmds.DoctorCmd(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
@@ -144,7 +144,7 @@ func TestHealth_APIError(t *testing.T) {
 		Return(dashboard.CurrentUser{}, assert.AnError)
 
 	cfg := healthTestConfig(t, mockClient)
-	cmd := cmds.Doctor(cfg)
+	cmd := cmds.DoctorCmd(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetContext(context.Background())
