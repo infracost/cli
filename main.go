@@ -171,7 +171,7 @@ func run() (exitCode int) {
 
 	addCmd(cmds.PoliciesCmd(cfg), "workspace")
 	addCmd(cmds.BudgetsCmd(cfg), "workspace")
-	addCmd(cmds.Guardrails(cfg), "workspace")
+	addCmd(cmds.GuardrailsCmd(cfg), "workspace")
 
 	addCmd(cmds.Doctor(cfg), "maintain")
 	addCmd(cmds.MCPCmd(cfg), "maintain")

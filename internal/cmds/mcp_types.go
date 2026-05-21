@@ -173,3 +173,19 @@ func budgetsToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// guardrailsToolOutputSchema returns the JSON schema describing
+// [GuardrailsResult]. GuardrailEntry has three rat.Rat fields
+// (TotalThreshold, IncreaseThreshold, IncreasePercentThreshold) that need
+// the rat.Rat -> string override so the schema matches MarshalJSON.
+func guardrailsToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[GuardrailsResult](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building guardrails tool output schema: %w", err)
+	}
+	return schema, nil
+}

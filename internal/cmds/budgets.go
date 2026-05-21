@@ -241,9 +241,8 @@ func toBudgetEntry(b *event.Budget) BudgetEntry {
 }
 
 // formatRat formats a *rat.Rat with two decimal places for human display,
-// or "0" when nil. The proto-flavored formatThreshold guardrails uses
-// goes through rat.FromProto first; this one starts from an already-converted
-// value.
+// or "0" when nil. Shared with the guardrails renderer (and any future
+// money-string-rendering command).
 func formatRat(r *rat.Rat) string {
 	if r == nil {
 		return "0"

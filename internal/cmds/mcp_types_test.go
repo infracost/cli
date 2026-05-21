@@ -198,3 +198,14 @@ func TestBudgetsToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 }
+
+// TestGuardrailsToolOutputSchema is the same canary for GuardrailsResult.
+// GuardrailEntry has three rat.Rat threshold fields plus a
+// PolicyStringFilter scope filter; both the rat.Rat override and the
+// clean-shape projection must hold for the schema to build cleanly.
+func TestGuardrailsToolOutputSchema(t *testing.T) {
+	schema, err := guardrailsToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
