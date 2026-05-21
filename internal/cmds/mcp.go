@@ -445,6 +445,40 @@ func registerInspectMCPTools(srv *mcp.Server, store cache.Store) {
 				Count:     flat.Count,
 			}, nil
 		})
+
+	topSavingsSchema, err := inspectTopSavingsToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "inspect_top_savings",
+			Description: "Return the top N FinOps savings opportunities from the latest scan, sorted by monthly_savings " +
+				"desc. The response also carries total_monthly_savings — the sum across the entire filtered scan, not " +
+				"just the top-N — so an agent can show both \"top items\" and \"total available\" without a follow-up " +
+				"call. Cost-prioritization view; for guardrail/budget triage use inspect_failing.",
+			OutputSchema: topSavingsSchema,
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest, in InspectTopSavingsInput) (*mcp.CallToolResult, inspect.TopSavingsResult, error) {
+			data, err := inspectScanData(store, in.Path)
+			if err != nil {
+				return nil, inspect.TopSavingsResult{}, err
+			}
+			n := in.N
+			if n <= 0 {
+				n = 10
+			}
+			opts := inspect.Options{
+				Project:  in.Project,
+				Provider: in.Provider,
+				Filter:   in.Filter,
+			}
+			result, err := inspect.TopSavingsFor(data, opts, n)
+			if err != nil {
+				return nil, inspect.TopSavingsResult{}, err
+			}
+			return nil, result, nil
+		})
 }
 
 // FetchOrgsInput is the input shape for fetch_orgs. Currently empty —

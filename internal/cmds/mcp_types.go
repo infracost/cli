@@ -332,3 +332,32 @@ func inspectResourcesToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// InspectTopSavingsInput is the input shape for the
+// `inspect_top_savings` MCP tool. N defaults to 10 in the handler when
+// omitted so an agent calling the tool with no arguments still gets a
+// useful headline list.
+type InspectTopSavingsInput struct {
+	Path     string `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
+	N        int    `json:"n,omitempty" jsonschema:"Number of top items to return. Defaults to 10. The total_monthly_savings field on the response always reflects the full filtered scan, regardless of n."`
+	Project  string `json:"project,omitempty" jsonschema:"Filter to a specific project by name."`
+	Provider string `json:"provider,omitempty" jsonschema:"Filter to a specific provider (aws, azurerm, google)."`
+	Filter   string `json:"filter,omitempty" jsonschema:"Generic AND'd filter expression (e.g. \"tag.team=missing,provider=aws\")."`
+}
+
+// inspectTopSavingsToolOutputSchema returns the schema for the
+// [inspect.TopSavingsResult] shape. Carries multiple rat.Rat fields
+// (the per-item monthly_savings plus the headline total) covered by
+// the same rat.Rat -> string override the rest of the inspect surface
+// uses.
+func inspectTopSavingsToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[inspect.TopSavingsResult](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building inspect_top_savings tool output schema: %w", err)
+	}
+	return schema, nil
+}

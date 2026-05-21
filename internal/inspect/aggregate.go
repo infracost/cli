@@ -42,6 +42,37 @@ func totalFinopsSavings(data *format.Output) *rat.Rat {
 	return total
 }
 
+// TopSavingsResult is the typed return of [TopSavingsFor]. The total is
+// the sum of monthly_savings across the whole filtered scan (not just
+// the top-N), so MCP callers can show both "top items" and "total
+// available savings" without making a separate call. Currency is
+// carried on the envelope so the rat.Rat money values are
+// interpretable without context.
+type TopSavingsResult struct {
+	Currency            string                 `json:"currency"`
+	TotalMonthlySavings *rat.Rat               `json:"total_monthly_savings"`
+	Items               []FinopsTopSavingsItem `json:"items"`
+}
+
+// TopSavingsFor applies the inspect filter pipeline and then returns
+// the top-N FinOps savings opportunities plus the total potential
+// monthly savings across the filtered scan. Pairs with the
+// `inspect_top_savings` MCP tool — narrower than the failing-panorama
+// triage view: this is the cost-prioritization angle only. Triggered
+// guardrails and over-budget items live in [FailingPanorama] /
+// BuildFailingPanorama.
+func TopSavingsFor(data *format.Output, opts Options, n int) (TopSavingsResult, error) {
+	if err := ParseFilter(opts.Filter, &opts); err != nil {
+		return TopSavingsResult{}, err
+	}
+	data = Filter(data, opts)
+	return TopSavingsResult{
+		Currency:            data.Currency,
+		TotalMonthlySavings: totalFinopsSavings(data),
+		Items:               topFinopsSavings(data, n),
+	}, nil
+}
+
 // topFinopsSavings returns the top-N FinOps issues by monthly savings,
 // sorted desc. Ties broken by resource address for determinism.
 func topFinopsSavings(data *format.Output, n int) []FinopsTopSavingsItem {
