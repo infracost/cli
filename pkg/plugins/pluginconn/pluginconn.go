@@ -2,11 +2,11 @@
 package pluginconn
 
 import (
-	"os"
 	"runtime"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
+	"github.com/infracost/cli/pkg/logging"
 )
 
 // ConnectOptions configures a plugin connect call.
@@ -17,14 +17,18 @@ type ConnectOptions struct {
 	Logger hclog.Logger
 }
 
-// ResolveLogger returns o.Logger when set, otherwise builds a default stderr logger at o.Level.
+// ResolveLogger returns o.Logger when set, otherwise builds a default logger
+// at o.Level. The default writes through the shared logging router so plugin
+// lifecycle logs (handshakes, restarts, errors) coordinate with whatever owns
+// the terminal — currently the scan/price spinner. When no spinner is active
+// the router falls back to os.Stderr so behavior is unchanged.
 func (o ConnectOptions) ResolveLogger() hclog.Logger {
 	if o.Logger != nil {
 		return o.Logger
 	}
 	return hclog.New(&hclog.LoggerOptions{
 		Level:  o.Level,
-		Output: os.Stderr,
+		Output: logging.Output(),
 	})
 }
 

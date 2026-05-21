@@ -20,6 +20,7 @@ import (
 )
 
 func Scan(cfg *config.Config) *cobra.Command {
+	var includeWarnings bool
 	cmd := &cobra.Command{
 		Use:   "scan [path]",
 		Short: "Scan your IaC and derive FinOps costs and policy violations",
@@ -164,12 +165,14 @@ func Scan(cfg *config.Config) *cobra.Command {
 			if err := inspect.Run(os.Stdout, &output, inspect.Options{}); err != nil {
 				return err
 			}
-			printInspectHints(&output)
+			printInspectHints(&output, includeWarnings)
+			inspect.WriteSummaryDiagnostics(os.Stdout, &output, includeWarnings)
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
+	cmd.Flags().BoolVar(&includeWarnings, "include-warnings", false, "Also show warning-severity diagnostics in the summary")
 
 	return cmd
 }

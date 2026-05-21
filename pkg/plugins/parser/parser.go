@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
+	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins/consts"
 	"github.com/infracost/cli/pkg/plugins/pluginconn"
 	"github.com/infracost/cli/pkg/plugins/pluginerr"
@@ -52,6 +53,12 @@ func ConnectWithOptions(path string, opts pluginconn.ConnectOptions) (proto.Pars
 		StartTimeout:     startTimeout,
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		Logger:           opts.ResolveLogger(),
+		// Plugin stderr is copied through the shared logging router so it
+		// coordinates with whatever owns the terminal (e.g. the scan/price
+		// spinner). When the spinner is inactive this routes to os.Stderr;
+		// when it is active, lines are painted above the spinner instead of
+		// being clobbered by its frame redraws.
+		SyncStderr: logging.Output(),
 		GRPCDialOptions: []grpc.DialOption{
 			grpc.WithDefaultCallOptions(
 				grpc.MaxCallRecvMsgSize(consts.MaxGRPCMessageSize),

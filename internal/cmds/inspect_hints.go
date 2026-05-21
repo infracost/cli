@@ -11,12 +11,15 @@ import (
 // printInspectHints prints a "What's next?" section pointing users at common
 // inspect commands. Hints are filtered to only those that map to data
 // actually present in the output (e.g. --failing is only suggested when
-// there are failing policies).
-func printInspectHints(data *format.Output) {
+// there are failing policies). includeWarnings reflects whether the caller
+// already surfaced warnings — when true we don't suggest re-running for
+// warnings since they're already in front of the user.
+func printInspectHints(data *format.Output, includeWarnings bool) {
 	resourceCount := 0
 	hasFailingPolicy := false
 	hasTriggeredGuardrail := false
 	hasOverBudget := false
+	hasWarnings := false
 	providers := map[string]struct{}{}
 
 	for _, p := range data.Projects {
@@ -32,6 +35,11 @@ func printInspectHints(data *format.Output) {
 		for _, t := range p.TaggingResults {
 			if len(t.FailingResources) > 0 {
 				hasFailingPolicy = true
+			}
+		}
+		for _, d := range p.Diagnostics {
+			if d.Severity == "warning" {
+				hasWarnings = true
 			}
 		}
 	}
@@ -79,6 +87,9 @@ func printInspectHints(data *format.Output) {
 	}
 	if len(providers) > 1 {
 		hints = append(hints, hint{"infracost inspect --group-by provider", "Group results by provider"})
+	}
+	if hasWarnings && !includeWarnings {
+		hints = append(hints, hint{"infracost inspect --diagnostics", "Show warning-severity diagnostics from this scan"})
 	}
 	if resourceCount > 0 {
 		hints = append(hints, hint{"infracost inspect --json", "Re-run with full JSON output"})

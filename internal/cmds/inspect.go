@@ -57,6 +57,9 @@ func Inspect(cfg *config.Config) *cobra.Command {
   # All addresses failing a specific policy (full list, no truncation):
   $ infracost inspect --policy "Required Tags" --addresses-only
 
+  # Per-project diagnostics from the latest scan (errors + warnings):
+  $ infracost inspect --diagnostics
+
   # Machine-readable, token-efficient output for LLM pipelines:
   $ infracost inspect --summary --llm`,
 		PreRunE: func(_ *cobra.Command, _ []string) error {
@@ -127,6 +130,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Filter by project name")
 	cmd.Flags().BoolVar(&opts.CostsOnly, "costs-only", false, "Hide free resources")
 	cmd.Flags().BoolVar(&opts.Failing, "failing", false, "Only show failing policies")
+	cmd.Flags().BoolVar(&opts.Diagnostics, "diagnostics", false, "Show per-project diagnostics from the latest scan (critical + warning)")
 	cmd.Flags().IntVar(&opts.Top, "top", 0, "Show only the top N resources by cost")
 
 	// Aggregation views.
