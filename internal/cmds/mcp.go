@@ -384,6 +384,67 @@ func registerInspectMCPTools(srv *mcp.Server, store cache.Store) {
 			entries := inspect.CollectDiagnostics(filtered, !in.CriticalOnly)
 			return nil, InspectDiagnosticsResult{Count: len(entries), Diagnostics: entries}, nil
 		})
+
+	resourcesSchema, err := inspectResourcesToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "inspect_resources",
+			Description: "List or group resources from the latest scan. Without group_by, returns one row per resource " +
+				"matching the predicate filters (missing_tag / invalid_tag / min_cost / max_cost / resource address). " +
+				"With group_by set, returns one row per aggregation key — same dimensions and pipeline as `inspect " +
+				"--group-by`: type, provider, project, file, policy, budget, guardrail. The response's mode field tells " +
+				"the agent which payload (resources or groups) is populated.",
+			OutputSchema: resourcesSchema,
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest, in InspectResourcesInput) (*mcp.CallToolResult, InspectResourcesResult, error) {
+			data, err := inspectScanData(store, in.Path)
+			if err != nil {
+				return nil, InspectResourcesResult{}, err
+			}
+
+			if err := inspect.ValidateGroupBy(in.GroupBy); err != nil {
+				return nil, InspectResourcesResult{}, err
+			}
+
+			opts := inspect.Options{
+				Project:    in.Project,
+				Provider:   in.Provider,
+				Resource:   in.Resource,
+				Filter:     in.Filter,
+				CostsOnly:  in.CostsOnly,
+				MissingTag: in.MissingTag,
+				InvalidTag: in.InvalidTag,
+				MinCost:    in.MinCost,
+				MaxCost:    in.MaxCost,
+				GroupBy:    in.GroupBy,
+				Top:        in.Top,
+			}
+
+			if len(in.GroupBy) > 0 {
+				grouped, err := inspect.GroupedFor(data, opts)
+				if err != nil {
+					return nil, InspectResourcesResult{}, err
+				}
+				return nil, InspectResourcesResult{
+					Mode:     "grouped",
+					Currency: grouped.Currency,
+					GroupBy:  grouped.GroupBy,
+					Groups:   grouped.Groups,
+					Count:    len(grouped.Groups),
+				}, nil
+			}
+
+			flat := inspect.ResourcesFor(data, opts)
+			return nil, InspectResourcesResult{
+				Mode:      "flat",
+				Currency:  flat.Currency,
+				Resources: flat.Resources,
+				Count:     flat.Count,
+			}, nil
+		})
 }
 
 // FetchOrgsInput is the input shape for fetch_orgs. Currently empty —

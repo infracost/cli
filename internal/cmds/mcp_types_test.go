@@ -242,3 +242,13 @@ func TestInspectDiagnosticsToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 }
+
+// TestInspectResourcesToolOutputSchema covers the unified flat/grouped
+// envelope. Resources rows carry a monthly_cost rat.Rat; grouped rows
+// carry a Cost rat.Rat. The shared override fans out across both.
+func TestInspectResourcesToolOutputSchema(t *testing.T) {
+	schema, err := inspectResourcesToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
