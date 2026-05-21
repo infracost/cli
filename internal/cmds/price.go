@@ -71,9 +71,15 @@ func Price(cfg *config.Config) *cobra.Command {
 			events.RegisterMetadata("repoId", repositoryURL)
 			events.RegisterMetadata("branchId", branchName)
 
-			scanner := scanner.NewScanner(cfg)
+			s := &scanner.Scanner{
+				Plugins:         &cfg.Plugins,
+				Logging:         cfg.Logging,
+				Dashboard:       cfg.Dashboard,
+				Currency:        cfg.Currency,
+				PricingEndpoint: cfg.PricingEndpoint,
+			}
 			startTime := time.Now()
-			result, err := scanner.Scan(cmd.Context(), runParameters, dir, branchName, source)
+			result, err := s.Scan(cmd.Context(), runParameters, dir, branchName, source)
 			if err != nil {
 				return fmt.Errorf("failed to scan target: %w", err)
 			}

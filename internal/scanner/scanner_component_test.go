@@ -106,7 +106,13 @@ func newTestScanner(t *testing.T, opts testScannerOpts) *Scanner {
 		cfg.Currency = opts.currency
 	}
 
-	return NewScanner(&cfg)
+	return &Scanner{
+		Plugins:         &cfg.Plugins,
+		Logging:         cfg.Logging,
+		Dashboard:       cfg.Dashboard,
+		Currency:        cfg.Currency,
+		PricingEndpoint: cfg.PricingEndpoint,
+	}
 }
 
 // writeTestProject creates a temp directory with an infracost.yml and an empty

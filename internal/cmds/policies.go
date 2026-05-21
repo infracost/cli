@@ -91,7 +91,13 @@ func Policies(cfg *config.Config) *cobra.Command {
 					runParameters = &rp
 				}
 
-				s := scanner.NewScanner(cfg)
+				s := &scanner.Scanner{
+					Plugins:         &cfg.Plugins,
+					Logging:         cfg.Logging,
+					Dashboard:       cfg.Dashboard,
+					Currency:        cfg.Currency,
+					PricingEndpoint: cfg.PricingEndpoint,
+				}
 				var listErr error
 				finopsPolicies, taggingPolicies, listErr = s.ListPolicies(ctx, runParameters, providers)
 				if listErr != nil {
