@@ -195,6 +195,27 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 			}
 			return nil, toMCPPriceOutput(result), nil
 		})
+
+	policiesSchema, err := policiesToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "policies",
+			Description: "List the FinOps and tagging policies the active organization has configured for a given directory's " +
+				"VCS branch / project. Returns enough detail per policy (id, name, description, scope filters, tagging " +
+				"requirements) for the agent to decide which to drill into via the inspect tools. Pass finops_only or " +
+				"tagging_only to narrow the result; pass providers to limit FinOps policy lookup to specific cloud providers.",
+			OutputSchema: policiesSchema,
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in PoliciesInput) (*mcp.CallToolResult, PoliciesResult, error) {
+			result, err := Policies(ctx, cfg, source, in)
+			if err != nil {
+				return nil, PoliciesResult{}, err
+			}
+			return nil, result, nil
+		})
 }
 
 // FetchOrgsInput is the input shape for fetch_orgs. Currently empty —
