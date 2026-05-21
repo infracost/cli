@@ -41,6 +41,8 @@
   "over_budget": 1,
   "critical_diagnostics": 1,
   "warning_diagnostics": 1,
+  "currency": "USD",
+  "total_monthly_savings": "5",
   "failing_policy_list": [
     {
       "kind": "finops",

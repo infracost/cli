@@ -3,10 +3,13 @@ package cmds
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/inspect"
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/version"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -258,6 +261,128 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 				return nil, GuardrailsResult{}, err
 			}
 			return nil, result, nil
+		})
+
+	registerInspectMCPTools(srv, store)
+}
+
+// inspectScanData loads a cached scan result for the active MCP session.
+// When path is empty it returns the most recent scan in the session's
+// MemoryStore; when set it resolves the path to an absolute form and
+// looks up the matching entry. The empty default supports the common
+// "scan, then inspect" flow; passing a path lets an agent that ran
+// multiple scans target a specific one. Returns a clear, actionable
+// error when no matching scan is cached so the LLM can relay "call
+// scan first" back to the user.
+func inspectScanData(store cache.Store, path string) (*format.Output, error) {
+	if path == "" {
+		data, err := store.Latest(true)
+		if err != nil || data == nil {
+			return nil, fmt.Errorf("no scan results available in this MCP session — call the `scan` tool first")
+		}
+		return data, nil
+	}
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("invalid path %q: %w", path, err)
+	}
+	data, err := store.ForPathAllowStale(absPath)
+	if err != nil || data == nil {
+		return nil, fmt.Errorf("no scan results cached for %s — call the `scan` tool against that directory first", absPath)
+	}
+	return data, nil
+}
+
+// registerInspectMCPTools attaches the inspect_* MCP tools to srv. Each
+// is a thin wrapper over a pure function in internal/inspect; the wrapper
+// loads the latest scan from the session's cache (failing fast if none),
+// translates the input struct into inspect.Options, and returns the
+// typed result.
+func registerInspectMCPTools(srv *mcp.Server, store cache.Store) {
+	summarySchema, err := inspectSummaryToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "inspect_summary",
+			Description: "Summarize the latest scan: headline counts (resources, costed/free, monthly cost), per-policy and " +
+				"per-domain failing counts, diagnostic counts, the per-project breakdown, total potential monthly savings, " +
+				"and drill-in lists for every failing policy, triggered guardrail, and over-budget item. Use this as the " +
+				"first call after a scan to triage what needs attention — no follow-up tools required for the headline view.",
+			OutputSchema: summarySchema,
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest, in InspectSummaryInput) (*mcp.CallToolResult, inspect.Summary, error) {
+			data, err := inspectScanData(store, in.Path)
+			if err != nil {
+				return nil, inspect.Summary{}, err
+			}
+			opts := inspect.Options{
+				Project:   in.Project,
+				Provider:  in.Provider,
+				CostsOnly: in.CostsOnly,
+				Failing:   in.Failing,
+				Filter:    in.Filter,
+			}
+			result, err := inspect.SummaryFor(data, opts)
+			if err != nil {
+				return nil, inspect.Summary{}, err
+			}
+			return nil, result, nil
+		})
+
+	failingSchema, err := inspectFailingToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "inspect_failing",
+			Description: "Return a flat panorama of everything that's currently failing in the latest scan: failing policy / " +
+				"resource pairings (FinOps + tagging), triggered guardrails, and over-budget items. Use this when the user " +
+				"asks \"what's wrong?\" — it's the triage view, narrower than inspect_summary which also carries the " +
+				"headline counts.",
+			OutputSchema: failingSchema,
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest, in InspectFailingInput) (*mcp.CallToolResult, inspect.FailingPanorama, error) {
+			data, err := inspectScanData(store, in.Path)
+			if err != nil {
+				return nil, inspect.FailingPanorama{}, err
+			}
+			opts := inspect.Options{
+				Project:  in.Project,
+				Provider: in.Provider,
+				Filter:   in.Filter,
+			}
+			result, err := inspect.FailingPanoramaFor(data, opts)
+			if err != nil {
+				return nil, inspect.FailingPanorama{}, err
+			}
+			return nil, result, nil
+		})
+
+	diagnosticsSchema, err := inspectDiagnosticsToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "inspect_diagnostics",
+			Description: "Return every per-project parse / lint diagnostic from the latest scan with severity (critical / " +
+				"warning / info), prefix label, message, and source location (filename:line). Use when an `inspect_summary` " +
+				"call shows a non-zero diagnostic count and the agent needs to know what specifically went wrong. Defaults " +
+				"to returning every severity; set critical_only=true to filter.",
+			OutputSchema: diagnosticsSchema,
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest, in InspectDiagnosticsInput) (*mcp.CallToolResult, InspectDiagnosticsResult, error) {
+			data, err := inspectScanData(store, in.Path)
+			if err != nil {
+				return nil, InspectDiagnosticsResult{}, err
+			}
+			opts := inspect.Options{Project: in.Project}
+			filtered := inspect.Filter(data, opts)
+			entries := inspect.CollectDiagnostics(filtered, !in.CriticalOnly)
+			return nil, InspectDiagnosticsResult{Count: len(entries), Diagnostics: entries}, nil
 		})
 }
 

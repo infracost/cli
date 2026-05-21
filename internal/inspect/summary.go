@@ -65,8 +65,16 @@ type SummaryView struct {
 // `inspect --json` consumers); the additional fields surface drill-in detail
 // requested by inspect's JSON callers so they don't need a follow-up call to
 // list the failing items.
+//
+// Currency and TotalMonthlySavings live here (not on SummaryView) because
+// inspect_summary is a standalone MCP return — there's no outer envelope to
+// carry the currency for the agent — and TotalMonthlySavings is the value
+// inspect's `--total-savings` printout already computes, surfaced as a typed
+// field so MCP callers don't need a follow-up tool call to get it.
 type Summary struct {
 	SummaryView
+	Currency               string                   `json:"currency"`
+	TotalMonthlySavings    *rat.Rat                 `json:"total_monthly_savings,omitempty"`
 	FailingPolicyList      []FailingPolicyEntry     `json:"failing_policy_list,omitempty"`
 	TriggeredGuardrailList []format.GuardrailOutput `json:"triggered_guardrail_list,omitempty"`
 	OverBudgetList         []format.BudgetOutput    `json:"over_budget_list,omitempty"`
@@ -121,6 +129,8 @@ func summaryFieldValue(s Summary, field, currency string) string {
 		return fmt.Sprintf("%d", s.FreeResources)
 	case "monthly_cost":
 		return humanMoney(s.MonthlyCost, currency)
+	case "total_monthly_savings":
+		return humanMoney(s.TotalMonthlySavings, currency)
 	case "finops_policies":
 		return fmt.Sprintf("%d", s.FinopsPolicies)
 	case "failing_policies":
@@ -415,12 +425,19 @@ func BuildSummaryView(data *format.Output) SummaryView {
 }
 
 // BuildSummary returns the inspect-only superset of [BuildSummaryView],
-// adding the failing-policy / triggered-guardrail / over-budget drill-in
-// lists used by `inspect --json` so its consumers don't need a follow-up
-// call to enumerate the failures. The aggregate counts shared with the MCP
-// summary view are computed exactly once, by [BuildSummaryView].
+// adding currency, total monthly savings, and the failing-policy /
+// triggered-guardrail / over-budget drill-in lists used by `inspect --json`
+// so its consumers don't need a follow-up call to enumerate the failures.
+// The aggregate counts shared with the MCP summary view are computed
+// exactly once, by [BuildSummaryView].
 func BuildSummary(data *format.Output) Summary {
-	s := Summary{SummaryView: BuildSummaryView(data)}
+	s := Summary{
+		SummaryView: BuildSummaryView(data),
+		Currency:    data.Currency,
+	}
+	if total := totalFinopsSavings(data); !total.IsZero() {
+		s.TotalMonthlySavings = total
+	}
 
 	for _, p := range data.Projects {
 		for _, f := range p.FinopsResults {
@@ -462,4 +479,28 @@ func BuildSummary(data *format.Output) Summary {
 	}
 
 	return s
+}
+
+// SummaryFor applies the inspect filter pipeline (project / provider /
+// costs-only / failing / etc.) and then builds the summary. This is the
+// pure MCP-facing entry point: SummaryView counts and drill-in lists
+// reflect the same scope `inspect --summary` would print with the same
+// flags. ValidateGroupBy isn't called here because the summary view
+// doesn't consume GroupBy — the caller has already validated other
+// view-specific options if it cares about them.
+func SummaryFor(data *format.Output, opts Options) (Summary, error) {
+	if err := ParseFilter(opts.Filter, &opts); err != nil {
+		return Summary{}, err
+	}
+	return BuildSummary(Filter(data, opts)), nil
+}
+
+// FailingPanoramaFor applies the inspect filter pipeline and then builds
+// the failing-panorama view (failing policies + triggered guardrails +
+// over-budget items). Pairs with the `inspect_failing` MCP tool.
+func FailingPanoramaFor(data *format.Output, opts Options) (FailingPanorama, error) {
+	if err := ParseFilter(opts.Filter, &opts); err != nil {
+		return FailingPanorama{}, err
+	}
+	return BuildFailingPanorama(Filter(data, opts)), nil
 }

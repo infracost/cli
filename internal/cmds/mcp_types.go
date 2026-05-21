@@ -189,3 +189,89 @@ func guardrailsToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// InspectSummaryInput is the input shape for the `inspect_summary` MCP
+// tool. Fields mirror the subset of inspect.Options relevant to the
+// summary view — narrower than the full inspect surface area so the
+// agent's decision space is clear.
+type InspectSummaryInput struct {
+	Path      string `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
+	Project   string `json:"project,omitempty" jsonschema:"Filter to a specific project by name."`
+	Provider  string `json:"provider,omitempty" jsonschema:"Filter to a specific provider (aws, azurerm, google)."`
+	CostsOnly bool   `json:"costs_only,omitempty" jsonschema:"Exclude free resources from the summary counts and totals."`
+	Failing   bool   `json:"failing,omitempty" jsonschema:"Limit the summary to failing / triggered / over-budget items only."`
+	Filter    string `json:"filter,omitempty" jsonschema:"Generic AND'd filter expression (e.g. \"tag.team=missing,provider=aws\"). Matches inspect --filter syntax."`
+}
+
+// InspectFailingInput is the input shape for the `inspect_failing` MCP
+// tool. Same filter set as inspect_summary — both views care about
+// scoping the panorama to a project / provider.
+type InspectFailingInput struct {
+	Path     string `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
+	Project  string `json:"project,omitempty" jsonschema:"Filter to a specific project by name."`
+	Provider string `json:"provider,omitempty" jsonschema:"Filter to a specific provider (aws, azurerm, google)."`
+	Filter   string `json:"filter,omitempty" jsonschema:"Generic AND'd filter expression (e.g. \"tag.team=missing,provider=aws\")."`
+}
+
+// InspectDiagnosticsInput is the input shape for the `inspect_diagnostics`
+// MCP tool. Default behavior is to include every per-project diagnostic
+// (critical, warning, info) — agents drilling into a scan want the full
+// picture by default. Pass critical_only=true to filter down.
+type InspectDiagnosticsInput struct {
+	Path         string `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
+	Project      string `json:"project,omitempty" jsonschema:"Filter diagnostics to a specific project by name."`
+	CriticalOnly bool   `json:"critical_only,omitempty" jsonschema:"Filter to critical-severity diagnostics only. Default: include warning + info too."`
+}
+
+// inspectSummaryToolOutputSchema returns the JSON schema describing
+// [inspect.Summary]. The shape carries multiple rat.Rat fields (monthly
+// cost on Summary, on each ProjectSummary, total monthly savings) plus
+// rat.Rat fields embedded in format.GuardrailOutput / format.BudgetOutput
+// inside the drill-in lists — all covered by the same rat.Rat -> string
+// override scan / price / budgets / guardrails use.
+func inspectSummaryToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[inspect.Summary](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building inspect_summary tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// inspectFailingToolOutputSchema returns the JSON schema describing
+// [inspect.FailingPanorama]. Carries rat.Rat via the embedded
+// format.GuardrailOutput / format.BudgetOutput.
+func inspectFailingToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[inspect.FailingPanorama](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[rat.Rat](): {Type: "string"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building inspect_failing tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// InspectDiagnosticsResult wraps the flat list returned by
+// CollectDiagnostics so the MCP wire shape is an object (the SDK requires
+// tool outputs to be objects, not bare arrays) and so the count is one
+// field-read away.
+type InspectDiagnosticsResult struct {
+	Count       int                       `json:"count"`
+	Diagnostics []inspect.DiagnosticEntry `json:"diagnostics"`
+}
+
+// inspectDiagnosticsToolOutputSchema returns the schema for
+// InspectDiagnosticsResult. No rat.Rat involved — diagnostics carry text
+// only — so no per-type overrides are needed.
+func inspectDiagnosticsToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[InspectDiagnosticsResult](nil)
+	if err != nil {
+		return nil, fmt.Errorf("building inspect_diagnostics tool output schema: %w", err)
+	}
+	return schema, nil
+}
