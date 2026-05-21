@@ -13,7 +13,7 @@ var (
 	fieldsTopSavings        = []string{"address", "policy", "policy_slug", "project", "monthly_savings", "description"}
 	fieldsFilteredResources = []string{"address", "type", "project", "monthly_cost", "is_free"}
 
-	// Summary fields are the scalar metrics on summaryData. Lists like
+	// Summary fields are the scalar metrics on Summary. Lists like
 	// project_details / failing_policy_list aren't projectable here —
 	// they need a dedicated view with --fields support of their own.
 	fieldsSummary = []string{

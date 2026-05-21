@@ -85,39 +85,39 @@ func writeStructured(w io.Writer, v any, opts Options) error {
 	return err
 }
 
-// budgetDetailJSON is the structured payload for `inspect --budget X --json`.
+// BudgetDetail is the structured payload for `inspect --budget X --json`.
 // Carries the budget itself plus the resources in this scan that match its
 // tag scope and any FinOps savings on those resources — mirrors what the
 // boxed text view shows.
-type budgetDetailJSON struct {
+type BudgetDetail struct {
 	*format.BudgetOutput
-	MatchingResources []budgetMatchingResourceJSON `json:"matching_resources,omitempty"`
-	Savings           []budgetSavingJSON           `json:"savings,omitempty"`
+	MatchingResources []BudgetMatchingResource `json:"matching_resources,omitempty"`
+	Savings           []BudgetSaving           `json:"savings,omitempty"`
 }
 
-type budgetMatchingResourceJSON struct {
+type BudgetMatchingResource struct {
 	Type        string   `json:"type"`
 	Count       int      `json:"count"`
 	MonthlyCost *rat.Rat `json:"monthly_cost"`
 }
 
-type budgetSavingJSON struct {
+type BudgetSaving struct {
 	PolicyName    string   `json:"policy_name"`
 	Savings       *rat.Rat `json:"savings"`
 	ResourceCount int      `json:"resource_count"`
 }
 
-func buildBudgetDetailJSON(data *format.Output, br format.BudgetOutput) budgetDetailJSON {
-	out := budgetDetailJSON{BudgetOutput: &br}
+func BuildBudgetDetail(data *format.Output, br format.BudgetOutput) BudgetDetail {
+	out := BudgetDetail{BudgetOutput: &br}
 	for _, m := range collectMatchingResources(data, br.Tags) {
-		out.MatchingResources = append(out.MatchingResources, budgetMatchingResourceJSON{
+		out.MatchingResources = append(out.MatchingResources, BudgetMatchingResource{
 			Type:        m.resourceType,
 			Count:       m.count,
 			MonthlyCost: m.cost,
 		})
 	}
 	for _, s := range collectBudgetSavings(data, br.Tags) {
-		out.Savings = append(out.Savings, budgetSavingJSON{
+		out.Savings = append(out.Savings, BudgetSaving{
 			PolicyName:    s.policyName,
 			Savings:       s.savings,
 			ResourceCount: s.resourceCount,
@@ -126,23 +126,23 @@ func buildBudgetDetailJSON(data *format.Output, br format.BudgetOutput) budgetDe
 	return out
 }
 
-// policyDetailJSON is the structured payload for `inspect --policy X --json`.
+// PolicyDetail is the structured payload for `inspect --policy X --json`.
 // Either kind ("finops" or "tagging") populates a different resources slice,
 // since the per-resource detail differs (issues vs missing/invalid tags).
 //
 // For tagging policies, TagSchema carries the per-key schema once (allowed
 // values, validation regex, mandatory flag) — invalid_tags entries reference
 // keys back into this list rather than repeating the schema per occurrence.
-type policyDetailJSON struct {
+type PolicyDetail struct {
 	Kind      string                  `json:"kind"`
 	Name      string                  `json:"name"`
 	Slug      string                  `json:"slug,omitempty"`
 	Message   string                  `json:"message,omitempty"`
-	Resources []policyResourceJSON    `json:"resources"`
+	Resources []PolicyResource    `json:"resources"`
 	TagSchema []format.TagSchemaEntry `json:"tag_schema,omitempty"`
 }
 
-type policyResourceJSON struct {
+type PolicyResource struct {
 	Project string `json:"project"`
 	Address string `json:"address"`
 	File    string `json:"file,omitempty"`
@@ -161,7 +161,7 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 	// FinOps: aggregate matched resources across projects.
 	var (
 		finopsName, finopsSlug, finopsMessage string
-		finopsResources                       []policyResourceJSON
+		finopsResources                       []PolicyResource
 		finopsMatched                         bool
 	)
 	for _, p := range data.Projects {
@@ -180,7 +180,7 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 					continue
 				}
 				meta := metaByName[fr.Name]
-				finopsResources = append(finopsResources, policyResourceJSON{
+				finopsResources = append(finopsResources, PolicyResource{
 					Project: p.ProjectName,
 					Address: fr.Name,
 					File:    meta.Filename,
@@ -191,7 +191,7 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 		}
 	}
 	if finopsMatched {
-		return writeStructured(w, policyDetailJSON{
+		return writeStructured(w, PolicyDetail{
 			Kind:      "finops",
 			Name:      finopsName,
 			Slug:      finopsSlug,
@@ -203,7 +203,7 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 	// Tagging: same aggregation pattern.
 	var (
 		tagName, tagMessage string
-		tagResources        []policyResourceJSON
+		tagResources        []PolicyResource
 		tagMatched          bool
 		tagSchemas          []format.TagSchemaEntry
 	)
@@ -219,7 +219,7 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 				if opts.Resource != "" && tr.Address != opts.Resource {
 					continue
 				}
-				tagResources = append(tagResources, policyResourceJSON{
+				tagResources = append(tagResources, PolicyResource{
 					Project:              p.ProjectName,
 					Address:              tr.Address,
 					File:                 tr.Path,
@@ -231,7 +231,7 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 		}
 	}
 	if tagMatched {
-		out := policyDetailJSON{
+		out := PolicyDetail{
 			Kind:      "tagging",
 			Name:      tagName,
 			Message:   tagMessage,
@@ -244,16 +244,16 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 	return fmt.Errorf("policy %q not found", opts.Policy)
 }
 
-// failingPanoramaJSON is the structured payload for `inspect --failing
+// FailingPanorama is the structured payload for `inspect --failing
 // --json`. failing_policies is a flat per-pairing list (mirrors the text
 // panorama); guardrails and budgets reuse their format types directly.
-type failingPanoramaJSON struct {
-	FailingPolicies     []failingPolicyPairingJSON `json:"failing_policies"`
+type FailingPanorama struct {
+	FailingPolicies     []FailingPolicyPairing `json:"failing_policies"`
 	TriggeredGuardrails []format.GuardrailOutput   `json:"triggered_guardrails"`
 	OverBudget          []format.BudgetOutput      `json:"over_budget"`
 }
 
-type failingPolicyPairingJSON struct {
+type FailingPolicyPairing struct {
 	Kind     string `json:"kind"` // "finops" or "tagging"
 	Policy   string `json:"policy"`
 	Project  string `json:"project"`
@@ -263,9 +263,9 @@ type failingPolicyPairingJSON struct {
 	Message  string `json:"message,omitempty"`
 }
 
-func failingPanoramaJSONFor(data *format.Output) failingPanoramaJSON {
-	out := failingPanoramaJSON{
-		FailingPolicies:     []failingPolicyPairingJSON{},
+func BuildFailingPanorama(data *format.Output) FailingPanorama {
+	out := FailingPanorama{
+		FailingPolicies:     []FailingPolicyPairing{},
 		TriggeredGuardrails: []format.GuardrailOutput{},
 		OverBudget:          []format.BudgetOutput{},
 	}
@@ -277,7 +277,7 @@ func failingPanoramaJSONFor(data *format.Output) failingPanoramaJSON {
 		for _, f := range p.FinopsResults {
 			for _, fr := range f.FailingResources {
 				meta := metaByName[fr.Name]
-				out.FailingPolicies = append(out.FailingPolicies, failingPolicyPairingJSON{
+				out.FailingPolicies = append(out.FailingPolicies, FailingPolicyPairing{
 					Kind:     "finops",
 					Policy:   f.PolicyName,
 					Project:  p.ProjectName,
@@ -290,7 +290,7 @@ func failingPanoramaJSONFor(data *format.Output) failingPanoramaJSON {
 		}
 		for _, t := range p.TaggingResults {
 			for _, tr := range t.FailingResources {
-				out.FailingPolicies = append(out.FailingPolicies, failingPolicyPairingJSON{
+				out.FailingPolicies = append(out.FailingPolicies, FailingPolicyPairing{
 					Kind:     "tagging",
 					Policy:   t.PolicyName,
 					Project:  p.ProjectName,
