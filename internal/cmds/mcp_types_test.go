@@ -187,3 +187,14 @@ func TestPoliciesToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 }
+
+// TestBudgetsToolOutputSchema is the same canary for BudgetsResult.
+// BudgetEntry has rat.Rat fields (Amount, CurrentCost) that need the
+// rat.Rat -> string override; if that ever goes missing or a proto type
+// leaks into BudgetEntry, the schema build will fail here.
+func TestBudgetsToolOutputSchema(t *testing.T) {
+	schema, err := budgetsToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
