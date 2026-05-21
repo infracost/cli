@@ -292,3 +292,14 @@ func TestInspectGuardrailDetailToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 }
+
+// TestDoctorToolOutputSchema covers [DoctorOutput]. No rat.Rat — the
+// doctor report and bundle are text + counts only — but the canary
+// still guards against any future doctor type accidentally pulling a
+// cyclic or schema-hostile field.
+func TestDoctorToolOutputSchema(t *testing.T) {
+	schema, err := doctorToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
