@@ -21,10 +21,74 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func Doctor(cfg *config.Config) *cobra.Command {
-	var verbose, fix, bundle, checkAgents, checkIDE bool
-	var scope string
+// DoctorInput is the parsed input for `doctor`. Same shape for the CLI
+// wrapper and (in PR13) the MCP `doctor` tool.
+type DoctorInput struct {
+	// Verbose includes every check's diagnostic detail (in addition to
+	// failing-check hints) in the rendered output. The --bundle flag
+	// implies Verbose.
+	Verbose bool
+	// Fix attempts auto-remediation for failing checks. CLI-only —
+	// destructive; the MCP tool deliberately doesn't expose this flag
+	// because the agent doesn't have per-fix user-confirmation context.
+	Fix bool
+	// Bundle widens the check set (CheckAgents + CheckIDE forced true,
+	// Verbose forced true) and triggers a follow-up support-bundle
+	// section in the CLI render. The structured / MCP path attaches the
+	// bundle as a typed field on DoctorOutput.
+	Bundle bool
+	// CheckAgents includes AI coding agent integrations in the checks.
+	// Forced true when Bundle is set.
+	CheckAgents bool
+	// CheckIDE includes IDE integrations in the checks. Forced true when
+	// Bundle is set.
+	CheckIDE bool
+	// Scope is the installation scope auto-remediation should target for
+	// fixable checks: "user" (default, global config), "project", or
+	// "local". Ignored when Fix is false.
+	Scope string
+}
 
+// Doctor runs the diagnostic checks and (optionally) auto-remediation,
+// returning the final report. The pure function is UI-free — it doesn't
+// render text or write the support bundle. The cobra wrapper and any
+// future MCP entry point share this implementation; the wrapper is
+// responsible for rendering and for the bundle side effect.
+//
+// Bundle implies Verbose + CheckAgents + CheckIDE so the captured
+// diagnostic surface is the widest possible — Bundle is what users
+// share with support, and a narrowed view would miss exactly the
+// signal we'd want to see.
+func Doctor(ctx context.Context, cfg *config.Config, in DoctorInput) (*doctor.Report, error) {
+	if in.Bundle && in.Fix {
+		return nil, fmt.Errorf("--bundle and --fix cannot be used together")
+	}
+
+	// Bundle widens the check set. Verbose is a render-time flag the
+	// pure function doesn't read; the cobra wrapper and the future MCP
+	// handler each honor Bundle->Verbose at their own rendering layers.
+	if in.Bundle {
+		in.CheckAgents = true
+		in.CheckIDE = true
+	}
+
+	categories := buildCategories(ctx, cfg, in.CheckAgents, in.CheckIDE, in.Scope)
+	report := doctor.RunChecks(ctx, categories)
+
+	if in.Fix && report.HasFixable() {
+		report = doctor.RunFixes(ctx, io.Discard, categories, report)
+	}
+
+	return report, nil
+}
+
+// DoctorCmd is the cobra builder for `doctor`. Reduced to flag parsing,
+// the pure Doctor call, and the CLI-only side effects: progressively
+// rendering text output for the pre- and post-fix reports, printing
+// the support-bundle section, and returning a non-zero exit when any
+// check failed.
+func DoctorCmd(cfg *config.Config) *cobra.Command {
+	var in DoctorInput
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run diagnostic checks on your Infracost installation",
@@ -41,28 +105,33 @@ func Doctor(cfg *config.Config) *cobra.Command {
   $ infracost doctor --bundle`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if bundle && fix {
+			if in.Bundle && in.Fix {
 				return fmt.Errorf("--bundle and --fix cannot be used together")
 			}
-
 			w := cmd.OutOrStdout()
 
-			if bundle {
+			// Render the pre-fix report first so the user sees what failed
+			// before any --fix attempts; the pure Doctor function discards
+			// inner progress (io.Discard inside RunFixes there) so this
+			// path needs its own RunChecks + Render pair.
+			verbose := in.Verbose
+			checkAgents := in.CheckAgents
+			checkIDE := in.CheckIDE
+			if in.Bundle {
 				verbose = true
 				checkAgents = true
 				checkIDE = true
 			}
-
-			categories := buildCategories(cmd.Context(), cfg, checkAgents, checkIDE, scope)
+			categories := buildCategories(cmd.Context(), cfg, checkAgents, checkIDE, in.Scope)
 			report := doctor.RunChecks(cmd.Context(), categories)
-			doctor.Render(w, report, version.Version, verbose, fix)
+			doctor.Render(w, report, version.Version, verbose, in.Fix)
 
-			if fix && report.HasFixable() {
+			if in.Fix && report.HasFixable() {
 				report = doctor.RunFixes(cmd.Context(), w, categories, report)
-				doctor.Render(w, report, version.Version, verbose, fix)
+				doctor.Render(w, report, version.Version, verbose, in.Fix)
 			}
 
-			if bundle {
+			if in.Bundle {
 				renderBundle(w, cfg)
 			}
 
@@ -73,12 +142,12 @@ func Doctor(cfg *config.Config) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show full diagnostic detail for every check")
-	cmd.Flags().BoolVar(&fix, "fix", false, "Attempt auto-remediation for failing checks")
-	cmd.Flags().BoolVar(&bundle, "bundle", false, "Generate a support bundle with full diagnostic output")
-	cmd.Flags().BoolVar(&checkAgents, "check-agents", false, "Include AI coding agent integrations in the checks")
-	cmd.Flags().BoolVar(&checkIDE, "check-ide", false, "Include IDE integrations in the checks")
-	cmd.Flags().StringVar(&scope, "scope", "user", "Installation scope for --fix: user (global), project, or local")
+	cmd.Flags().BoolVar(&in.Verbose, "verbose", false, "Show full diagnostic detail for every check")
+	cmd.Flags().BoolVar(&in.Fix, "fix", false, "Attempt auto-remediation for failing checks")
+	cmd.Flags().BoolVar(&in.Bundle, "bundle", false, "Generate a support bundle with full diagnostic output")
+	cmd.Flags().BoolVar(&in.CheckAgents, "check-agents", false, "Include AI coding agent integrations in the checks")
+	cmd.Flags().BoolVar(&in.CheckIDE, "check-ide", false, "Include IDE integrations in the checks")
+	cmd.Flags().StringVar(&in.Scope, "scope", "user", "Installation scope for --fix: user (global), project, or local")
 	return cmd
 }
 
