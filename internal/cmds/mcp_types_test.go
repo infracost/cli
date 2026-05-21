@@ -83,3 +83,95 @@ func TestMCPScanOutputJSON(t *testing.T) {
 	assert.NotContains(t, summary, "triggered_guardrail_list", "drill-in detail belongs on per-domain tools")
 	assert.NotContains(t, summary, "over_budget_list", "drill-in detail belongs on per-domain tools")
 }
+
+// TestPriceToolOutputSchema is the canary for the same recursive-schema
+// problem TestScanToolOutputSchema guards against — but for MCPPriceOutput,
+// which adds a per-resource breakdown. If MCPResource ever sprouts a
+// Subresources field of its own type, this fails before the MCP server tries
+// to register the tool.
+func TestPriceToolOutputSchema(t *testing.T) {
+	schema, err := priceToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
+
+// TestToMCPPriceOutput verifies the per-resource flattening: nested
+// subresources contribute to TotalMonthlyCost but disappear from the wire
+// shape, so the agent gets one row per top-level resource with the right
+// total.
+func TestToMCPPriceOutput(t *testing.T) {
+	out := &format.Output{
+		Currency: "USD",
+		Projects: []format.ProjectOutput{
+			{
+				ProjectName: "stdin",
+				Resources: []format.ResourceOutput{
+					{
+						Name:        "aws_eks_node_group.app",
+						Type:        "aws_eks_node_group",
+						IsSupported: true,
+						CostComponents: []format.CostComponentOutput{
+							{Name: "vCPU", TotalMonthlyCost: rat.New(20)},
+						},
+						Subresources: []format.ResourceOutput{
+							{
+								Name: "LaunchTemplate",
+								CostComponents: []format.CostComponentOutput{
+									{Name: "root_block_device", TotalMonthlyCost: rat.New(5)},
+								},
+								Subresources: []format.ResourceOutput{
+									{
+										Name: "ebs_block_device[0]",
+										CostComponents: []format.CostComponentOutput{
+											{Name: "Storage", TotalMonthlyCost: rat.New(3)},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	got := toMCPPriceOutput(out)
+
+	assert.Equal(t, "USD", got.Currency)
+	require.Len(t, got.Resources, 1, "subresources flatten into TotalMonthlyCost, not into Resources")
+	assert.Equal(t, "aws_eks_node_group.app", got.Resources[0].Name)
+	// 20 (vCPU) + 5 (LaunchTemplate.root_block_device) + 3 (EBS storage) = 28.
+	assert.Equal(t, "28", got.Resources[0].TotalMonthlyCost.String())
+}
+
+// TestMCPPriceOutputJSON locks the price wire format: currency, summary,
+// and a flat resources array with no nested subresources.
+func TestMCPPriceOutputJSON(t *testing.T) {
+	out := &format.Output{
+		Currency: "USD",
+		Projects: []format.ProjectOutput{
+			{
+				ProjectName: "stdin",
+				Resources: []format.ResourceOutput{
+					{Name: "aws_instance.web", Type: "aws_instance", IsSupported: true},
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(toMCPPriceOutput(out))
+	require.NoError(t, err)
+
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(body, &wire))
+
+	assert.Equal(t, "USD", wire["currency"])
+	assert.Contains(t, wire, "summary")
+	resources, ok := wire["resources"].([]any)
+	require.True(t, ok, "resources must be an array")
+	require.Len(t, resources, 1)
+	res := resources[0].(map[string]any)
+	assert.Equal(t, "aws_instance.web", res["name"])
+	assert.NotContains(t, res, "subresources", "MCPResource is flat by design")
+}
