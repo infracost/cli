@@ -479,6 +479,106 @@ func registerInspectMCPTools(srv *mcp.Server, store cache.Store) {
 			}
 			return nil, result, nil
 		})
+
+	policyDetailSchema, err := inspectPolicyDetailToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "inspect_policy_detail",
+			Description: "Drill into one policy from the latest scan: the policy's identity (name / slug / kind / message) " +
+				"plus every resource currently failing it, with file:line locations and (for finops) the per-issue " +
+				"savings or (for tagging) the per-resource missing + invalid tags. Use this when an `inspect_summary` " +
+				"or `policies` call surfaces an interesting policy and the agent needs to know which resources to fix.",
+			OutputSchema: policyDetailSchema,
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest, in InspectPolicyDetailInput) (*mcp.CallToolResult, inspect.PolicyDetail, error) {
+			if in.Policy == "" {
+				return nil, inspect.PolicyDetail{}, fmt.Errorf("policy is required")
+			}
+			data, err := inspectScanData(store, in.Path)
+			if err != nil {
+				return nil, inspect.PolicyDetail{}, err
+			}
+			opts := inspect.Options{
+				Policy:   in.Policy,
+				Resource: in.Resource,
+				Project:  in.Project,
+				Filter:   in.Filter,
+			}
+			result, err := inspect.PolicyDetailFor(data, opts)
+			if err != nil {
+				return nil, inspect.PolicyDetail{}, err
+			}
+			return nil, result, nil
+		})
+
+	budgetDetailSchema, err := inspectBudgetDetailToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "inspect_budget_detail",
+			Description: "Drill into one budget from the latest scan: the budget itself (amount, current spend, over-budget " +
+				"flag, period, tag scope) plus the resources in this scan whose tags match its scope and the FinOps " +
+				"savings available on those resources. Differs from the `budgets` tool, which lists configured budgets " +
+				"without any post-scan numbers attached.",
+			OutputSchema: budgetDetailSchema,
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest, in InspectBudgetDetailInput) (*mcp.CallToolResult, inspect.BudgetDetail, error) {
+			if in.Budget == "" {
+				return nil, inspect.BudgetDetail{}, fmt.Errorf("budget is required")
+			}
+			data, err := inspectScanData(store, in.Path)
+			if err != nil {
+				return nil, inspect.BudgetDetail{}, err
+			}
+			opts := inspect.Options{
+				Budget:  in.Budget,
+				Project: in.Project,
+				Filter:  in.Filter,
+			}
+			result, err := inspect.BudgetDetailFor(data, opts)
+			if err != nil {
+				return nil, inspect.BudgetDetail{}, err
+			}
+			return nil, result, nil
+		})
+
+	guardrailDetailSchema, err := inspectGuardrailDetailToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "inspect_guardrail_detail",
+			Description: "Drill into one guardrail from the latest scan: the matching guardrail entry with its triggered " +
+				"flag and total monthly cost rolled up by the scan. Differs from the `guardrails` tool, which lists " +
+				"configured guardrails without any post-scan triggered state. Mirrors the CLI's --guardrail X --json " +
+				"output — no extra aggregation, just the guardrail itself.",
+			OutputSchema: guardrailDetailSchema,
+		},
+		func(_ context.Context, _ *mcp.CallToolRequest, in InspectGuardrailDetailInput) (*mcp.CallToolResult, format.GuardrailOutput, error) {
+			if in.Guardrail == "" {
+				return nil, format.GuardrailOutput{}, fmt.Errorf("guardrail is required")
+			}
+			data, err := inspectScanData(store, in.Path)
+			if err != nil {
+				return nil, format.GuardrailOutput{}, err
+			}
+			opts := inspect.Options{
+				Guardrail: in.Guardrail,
+				Project:   in.Project,
+				Filter:    in.Filter,
+			}
+			result, err := inspect.GuardrailDetailFor(data, opts)
+			if err != nil {
+				return nil, format.GuardrailOutput{}, err
+			}
+			return nil, result, nil
+		})
 }
 
 // FetchOrgsInput is the input shape for fetch_orgs. Currently empty —

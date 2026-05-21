@@ -154,10 +154,12 @@ type PolicyResource struct {
 	InvalidTags          []format.InvalidTagOutput `json:"invalid_tags,omitempty"`
 }
 
-// writePolicyDetailJSON aggregates matching FinOps and Tagging policies
-// across all projects and emits one of two shapes — finops kind or tagging
-// kind. Returns "policy not found" if neither matches.
-func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error {
+// BuildPolicyDetail aggregates matching FinOps and Tagging policies
+// across all projects and returns one of two shapes — finops kind or
+// tagging kind — along with whether either matched. opts.Resource
+// narrows the per-resource list. Used by writePolicyDetailJSON for the
+// CLI's --json output and by PolicyDetailFor for the MCP path.
+func BuildPolicyDetail(data *format.Output, opts Options) (PolicyDetail, bool) {
 	// FinOps: aggregate matched resources across projects.
 	var (
 		finopsName, finopsSlug, finopsMessage string
@@ -191,13 +193,13 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 		}
 	}
 	if finopsMatched {
-		return writeStructured(w, PolicyDetail{
+		return PolicyDetail{
 			Kind:      "finops",
 			Name:      finopsName,
 			Slug:      finopsSlug,
 			Message:   finopsMessage,
 			Resources: finopsResources,
-		}, opts)
+		}, true
 	}
 
 	// Tagging: same aggregation pattern.
@@ -231,17 +233,81 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 		}
 	}
 	if tagMatched {
-		out := PolicyDetail{
+		return PolicyDetail{
 			Kind:      "tagging",
 			Name:      tagName,
 			Message:   tagMessage,
 			Resources: tagResources,
 			TagSchema: mergeTagSchemas(tagSchemas),
-		}
-		return writeStructured(w, out, opts)
+		}, true
 	}
 
-	return fmt.Errorf("policy %q not found", opts.Policy)
+	return PolicyDetail{}, false
+}
+
+// PolicyDetailFor applies the inspect filter pipeline and returns the
+// detail for opts.Policy. Pairs with the `inspect_policy_detail` MCP
+// tool. Returns an actionable "policy not found" error so an agent
+// can relay the typo or suggest calling `policies` to list valid names.
+func PolicyDetailFor(data *format.Output, opts Options) (PolicyDetail, error) {
+	if err := ParseFilter(opts.Filter, &opts); err != nil {
+		return PolicyDetail{}, err
+	}
+	data = Filter(data, opts)
+	detail, ok := BuildPolicyDetail(data, opts)
+	if !ok {
+		return PolicyDetail{}, fmt.Errorf("policy %q not found", opts.Policy)
+	}
+	return detail, nil
+}
+
+// BudgetDetailFor applies the inspect filter pipeline and returns the
+// detail block for opts.Budget — the budget plus the resources in the
+// latest scan whose tags match its scope and any FinOps savings on those
+// resources. Pairs with the `inspect_budget_detail` MCP tool. Returns
+// an actionable "budget not found" error when the name doesn't match.
+func BudgetDetailFor(data *format.Output, opts Options) (BudgetDetail, error) {
+	if err := ParseFilter(opts.Filter, &opts); err != nil {
+		return BudgetDetail{}, err
+	}
+	data = Filter(data, opts)
+	for _, br := range data.BudgetResults {
+		if matchesPolicy(br.BudgetName, br.BudgetID, opts.Budget) {
+			return BuildBudgetDetail(data, br), nil
+		}
+	}
+	return BudgetDetail{}, fmt.Errorf("budget %q not found", opts.Budget)
+}
+
+// GuardrailDetailFor applies the inspect filter pipeline and returns
+// the matching guardrail from the latest scan's results — including
+// the triggered flag and total monthly cost the scan rolled up.
+// Mirrors CLI behavior: the human / --json renderers print just the
+// guardrail itself with no additional aggregation. Pairs with the
+// `inspect_guardrail_detail` MCP tool.
+func GuardrailDetailFor(data *format.Output, opts Options) (format.GuardrailOutput, error) {
+	if err := ParseFilter(opts.Filter, &opts); err != nil {
+		return format.GuardrailOutput{}, err
+	}
+	data = Filter(data, opts)
+	for _, gr := range data.GuardrailResults {
+		if matchesPolicy(gr.GuardrailName, gr.GuardrailID, opts.Guardrail) {
+			return gr, nil
+		}
+	}
+	return format.GuardrailOutput{}, fmt.Errorf("guardrail %q not found", opts.Guardrail)
+}
+
+// writePolicyDetailJSON now delegates to BuildPolicyDetail so the CLI's
+// --json dispatch and the MCP tool path share the same aggregation
+// pipeline. Behavior preserved: "policy not found" is still the error
+// when nothing matches.
+func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error {
+	detail, ok := BuildPolicyDetail(data, opts)
+	if !ok {
+		return fmt.Errorf("policy %q not found", opts.Policy)
+	}
+	return writeStructured(w, detail, opts)
 }
 
 // FailingPanorama is the structured payload for `inspect --failing
