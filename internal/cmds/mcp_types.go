@@ -438,3 +438,27 @@ func inspectGuardrailDetailToolOutputSchema() (*jsonschema.Schema, error) {
 	}
 	return schema, nil
 }
+
+// MCPDoctorInput is the input shape for the `doctor` MCP tool. It
+// deliberately omits the CLI's --fix flag: auto-remediation is
+// destructive and the agent doesn't have the per-fix user-confirmation
+// context the CLI assumes. Agents who want to remediate should suggest
+// the user run `infracost doctor --fix` rather than have the tool
+// perform the change implicitly.
+type MCPDoctorInput struct {
+	Verbose     bool `json:"verbose,omitempty" jsonschema:"Include diagnostic detail for every check (otherwise hints only appear on failing ones)."`
+	Bundle      bool `json:"bundle,omitempty" jsonschema:"Attach a system / environment / cache snapshot to the response. Implies verbose + check_agents + check_ide."`
+	CheckAgents bool `json:"check_agents,omitempty" jsonschema:"Include AI coding agent integrations in the checks."`
+	CheckIDE    bool `json:"check_ide,omitempty" jsonschema:"Include IDE integrations in the checks."`
+}
+
+// doctorToolOutputSchema returns the JSON schema describing
+// [DoctorOutput]. No rat.Rat involved — doctor reports are text and
+// counts only.
+func doctorToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[DoctorOutput](nil)
+	if err != nil {
+		return nil, fmt.Errorf("building doctor tool output schema: %w", err)
+	}
+	return schema, nil
+}

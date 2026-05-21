@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -19,14 +20,40 @@ const (
 	StatusSkipped
 )
 
+// String returns the canonical lowercase name used by the JSON / LLM
+// renderers and (via MarshalJSON below) the wire format. Keeping the
+// stringer and the marshaler aligned means CLI consumers and MCP
+// agents see the same discriminator value.
+func (s Status) String() string {
+	switch s {
+	case StatusPass:
+		return "pass"
+	case StatusWarning:
+		return "warning"
+	case StatusFail:
+		return "fail"
+	case StatusSkipped:
+		return "skipped"
+	default:
+		return fmt.Sprintf("status(%d)", int(s))
+	}
+}
+
+// MarshalJSON serializes Status as its canonical lowercase name. The
+// raw int representation would force every consumer to maintain its
+// own enum table; the string form is self-describing.
+func (s Status) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
 // Result holds the outcome of a single check.
 type Result struct {
-	Status  Status
-	Label   string   // display label (e.g. "Credentials found")
-	Detail  string   // extra info appended after the label (e.g. "(142 ms)")
-	Hint    string   // remediation shown on the next line with →
-	Verbose []string // extra diagnostic lines, shown only with --verbose
-	Fixable bool     // true if auto-remediation is available for this check
+	Status  Status   `json:"status"`
+	Label   string   `json:"label,omitempty"`
+	Detail  string   `json:"detail,omitempty"`
+	Hint    string   `json:"hint,omitempty"`
+	Verbose []string `json:"verbose,omitempty"`
+	Fixable bool     `json:"fixable,omitempty"`
 }
 
 // Check defines a single health check.
@@ -56,13 +83,13 @@ type Category struct {
 
 // CategoryResult holds the results for a single category.
 type CategoryResult struct {
-	Name    string
-	Results []Result
+	Name    string   `json:"name"`
+	Results []Result `json:"results"`
 }
 
 // Report holds the full health check output.
 type Report struct {
-	Categories []CategoryResult
+	Categories []CategoryResult `json:"categories"`
 }
 
 func (r *Report) Total() int {

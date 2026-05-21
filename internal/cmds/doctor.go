@@ -2,6 +2,7 @@ package cmds
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -82,11 +83,51 @@ func Doctor(ctx context.Context, cfg *config.Config, in DoctorInput) (*doctor.Re
 	return report, nil
 }
 
+// DoctorBundle is the structured form of the `--bundle` support
+// section. The text rendering writes the same data in a humanized
+// layout; --json / --llm and the MCP doctor tool emit this shape
+// directly.
+type DoctorBundle struct {
+	System      DoctorBundleSystem `json:"system"`
+	Environment []string           `json:"environment"`
+	Cache       DoctorBundleCache  `json:"cache"`
+}
+
+// DoctorBundleSystem captures the host details we ask users to share
+// when debugging. GOOS / GOARCH + Go version + login shell is enough
+// to disambiguate the most common platform-specific failure modes.
+type DoctorBundleSystem struct {
+	OS    string `json:"os"`
+	Arch  string `json:"arch"`
+	Go    string `json:"go"`
+	Shell string `json:"shell,omitempty"`
+}
+
+// DoctorBundleCache records the status of the two on-disk caches the
+// CLI relies on. Values are humanised ("exists, updated 2026-…") so
+// the field is self-describing without a schema lookup.
+type DoctorBundleCache struct {
+	TokenCachePath   string `json:"token_cache_path"`
+	TokenCacheStatus string `json:"token_cache_status"`
+	UserCachePath    string `json:"user_cache_path"`
+	UserCacheStatus  string `json:"user_cache_status"`
+}
+
+// DoctorOutput is the wire shape returned by `doctor --json` /
+// `doctor --llm` and by the MCP `doctor` tool. Bundle is nil when
+// --bundle wasn't requested so the wire payload stays small for the
+// common "just run the checks" case.
+type DoctorOutput struct {
+	Report *doctor.Report `json:"report"`
+	Bundle *DoctorBundle  `json:"bundle,omitempty"`
+}
+
 // DoctorCmd is the cobra builder for `doctor`. Reduced to flag parsing,
 // the pure Doctor call, and the CLI-only side effects: progressively
 // rendering text output for the pre- and post-fix reports, printing
 // the support-bundle section, and returning a non-zero exit when any
-// check failed.
+// check failed. With --json / --llm it skips the text pipeline and
+// emits a [DoctorOutput] payload via the shared structured writer.
 func DoctorCmd(cfg *config.Config) *cobra.Command {
 	var in DoctorInput
 	cmd := &cobra.Command{
@@ -109,6 +150,30 @@ func DoctorCmd(cfg *config.Config) *cobra.Command {
 				return fmt.Errorf("--bundle and --fix cannot be used together")
 			}
 			w := cmd.OutOrStdout()
+
+			// Structured (--json / --llm) takes the same one-shot path the
+			// MCP tool will: run the pure Doctor function, build the
+			// DoctorOutput envelope, dispatch through writeStructured. No
+			// intermediate text rendering — the agent / script doesn't
+			// want progress prose mixed into its payload.
+			if cfg.JSON.Value || cfg.LLM.Value {
+				report, err := Doctor(cmd.Context(), cfg, in)
+				if err != nil {
+					return err
+				}
+				out := DoctorOutput{Report: report}
+				if in.Bundle {
+					b := buildDoctorBundle(cfg)
+					out.Bundle = &b
+				}
+				if err := writeStructured(cfg, w, out, doctorRenderers()); err != nil {
+					return err
+				}
+				if report.Failed() > 0 {
+					return fmt.Errorf("%d health check(s) failed", report.Failed())
+				}
+				return nil
+			}
 
 			// Render the pre-fix report first so the user sees what failed
 			// before any --fix attempts; the pure Doctor function discards
@@ -151,34 +216,30 @@ func DoctorCmd(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-func renderBundle(w io.Writer, cfg *config.Config) {
-	_, _ = fmt.Fprintln(w, "\n--- Support Bundle ---")
-	_, _ = fmt.Fprintln(w)
-
-	_, _ = fmt.Fprintln(w, "System")
-	_, _ = fmt.Fprintf(w, "  os: %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	_, _ = fmt.Fprintf(w, "  go: %s\n", runtime.Version())
-	if shell := os.Getenv("SHELL"); shell != "" {
-		_, _ = fmt.Fprintf(w, "  shell: %s\n", shell)
+// buildDoctorBundle gathers the host / env / cache facts that make up
+// `doctor --bundle`. Used by both the text rendering (via renderBundle)
+// and the structured / MCP path (DoctorOutput).
+func buildDoctorBundle(cfg *config.Config) DoctorBundle {
+	b := DoctorBundle{
+		System: DoctorBundleSystem{
+			OS:    runtime.GOOS,
+			Arch:  runtime.GOARCH,
+			Go:    runtime.Version(),
+			Shell: os.Getenv("SHELL"),
+		},
+		Environment: []string{},
+		Cache: DoctorBundleCache{
+			TokenCachePath:   cfg.Auth.TokenCachePath,
+			TokenCacheStatus: fileStatus(cfg.Auth.TokenCachePath),
+			UserCachePath:    cfg.Auth.UserCachePath,
+		},
 	}
-
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Environment")
-	hasEnv := false
 	for _, env := range os.Environ() {
 		if strings.HasPrefix(env, "INFRACOST_CLI_") {
 			name, _, _ := strings.Cut(env, "=")
-			_, _ = fmt.Fprintf(w, "  %s: set\n", name)
-			hasEnv = true
+			b.Environment = append(b.Environment, name)
 		}
 	}
-	if !hasEnv {
-		_, _ = fmt.Fprintln(w, "  (none)")
-	}
-
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Cache")
-	_, _ = fmt.Fprintf(w, "  token cache: %s (%s)\n", cfg.Auth.TokenCachePath, fileStatus(cfg.Auth.TokenCachePath))
 	userStatus := fileStatus(cfg.Auth.UserCachePath)
 	if uc, err := cfg.Auth.LoadUserCache(); err == nil && uc != nil {
 		if uc.IsStale() {
@@ -187,7 +248,67 @@ func renderBundle(w io.Writer, cfg *config.Config) {
 			userStatus += fmt.Sprintf(", updated %s", uc.UpdatedAt.Format(time.RFC3339))
 		}
 	}
-	_, _ = fmt.Fprintf(w, "  user cache: %s (%s)\n", cfg.Auth.UserCachePath, userStatus)
+	b.Cache.UserCacheStatus = userStatus
+	return b
+}
+
+// renderBundle writes the support-bundle text section using data
+// gathered by buildDoctorBundle, so the human and structured paths
+// stay byte-equivalent on the facts they report.
+func renderBundle(w io.Writer, cfg *config.Config) {
+	b := buildDoctorBundle(cfg)
+	_, _ = fmt.Fprintln(w, "\n--- Support Bundle ---")
+	_, _ = fmt.Fprintln(w)
+
+	_, _ = fmt.Fprintln(w, "System")
+	_, _ = fmt.Fprintf(w, "  os: %s/%s\n", b.System.OS, b.System.Arch)
+	_, _ = fmt.Fprintf(w, "  go: %s\n", b.System.Go)
+	if b.System.Shell != "" {
+		_, _ = fmt.Fprintf(w, "  shell: %s\n", b.System.Shell)
+	}
+
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Environment")
+	if len(b.Environment) == 0 {
+		_, _ = fmt.Fprintln(w, "  (none)")
+	} else {
+		for _, name := range b.Environment {
+			_, _ = fmt.Fprintf(w, "  %s: set\n", name)
+		}
+	}
+
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Cache")
+	_, _ = fmt.Fprintf(w, "  token cache: %s (%s)\n", b.Cache.TokenCachePath, b.Cache.TokenCacheStatus)
+	_, _ = fmt.Fprintf(w, "  user cache: %s (%s)\n", b.Cache.UserCachePath, b.Cache.UserCacheStatus)
+}
+
+// doctorRenderers wires the structured renderers for DoctorOutput. The
+// human path is unreachable here — DoctorCmd handles --json / --llm via
+// this function and routes plain text through the legacy doctor.Render
+// pipeline directly — but [Renderers] requires a Human entry, so a
+// no-op placeholder keeps the dispatcher happy.
+func doctorRenderers() Renderers[DoctorOutput] {
+	return Renderers[DoctorOutput]{
+		Human: func(_ io.Writer, _ DoctorOutput) error { return nil },
+		JSON:  renderDoctorJSON,
+		LLM:   renderDoctorLLM,
+	}
+}
+
+func renderDoctorJSON(w io.Writer, o DoctorOutput) error {
+	body, err := json.MarshalIndent(o, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to write JSON output: %w", err)
+	}
+	_, err = fmt.Fprintln(w, string(body))
+	return err
+}
+
+func renderDoctorLLM(w io.Writer, o DoctorOutput) error {
+	// Same shape as JSON — doctor is a small one-shot snapshot, no
+	// dedupable tabular section for TOON to reformat usefully.
+	return renderDoctorJSON(w, o)
 }
 
 func fileStatus(path string) string {

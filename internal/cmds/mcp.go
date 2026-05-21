@@ -264,6 +264,37 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 		})
 
 	registerInspectMCPTools(srv, store)
+
+	doctorSchema, err := doctorToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "doctor",
+			Description: "Run the same diagnostic checks `infracost doctor` runs and return the typed report — auth, " +
+				"config, agent / IDE integrations. Use this to verify the user's setup is healthy before suggesting " +
+				"workflows that depend on it. The MCP variant omits the CLI's --fix flag: auto-remediation is " +
+				"destructive and should be done by the user themselves via `infracost doctor --fix`.",
+			OutputSchema: doctorSchema,
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in MCPDoctorInput) (*mcp.CallToolResult, DoctorOutput, error) {
+			report, err := Doctor(ctx, cfg, DoctorInput{
+				Verbose:     in.Verbose,
+				Bundle:      in.Bundle,
+				CheckAgents: in.CheckAgents,
+				CheckIDE:    in.CheckIDE,
+			})
+			if err != nil {
+				return nil, DoctorOutput{}, err
+			}
+			out := DoctorOutput{Report: report}
+			if in.Bundle {
+				b := buildDoctorBundle(cfg)
+				out.Bundle = &b
+			}
+			return nil, out, nil
+		})
 }
 
 // inspectScanData loads a cached scan result for the active MCP session.
