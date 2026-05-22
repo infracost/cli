@@ -3,6 +3,7 @@ package cmds
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/infracost/cli/internal/api/events"
@@ -16,6 +17,18 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 )
+
+// agentsToolsEnabled reports whether the Agents-backed MCP tools
+// (findings_list / findings_get / preview_fix / create_fix /
+// update_finding_status / update_task_status / retry_action) should be
+// registered. Defaults to off: the feature is internal until the
+// product rename is complete, and gating at registration time keeps it
+// invisible from tools/list rather than surfacing a "disabled"
+// description the LLM might still try to call.
+func agentsToolsEnabled() bool {
+	v := os.Getenv("INFRACOST_CLI_AGENTS_ENABLED")
+	return v == "1" || v == "true"
+}
 
 // MCPCmd builds the `infracost mcp` cobra command — a Model Context
 // Protocol stdio server. Authentication and the active organization are
@@ -263,6 +276,10 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 			return nil, result, nil
 		})
 
+	if agentsToolsEnabled() {
+		registerAgentsMCPTools(srv, cfg, source)
+	}
+
 	registerInspectMCPTools(srv, store)
 
 	doctorSchema, err := doctorToolOutputSchema()
@@ -294,6 +311,193 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 				out.Bundle = &b
 			}
 			return nil, out, nil
+		})
+}
+
+// registerAgentsMCPTools attaches the Agents-backed tools to srv.
+// Gated by [agentsToolsEnabled] from the caller — these are the
+// findings / tasks / actions surfaces, kept hidden from default MCP
+// sessions until the rebrand is complete.
+func registerAgentsMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSource) {
+	findingsListSchema, err := findingsListToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "findings_list",
+			Description: "List FinOps findings for the active organization. Each row carries id, title, summary, severity, " +
+				"status, estimated monthly saving, and a task count. Pass statuses / efforts to narrow; pass cursor to page. " +
+				"Use findings_get to drill into a specific finding and see its tasks.",
+			OutputSchema: findingsListSchema,
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in FindingsListInput) (*mcp.CallToolResult, FindingsListResult, error) {
+			result, err := ListFindings(ctx, cfg, source, in)
+			if err != nil {
+				return nil, FindingsListResult{}, err
+			}
+			return nil, result, nil
+		})
+
+	findingsGetSchema, err := findingsGetToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "findings_get",
+			Description: "Fetch a single FinOps finding by id. Returns the finding header plus its nested tasks, actions, and " +
+				"events — including each task's action_description and code snippet. To draft a PR or ticket for a task, " +
+				"call preview_fix; to actually create it after the user confirms, call create_fix.",
+			OutputSchema: findingsGetSchema,
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in FindingsGetInput) (*mcp.CallToolResult, FindingsGetResult, error) {
+			result, err := GetFinding(ctx, cfg, source, in)
+			if err != nil {
+				return nil, FindingsGetResult{}, err
+			}
+			return nil, result, nil
+		})
+
+	previewFixSchema, err := previewFixToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "preview_fix",
+			Description: "Ask Agents to draft a PR or ticket for a task without creating it. No side effects — the LLM produces " +
+				"a {type, config} blob the agent can show to the user. To actually open the PR / create the ticket the agent " +
+				"must then call create_fix with the same finding_id / task_id, the type, and the config returned here " +
+				"(possibly edited by the user). type defaults to open_pr and accepts open_pr or create_ticket only — manual " +
+				"actions aren't draftable by the LLM and must go through create_fix directly.",
+			OutputSchema: previewFixSchema,
+			Annotations: &mcp.ToolAnnotations{
+				ReadOnlyHint: true,
+				Title:        "Preview a fix (LLM-drafted PR/ticket)",
+			},
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in PreviewFixInput) (*mcp.CallToolResult, PreviewFixResult, error) {
+			result, err := PreviewFix(ctx, cfg, source, in)
+			if err != nil {
+				return nil, PreviewFixResult{}, err
+			}
+			return nil, result, nil
+		})
+
+	createFixSchema, err := createFixToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	createFixInputSchema, err := createFixToolInputSchema()
+	if err != nil {
+		panic(err)
+	}
+	createFixDestructive := true
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "create_fix",
+			Description: "Submit a previously-drafted fix to Agents, actually creating the PR / ticket / manual action. This is " +
+				"destructive — it opens a real PR or creates a real ticket against the connected integration. The expected " +
+				"flow is: call preview_fix, show the {type, config} draft to the user, get explicit confirmation (and any " +
+				"edits to the config blob), then call create_fix with finding_id, task_id, type (open_pr | create_ticket | " +
+				"manual), and config. Returns the new action_id.",
+			InputSchema:  createFixInputSchema,
+			OutputSchema: createFixSchema,
+			Annotations: &mcp.ToolAnnotations{
+				DestructiveHint: &createFixDestructive,
+				Title:           "Create a fix (open PR / ticket)",
+			},
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in CreateFixInput) (*mcp.CallToolResult, CreateFixResult, error) {
+			result, err := CreateFix(ctx, cfg, source, in)
+			if err != nil {
+				return nil, CreateFixResult{}, err
+			}
+			return nil, result, nil
+		})
+
+	updateFindingStatusSchema, err := updateFindingStatusToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	updateFindingStatusDestructive := true
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "update_finding_status",
+			Description: "Set a finding's status: open, resolved, or dismissed. Dismissing with a non-empty reason " +
+				"emits an AgentLearning so the same finding isn't re-raised on future scans. Use this to close the " +
+				"loop after a finding has been fixed (resolved) or determined to be a false positive (dismissed). " +
+				"Returns the updated finding.",
+			OutputSchema: updateFindingStatusSchema,
+			Annotations: &mcp.ToolAnnotations{
+				DestructiveHint: &updateFindingStatusDestructive,
+				Title:           "Update a finding's status",
+			},
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateFindingStatusInput) (*mcp.CallToolResult, UpdateFindingStatusResult, error) {
+			result, err := UpdateFindingStatus(ctx, cfg, source, in)
+			if err != nil {
+				return nil, UpdateFindingStatusResult{}, err
+			}
+			return nil, result, nil
+		})
+
+	updateTaskStatusSchema, err := updateTaskStatusToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	updateTaskStatusDestructive := true
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "update_task_status",
+			Description: "Update a task's resolution. status='confirm' says \"I did Agents' suggested change\" — " +
+				"advances every linked open manual action to 'done' so the verification cascade can pick them up. " +
+				"status='correct' says \"I solved the problem a different way\" — dismisses the task with reason as " +
+				"the dismissed_reason, cascade-dismisses any draft/open actions linked to it, and emits an " +
+				"AgentLearning(source=correction). status='dismiss' says \"we're not going to do this task\" — " +
+				"dismisses the task with reason as the dismissed_reason and emits an " +
+				"AgentLearning(source=task_dismissed). Reason is required for correct, recommended for dismiss " +
+				"(needed to emit the learning), and ignored for confirm. Pick correct vs dismiss based on what the " +
+				"user actually did: did they take an alternative action (correct), or are they declining the task " +
+				"outright (dismiss)? The two values feed different learning signals to the agent.",
+			OutputSchema: updateTaskStatusSchema,
+			Annotations: &mcp.ToolAnnotations{
+				DestructiveHint: &updateTaskStatusDestructive,
+				Title:           "Confirm / correct / dismiss a task",
+			},
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTaskStatusInput) (*mcp.CallToolResult, UpdateTaskStatusResult, error) {
+			result, err := UpdateTaskStatus(ctx, cfg, source, in)
+			if err != nil {
+				return nil, UpdateTaskStatusResult{}, err
+			}
+			return nil, result, nil
+		})
+
+	retryActionSchema, err := retryActionToolOutputSchema()
+	if err != nil {
+		panic(err)
+	}
+	retryActionDestructive := true
+	mcp.AddTool(srv,
+		&mcp.Tool{
+			Name: "retry_action",
+			Description: "Re-queue a failed action (PR / ticket creation that errored on the worker) for another " +
+				"attempt. The action must currently be in the 'failed' state — read action_status from the parent " +
+				"finding before calling. Returns {ok: true} on accept.",
+			OutputSchema: retryActionSchema,
+			Annotations: &mcp.ToolAnnotations{
+				DestructiveHint: &retryActionDestructive,
+				Title:           "Retry a failed action",
+			},
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in RetryActionInput) (*mcp.CallToolResult, RetryActionResult, error) {
+			result, err := RetryAction(ctx, cfg, source, in)
+			if err != nil {
+				return nil, RetryActionResult{}, err
+			}
+			return nil, result, nil
 		})
 }
 

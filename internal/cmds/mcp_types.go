@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 
@@ -9,6 +10,41 @@ import (
 	"github.com/infracost/cli/internal/inspect"
 	"github.com/infracost/go-proto/pkg/rat"
 )
+
+// rawJSONSchemaOverride maps json.RawMessage to a permissive
+// object-shaped schema — "any JSON object is valid". Several Agents wire
+// types use RawMessage for fields the API documents as `unknown` /
+// `Record<string, unknown>` (Finding.TriggerDetail, Task.ActionContext,
+// Action.Config / Action.Result, FindingEvent.Detail,
+// FindingTaskEvent.Detail, plus PreviewFixResult.Config and
+// CreateFixInput.ConfigJSON in the CLI's own types). jsonschema-go's
+// reflection-based inference doesn't recognise RawMessage as opaque JSON
+// — it sees `type RawMessage []byte` and emits
+// `{"type":["null","array"],"items":{"type":"integer","minimum":0,"maximum":255}}`,
+// which rejects every real payload the API returns.
+//
+// The override declares `type: object` so:
+//   - MCP hosts (which require tool schemas to be objects) accept the
+//     declaration at registration time.
+//   - LLM tool-use layers know to send a JSON object on the wire rather
+//     than serialising the value as a string. Without a declared type
+//     they default to string, which is what Agents rejected as
+//     `invalid type or config` when create_fix received a stringified
+//     config.
+//
+// All of the RawMessage-typed wire fields in the Agents contract are
+// object-shaped in practice (Record<string, unknown> or unknown that's
+// always populated as a struct). If a future field actually needs to
+// carry an array or scalar, switch it to a typed field or move it to a
+// per-field override rather than loosening this map.
+func rawJSONSchemaOverride() map[reflect.Type]*jsonschema.Schema {
+	return map[reflect.Type]*jsonschema.Schema{
+		reflect.TypeFor[json.RawMessage](): {
+			Type:        "object",
+			Description: "Opaque JSON object; shape depends on the surrounding action / event type.",
+		},
+	}
+}
 
 // MCPScanOutput is the wire shape returned by the MCP `scan` tool. It mirrors
 // the human-rendered scan/price summary box exactly: headline counts, monthly
@@ -186,6 +222,118 @@ func guardrailsToolOutputSchema() (*jsonschema.Schema, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("building guardrails tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// findingsListToolOutputSchema returns the JSON schema describing
+// [FindingsListResult]. Money is plain float64 so no rat.Rat override is
+// needed, but Agents' Finding type carries json.RawMessage fields
+// (trigger_detail and the nested Tasks / Actions / Events blobs) — see
+// [rawJSONSchemaOverride] for why those need an open schema rather than
+// the default byte-slice inference.
+func findingsListToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[FindingsListResult](&jsonschema.ForOptions{
+		TypeSchemas: rawJSONSchemaOverride(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building findings_list tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// findingsGetToolOutputSchema returns the JSON schema describing
+// [FindingsGetResult]. The Finding's nested Task / Action / Event types
+// carry json.RawMessage payloads that the API documents as `unknown` /
+// `Record<string, unknown>`; [rawJSONSchemaOverride] keeps the wire shape
+// honest by exposing those as open JSON values.
+func findingsGetToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[FindingsGetResult](&jsonschema.ForOptions{
+		TypeSchemas: rawJSONSchemaOverride(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building findings_get tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// previewFixToolOutputSchema returns the JSON schema describing
+// [PreviewFixResult]. Config is opaque JSON whose concrete shape depends
+// on the action type (open_pr / create_ticket); [rawJSONSchemaOverride]
+// ensures the blob is exposed as an open value rather than a byte slice.
+func previewFixToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[PreviewFixResult](&jsonschema.ForOptions{
+		TypeSchemas: rawJSONSchemaOverride(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building preview_fix tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// createFixToolOutputSchema returns the JSON schema describing
+// [CreateFixResult]. Just `action_id` — the action itself can be fetched
+// separately if the agent needs more detail.
+func createFixToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[CreateFixResult](nil)
+	if err != nil {
+		return nil, fmt.Errorf("building create_fix tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// createFixToolInputSchema returns the JSON schema describing
+// [CreateFixInput]. The ConfigJSON field is json.RawMessage — without an
+// explicit override, the SDK's reflection-based input inference would
+// expose `config` as `[null, array-of-bytes]`, forcing callers to
+// hand-encode their JSON object as an integer array. The
+// [rawJSONSchemaOverride] keeps the input wire shape aligned with the
+// matching field on [PreviewFixResult].
+func createFixToolInputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[CreateFixInput](&jsonschema.ForOptions{
+		TypeSchemas: rawJSONSchemaOverride(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building create_fix tool input schema: %w", err)
+	}
+	return schema, nil
+}
+
+// updateFindingStatusToolOutputSchema returns the JSON schema describing
+// [UpdateFindingStatusResult]. The wrapped Finding carries the same
+// json.RawMessage fields that [findingsGetToolOutputSchema] handles, so
+// the same override applies.
+func updateFindingStatusToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[UpdateFindingStatusResult](&jsonschema.ForOptions{
+		TypeSchemas: rawJSONSchemaOverride(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building update_finding_status tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// updateTaskStatusToolOutputSchema returns the JSON schema describing
+// [UpdateTaskStatusResult]. The nested Task carries `action_context` and
+// event detail blobs as json.RawMessage; the override keeps those open.
+func updateTaskStatusToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[UpdateTaskStatusResult](&jsonschema.ForOptions{
+		TypeSchemas: rawJSONSchemaOverride(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building update_task_status tool output schema: %w", err)
+	}
+	return schema, nil
+}
+
+// retryActionToolOutputSchema returns the JSON schema describing
+// [RetryActionResult] — a single boolean. No Agents types involved, so no
+// per-type overrides are needed; the helper exists for symmetry with the
+// other tool registrations.
+func retryActionToolOutputSchema() (*jsonschema.Schema, error) {
+	schema, err := jsonschema.For[RetryActionResult](nil)
+	if err != nil {
+		return nil, fmt.Errorf("building retry_action tool output schema: %w", err)
 	}
 	return schema, nil
 }
