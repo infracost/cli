@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"html"
+	"html/template"
 	"net/http"
 	"runtime"
 	"sync"
@@ -122,34 +122,56 @@ func state() string {
 // Used for the success and generic-error cases where there's no
 // structured payload to translate.
 func writeCallbackPlain(w http.ResponseWriter, msg string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprintf(w, callbackHTML, html.EscapeString(msg), "")
+	renderCallback(w, callbackContent{Title: msg})
 }
 
 // writeCallbackDenied renders the friendly page for a denied login. The
-// unverified-email case gets a tailored message and a hint pointing the
-// user at their inbox; everything else falls back to the description
-// Auth0 returned.
+// unverified-email case gets a tailored message with an explicit hint;
+// everything else falls back to a generic message plus the description
+// Auth0 returned (auto-escaped by html/template).
 func writeCallbackDenied(w http.ResponseWriter, e *LoginDeniedError) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if e.UnverifiedEmail {
-		_, _ = fmt.Fprintf(w, callbackHTML,
-			"Please verify your email",
-			"Check your inbox for a verification link from Infracost, then run <code>infracost auth login</code> again.",
-		)
+		renderCallback(w, callbackContent{
+			Title:        "Please verify your email",
+			Body:         "Check your inbox for a verification link from Infracost, then run ",
+			BodyCode:     "infracost auth login",
+			BodyAfterCode: " again.",
+		})
 		return
 	}
-	body := "Authentication failed. Please run <code>infracost auth login</code> again."
-	if e.Description != "" {
-		body = html.EscapeString(e.Description)
+	c := callbackContent{
+		Title:         "Authentication failed",
+		Body:          "Please run ",
+		BodyCode:      "infracost auth login",
+		BodyAfterCode: " again.",
 	}
-	_, _ = fmt.Fprintf(w, callbackHTML, "Authentication failed", body)
+	if e.Description != "" {
+		c.Body = e.Description
+		c.BodyCode = ""
+		c.BodyAfterCode = ""
+	}
+	renderCallback(w, c)
 }
 
-// callbackHTML is the response template for the localhost OAuth
-// callback page. Inlined so the binary doesn't need an embed.FS for one
-// small page.
-const callbackHTML = `<!DOCTYPE html>
+// callbackContent is the model for the localhost OAuth callback page.
+// Body / BodyCode / BodyAfterCode are split so the inline <code> chunk
+// can be rendered as trusted markup while the surrounding text — and
+// any Auth0-provided description — stays auto-escaped by html/template.
+type callbackContent struct {
+	Title         string
+	Body          string
+	BodyCode      string
+	BodyAfterCode string
+}
+
+func renderCallback(w http.ResponseWriter, c callbackContent) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = callbackTemplate.Execute(w, c)
+}
+
+// callbackTemplate is the response template for the localhost OAuth
+// callback page. Parsed once at package-init time.
+var callbackTemplate = template.Must(template.New("callback").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -168,8 +190,8 @@ code { background: #F5F5F9; padding: 2px 6px; border-radius: 4px;
 </head>
 <body>
 <div class="card">
-<h1>%s</h1>
-<p>%s</p>
+<h1>{{.Title}}</h1>
+{{if .Body}}<p>{{.Body}}{{if .BodyCode}}<code>{{.BodyCode}}</code>{{end}}{{.BodyAfterCode}}</p>{{end}}
 </div>
 </body>
-</html>`
+</html>`))
