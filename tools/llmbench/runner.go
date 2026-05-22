@@ -210,13 +210,13 @@ func runCell(
 		// the model to modify the project.
 		AllowedTools: []string{"Bash", "Read"},
 	}
-	switch {
-	case formatName == "bare-tf":
+	switch formatName {
+	case "bare-tf":
 		// bare-tf only: sandbox HOME so the user's globally-installed
 		// skills (~/.claude/skills/, plugin skills) can't leak. Skill-*
 		// cells keep the real HOME so infracost CLI auth works.
 		opts.SandboxHome = sandboxHome
-	case formatName == "skill-mcp":
+	case "skill-mcp":
 		// skill-mcp: swap the Bash tool for the explicit MCP-tool surface
 		// so the model is forced through the MCP server. Read stays so
 		// the model can still open .tf files for context — same as the
