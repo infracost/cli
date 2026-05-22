@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/ui"
@@ -10,9 +11,11 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var deviceFlowVerifiers sync.Map
+
 func (c *Config) DeviceFlow(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, error) {
 	caller, _ := events.GetMetadata[string]("caller")
-	
+
 	config := c.OAuth2Config()
 	verifier := oauth2.GenerateVerifier()
 
@@ -35,15 +38,29 @@ func (c *Config) DeviceFlow(ctx context.Context) (oauth2.TokenSource, *oauth2.To
 	return config.TokenSource(ctx, token), token, nil
 }
 
-// StartDeviceFlow is used by the LSP which needs to start the device flow but cannot block waiting for the token. The caller is expected to call PollDeviceFlow
-// The LSP will call PollDeviceFlow in a loop until it returns a token source, at which point the LSP can use the token source for authenticated requests. If PollDeviceFlow returns an error, the LSP should log the error and stop polling.
+// StartDeviceFlow starts a device auth flow for non-blocking clients (for
+// example the LSP) and stores the PKCE verifier needed by PollDeviceFlow.
 func (c *Config) StartDeviceFlow(ctx context.Context) (*oauth2.DeviceAuthResponse, error) {
-	return c.OAuth2Config().DeviceAuth(ctx, oauth2.SetAuthURLParam("audience", c.Audience))
+	config := c.OAuth2Config()
+	verifier := oauth2.GenerateVerifier()
+	response, err := config.DeviceAuth(ctx, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("audience", c.Audience))
+	if err != nil {
+		return nil, err
+	}
+	deviceFlowVerifiers.Store(response.DeviceCode, verifier)
+	return response, nil
 }
 
-// PollDeviceFlow is used by the LSP to poll for the token after StartDeviceFlow has been called. If the user has not completed the device flow, this function will return nil, nil, nil. If the user has completed the device flow and a token is available, this function will return a token source that can be used for authenticated requests. If there is an error during polling (e.g. network error), this function will return an error.
+// PollDeviceFlow waits for the user to complete a device auth flow started by
+// StartDeviceFlow, saves the token, and returns a token source that persists
+// refreshed tokens back to the cache.
 func (c *Config) PollDeviceFlow(ctx context.Context, resp *oauth2.DeviceAuthResponse) (oauth2.TokenSource, error) {
-	token, err := c.OAuth2Config().DeviceAccessToken(ctx, resp)
+	var opts []oauth2.AuthCodeOption
+	if verifier, ok := deviceFlowVerifiers.LoadAndDelete(resp.DeviceCode); ok {
+		opts = append(opts, oauth2.VerifierOption(verifier.(string)))
+	}
+
+	token, err := c.OAuth2Config().DeviceAccessToken(ctx, resp, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("device flow token exchange: %w", err)
 	}
