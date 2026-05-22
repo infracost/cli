@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,11 +10,13 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/api"
+	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 )
 
 const defaultPickOrgTitle = "Which organization do you want to use?"
@@ -26,7 +29,108 @@ func Org(cfg *config.Config) *cobra.Command {
 	cmd.AddCommand(orgList(cfg))
 	cmd.AddCommand(orgSwitch(cfg))
 	cmd.AddCommand(orgCurrent(cfg))
+	cmd.AddCommand(orgCreate(cfg))
 	return cmd
+}
+
+func orgCreate(cfg *config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "create [name]",
+		Short: "Create a new organization",
+		Long: "Create a new Infracost organization and make it the active org. " +
+			"Useful right after signing up if you don't already belong to an org — " +
+			"for example, when `infracost setup` reports you have no organizations.",
+		Example: `  # Create an org interactively
+  $ infracost org create
+
+  # Create an org with a specific name (works without a TTY)
+  $ infracost org create "Acme Corp"`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+
+			source, err := cfg.Auth.Token(ctx)
+			if err != nil {
+				return fmt.Errorf("authenticating: %w", err)
+			}
+
+			var name string
+			if len(args) == 1 {
+				name = strings.TrimSpace(args[0])
+			}
+			if name == "" {
+				if !ui.IsInteractive() {
+					return fmt.Errorf("no organization name provided and no interactive terminal available — pass the name as an argument (e.g. 'infracost org create \"Acme Corp\"')")
+				}
+				name, err = promptForOrgName("")
+				if err != nil {
+					if errors.Is(err, huh.ErrUserAborted) {
+						return nil
+					}
+					return err
+				}
+			}
+
+			org, err := createOrgAndCache(ctx, cfg, source, name)
+			if err != nil {
+				return err
+			}
+
+			ui.Successf("Created organization %s (%s)", ui.Accent(org.Slug), org.Name)
+			return nil
+		},
+	}
+}
+
+// promptForOrgName asks the user for an organization name. The optional
+// suggestion is offered as the default; the user can accept it or type
+// their own. Empty input re-prompts via huh's validator.
+func promptForOrgName(suggestion string) (string, error) {
+	name := suggestion
+	err := huh.NewInput().
+		Title("What should we call your organization?").
+		Description("This is shown to your teammates and in the dashboard.").
+		Value(&name).
+		Validate(func(s string) error {
+			if strings.TrimSpace(s) == "" {
+				return fmt.Errorf("name cannot be empty")
+			}
+			return nil
+		}).
+		WithTheme(ui.BrandTheme()).
+		Run()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(name), nil
+}
+
+// createOrgAndCache creates an organization via the dashboard API, then
+// refreshes the local user cache and pins the new org as the selected
+// one so subsequent CLI calls in this session use it without further
+// prompting.
+func createOrgAndCache(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, name string) (dashboard.Organization, error) {
+	client := cfg.Dashboard.Client(api.Client(ctx, source, ""))
+
+	org, err := client.CreateOrganization(ctx, name)
+	if err != nil {
+		return dashboard.Organization{}, fmt.Errorf("creating organization: %w", err)
+	}
+
+	uc, err := fetchAndCacheUser(ctx, cfg, client)
+	if err != nil {
+		// The org was created server-side; just warn so the next CLI run
+		// picks it up from the refreshed CurrentUser call.
+		logging.WithError(err).Msg("failed to refresh user cache after creating organization")
+		return org, nil
+	}
+	uc.SelectedOrgID = org.ID
+	if err := cfg.Auth.SaveUserCache(uc); err != nil {
+		logging.WithError(err).Msg("failed to save org selection after creating organization")
+	}
+	cfg.OrgID = org.ID
+
+	return org, nil
 }
 
 func orgList(cfg *config.Config) *cobra.Command {
