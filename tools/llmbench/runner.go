@@ -18,6 +18,12 @@ type runConfig struct {
 	FixtureFile   string
 	RefreshTarget bool
 	SkillURL      string
+	// SkillSourceOverrides maps skill-* format names to per-format SKILL.md
+	// source overrides (HTTP URL, file:// URL, or absolute path). Formats
+	// not in the map fall back to SkillURL (or the upstream default).
+	// Typically used to point skill-mcp at a local MCP-rewritten skill
+	// while the CLI variants keep the published upstream body.
+	SkillSourceOverrides map[string]string
 
 	// Bench dimensions
 	Formats  []string // any of: "bare-tf", "skill-default", "skill-llm", "skill-json"
@@ -87,6 +93,7 @@ var validFormats = map[string]bool{
 	"skill-default": true,
 	"skill-llm":     true,
 	"skill-json":    true,
+	"skill-mcp":     true,
 }
 
 // buildBareTFOrSkillPrompt produces the user-message prompt for a cell.
@@ -116,7 +123,7 @@ func buildBareTFOrSkillPrompt(formatName, question, policyContext string) string
 func runAll(ctx context.Context, cfg runConfig) ([]Cell, error) {
 	for _, f := range cfg.Formats {
 		if !validFormats[f] {
-			return nil, fmt.Errorf("unknown format %q (valid: bare-tf, skill-default, skill-llm, skill-json)", f)
+			return nil, fmt.Errorf("unknown format %q (valid: bare-tf, skill-default, skill-llm, skill-json, skill-mcp)", f)
 		}
 	}
 
@@ -186,7 +193,7 @@ func runCell(
 	prompt := buildBareTFOrSkillPrompt(formatName, q.Prompt, policyContext)
 	cell.PromptBytes = len(prompt)
 
-	cwd, cleanup, err := setupCellCwd(target, formatName)
+	cwd, mcpConfigPath, cleanup, err := setupCellCwd(target, formatName)
 	if err != nil {
 		cell.Error = err.Error()
 		return cell
@@ -203,11 +210,45 @@ func runCell(
 		// the model to modify the project.
 		AllowedTools: []string{"Bash", "Read"},
 	}
-	if formatName == "bare-tf" {
+	switch {
+	case formatName == "bare-tf":
 		// bare-tf only: sandbox HOME so the user's globally-installed
 		// skills (~/.claude/skills/, plugin skills) can't leak. Skill-*
 		// cells keep the real HOME so infracost CLI auth works.
 		opts.SandboxHome = sandboxHome
+	case formatName == "skill-mcp":
+		// skill-mcp: swap the Bash tool for the explicit MCP-tool surface
+		// so the model is forced through the MCP server. Read stays so
+		// the model can still open .tf files for context — same as the
+		// CLI variants.
+		//
+		// Tool names must be listed verbatim. Claude Code's allowedTools
+		// only supports wildcards inside args parens (e.g. `Bash(git *)`),
+		// not in the tool-name segment — so `mcp__infracost__*` matches
+		// nothing and silently leaves the model with zero MCP tools.
+		// The list below mirrors the AddTool registrations in
+		// internal/cmds/mcp.go; keep them in sync when new tools land.
+		opts.AllowedTools = []string{
+			"mcp__infracost__fetch_orgs",
+			"mcp__infracost__set_org",
+			"mcp__infracost__whoami",
+			"mcp__infracost__scan",
+			"mcp__infracost__price",
+			"mcp__infracost__policies",
+			"mcp__infracost__budgets",
+			"mcp__infracost__guardrails",
+			"mcp__infracost__doctor",
+			"mcp__infracost__inspect_summary",
+			"mcp__infracost__inspect_failing",
+			"mcp__infracost__inspect_diagnostics",
+			"mcp__infracost__inspect_resources",
+			"mcp__infracost__inspect_top_savings",
+			"mcp__infracost__inspect_policy_detail",
+			"mcp__infracost__inspect_budget_detail",
+			"mcp__infracost__inspect_guardrail_detail",
+			"Read",
+		}
+		opts.MCPConfigPath = mcpConfigPath
 	}
 
 	heartbeatDone := make(chan struct{})
@@ -249,36 +290,49 @@ func runCell(
 //
 // For bare-tf, no skill dir is written and the cell runs with
 // --disable-slash-commands to suppress any global skill auto-load.
-func setupCellCwd(target *Target, formatName string) (string, func(), error) {
+//
+// For skill-mcp, a `.mcp.json` is also written so the cell's claude
+// process loads the infracost MCP server (the second return value is the
+// path passed to --mcp-config). For other formats it's "".
+func setupCellCwd(target *Target, formatName string) (string, string, func(), error) {
 	tmp, err := os.MkdirTemp("", "llmbench-cell-*")
 	if err != nil {
-		return "", func() {}, err
+		return "", "", func() {}, err
 	}
 	cleanup := func() { _ = os.RemoveAll(tmp) }
 
 	if err := copyDir(target.Dir, tmp); err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("copy repo: %w", err)
+		return "", "", func() {}, fmt.Errorf("copy repo: %w", err)
 	}
 
 	if strings.HasPrefix(formatName, "skill-") {
 		skillBody, err := target.SkillVariant(formatName)
 		if err != nil {
 			cleanup()
-			return "", func() {}, err
+			return "", "", func() {}, err
 		}
 		skillDir := filepath.Join(tmp, ".claude", "skills", "infracost-scan")
 		if err := os.MkdirAll(skillDir, 0o750); err != nil {
 			cleanup()
-			return "", func() {}, err
+			return "", "", func() {}, err
 		}
 		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillBody), 0o600); err != nil {
 			cleanup()
-			return "", func() {}, err
+			return "", "", func() {}, err
 		}
 	}
 
-	return tmp, cleanup, nil
+	if formatName == "skill-mcp" {
+		mcpConfigPath, err := writeMCPConfig(tmp, target.BinPath)
+		if err != nil {
+			cleanup()
+			return "", "", func() {}, err
+		}
+		return tmp, mcpConfigPath, cleanup, nil
+	}
+
+	return tmp, "", cleanup, nil
 }
 
 // copyDir performs a recursive copy via the system `cp -R`. Faster and more
@@ -316,8 +370,11 @@ func openCellsJSONL(dir string) (string, *json.Encoder, func(), error) {
 
 func printDryRun(target *Target, questions []Question, cfg runConfig) {
 	fmt.Println("DRY RUN — no claude calls will be made.")
-	fmt.Printf("Target: %s\n  dir: %s\n  fixture: %s\n  skill source: %d bytes\n",
-		target.Slug, target.Dir, target.FixturePath, len(target.SkillSource))
+	fmt.Printf("Target: %s\n  dir: %s\n  fixture: %s\n",
+		target.Slug, target.Dir, target.FixturePath)
+	for f, body := range target.SkillSources {
+		fmt.Printf("  skill source for %s: %d bytes\n", f, len(body))
+	}
 	for _, f := range cfg.Formats {
 		if strings.HasPrefix(f, "skill-") {
 			body, err := target.SkillVariant(f)

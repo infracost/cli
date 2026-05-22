@@ -47,6 +47,11 @@ type claudeOpts struct {
 	SandboxHome  string
 	MaxTurns     int
 	AllowedTools []string
+	// MCPConfigPath, if set, is passed as `--mcp-config <path>` so claude
+	// loads MCP servers from our per-cell config. We also pass
+	// `--strict-mcp-config` so the user's own MCP servers (from
+	// ~/.claude or elsewhere) don't leak into the bench.
+	MCPConfigPath string
 }
 
 // ToolCallRecord captures one model→tool→model round-trip so we can
@@ -136,6 +141,9 @@ func (c *claudeClient) Run(ctx context.Context, opts claudeOpts) (*claudeResult,
 	}
 	if len(opts.AllowedTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(opts.AllowedTools, ","))
+	}
+	if opts.MCPConfigPath != "" {
+		args = append(args, "--mcp-config", opts.MCPConfigPath, "--strict-mcp-config")
 	}
 
 	start := time.Now()

@@ -1,6 +1,6 @@
 // Command llmbench measures end-to-end Claude Code cost, latency, and
 // accuracy on a real Terraform codebase. It runs each question across
-// four formats, each backed by one `claude -p` invocation per cell:
+// five formats, each backed by one `claude -p` invocation per cell:
 //
 //	bare-tf        no skill — `claude -p` with --disable-slash-commands.
 //	               The model has Bash + Read tools but no infracost
@@ -15,6 +15,12 @@
 //	               commands when reading machine-readable output.
 //	skill-json     same as skill-default plus a section recommending
 //	               `--json` instead.
+//	skill-mcp      the bench-built infracost is registered as an MCP
+//	               server (`infracost mcp`, stdio) via a per-cell
+//	               .mcp.json + --mcp-config. The model's tool surface
+//	               swaps Bash for `mcp__infracost__*`, and the skill
+//	               body's CLI examples map to MCP tool calls via a
+//	               translation preamble.
 //
 // Auth flows through the user's existing Claude Code session — no API
 // key needed. Run:
@@ -23,7 +29,8 @@
 //
 // The bare-tf vs skill-default comparison answers "does the skill help?";
 // skill-default vs skill-llm vs skill-json answers "which output flag
-// should the skill recommend?".
+// should the skill recommend?"; skill-default vs skill-mcp answers "does
+// the typed MCP surface beat shelling out to the CLI?".
 package main
 
 import (
@@ -46,8 +53,9 @@ func main() {
 		targetDir     = flag.String("target-dir", "", "Local path to a Terraform tree (overrides --target-repo)")
 		fixtureFile   = flag.String("fixture-file", "", "Path to a pre-captured `infracost scan --json` output (skips running infracost)")
 		refreshTarget = flag.Bool("refresh-target", false, "Re-clone the repo, re-run infracost, and re-fetch the skill even if cached")
-		formats       = flag.String("formats", "bare-tf,skill-default,skill-llm,skill-json", "comma-separated formats (bare-tf, skill-default, skill-llm, skill-json)")
-		skillURL      = flag.String("skill-url", "", "Override URL of the SKILL.md fetched for skill cells (defaults to infracost/agent-skills main)")
+		formats       = flag.String("formats", "bare-tf,skill-default,skill-llm,skill-json,skill-mcp", "comma-separated formats (bare-tf, skill-default, skill-llm, skill-json, skill-mcp)")
+		skillURL      = flag.String("skill-url", "", "Override URL or local path of the SKILL.md fetched for skill cells (defaults to infracost/agent-skills main). Accepts https://..., file://..., or an absolute path.")
+		skillSources  = flag.String("skill-sources", "", "Per-format SKILL.md source overrides, comma-separated key=value pairs (e.g. \"skill-mcp=file:///abs/path/SKILL.md,skill-llm=https://...\"). Formats not listed fall back to --skill-url. Useful for the CLI-vs-MCP comparison where each surface needs its own skill body.")
 		claudeBin     = flag.String("claude-bin", "/opt/homebrew/bin/claude", "Path to the claude CLI binary. Defaults to the Homebrew install path explicitly so we bypass any shell aliasing or Nix wrapper that resolves `claude` on $PATH to a sandboxed-user wrapper (which resets PATH for cell subprocesses and breaks our PATH-prepended infracost binary).")
 		model         = flag.String("model", "opus", "Model alias or full ID to pass to claude --model")
 		maxTurns      = flag.Int("max-turns", 25, "Pass to claude --max-turns (cap on agentic turns per cell)")
@@ -163,23 +171,29 @@ func main() {
 	}
 	fmt.Printf("Using infracost at %s (PATH-prepended for cell subprocesses)\n", binPath)
 
+	skillOverrides, err := parseSkillSources(*skillSources)
+	if err != nil {
+		fail(err)
+	}
+
 	cfg := runConfig{
-		TargetRepo:    *targetRepo,
-		TargetDir:     *targetDir,
-		FixtureFile:   *fixtureFile,
-		RefreshTarget: *refreshTarget,
-		SkillURL:      *skillURL,
-		Formats:       formatList,
-		Model:         *model,
-		ClaudeBin:     *claudeBin,
-		MaxTurns:      *maxTurns,
-		SandboxHome:   sandboxHome,
-		PolicyContext: policyContext,
-		InfracostBin:  binPath,
-		OutDir:        *out,
-		DryRun:        *dryRun,
-		Question:      *question,
-		Repeats:       *repeats,
+		TargetRepo:           *targetRepo,
+		TargetDir:            *targetDir,
+		FixtureFile:          *fixtureFile,
+		RefreshTarget:        *refreshTarget,
+		SkillURL:             *skillURL,
+		SkillSourceOverrides: skillOverrides,
+		Formats:              formatList,
+		Model:                *model,
+		ClaudeBin:            *claudeBin,
+		MaxTurns:             *maxTurns,
+		SandboxHome:          sandboxHome,
+		PolicyContext:        policyContext,
+		InfracostBin:         binPath,
+		OutDir:               *out,
+		DryRun:               *dryRun,
+		Question:             *question,
+		Repeats:              *repeats,
 	}
 
 	if *rerunFailed != "" {
@@ -232,6 +246,36 @@ func main() {
 	if reportPath != "" {
 		fmt.Printf("\nWrote %s (%d cells)\n", reportPath, len(results))
 	}
+}
+
+// parseSkillSources parses the --skill-sources flag into a map of
+// per-format SKILL.md source overrides. Format is comma-separated
+// `format=source` pairs; whitespace around tokens is trimmed; empty
+// entries are tolerated so the flag composes cleanly with shell
+// scripting. Source can be an HTTPS URL, a file:// URL, or an absolute
+// path — fetchSkillSource picks the right loader.
+func parseSkillSources(s string) (map[string]string, error) {
+	out := map[string]string{}
+	if strings.TrimSpace(s) == "" {
+		return out, nil
+	}
+	for _, kv := range strings.Split(s, ",") {
+		kv = strings.TrimSpace(kv)
+		if kv == "" {
+			continue
+		}
+		idx := strings.IndexByte(kv, '=')
+		if idx <= 0 || idx == len(kv)-1 {
+			return nil, fmt.Errorf("--skill-sources entry %q is not of the form format=source", kv)
+		}
+		key := strings.TrimSpace(kv[:idx])
+		val := strings.TrimSpace(kv[idx+1:])
+		if _, exists := out[key]; exists {
+			return nil, fmt.Errorf("--skill-sources: duplicate entry for %q", key)
+		}
+		out[key] = val
+	}
+	return out, nil
 }
 
 func splitCSV(s string) []string {
@@ -315,7 +359,7 @@ func loadCellsJSONL(spec string) ([]Cell, error) {
 
 // uniqueFormats preserves the canonical ordering for report column layout.
 func uniqueFormats(cells []Cell) []string {
-	order := []string{"bare-tf", "skill-default", "skill-llm", "skill-json", "json", "llm"}
+	order := []string{"bare-tf", "skill-default", "skill-llm", "skill-json", "skill-mcp", "json", "llm"}
 	seen := map[string]bool{}
 	for _, c := range cells {
 		seen[c.Format] = true
