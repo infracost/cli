@@ -33,7 +33,7 @@ func (c *Config) DeviceFlow(ctx context.Context) (oauth2.TokenSource, *oauth2.To
 
 	token, err := config.DeviceAccessToken(ctx, response, oauth2.VerifierOption(verifier))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, loginDeniedFromOAuthError(err)
 	}
 	return config.TokenSource(ctx, token), token, nil
 }
@@ -62,6 +62,9 @@ func (c *Config) PollDeviceFlow(ctx context.Context, resp *oauth2.DeviceAuthResp
 
 	token, err := c.OAuth2Config().DeviceAccessToken(ctx, resp, opts...)
 	if err != nil {
+		if denied := loginDeniedFromOAuthError(err); denied != err {
+			return nil, denied
+		}
 		return nil, fmt.Errorf("device flow token exchange: %w", err)
 	}
 
