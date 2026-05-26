@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 
+	"github.com/infracost/cli/internal/api/agents"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cache"
@@ -56,6 +57,9 @@ type Config struct {
 
 	// Dashboard contains the configuration for the dashboard API.
 	Dashboard dashboard.Config
+
+	// Agents contains the configuration for the Agents API (findings).
+	Agents agents.Config
 
 	// Events contains the configuration for the events API.
 	Events events.Config

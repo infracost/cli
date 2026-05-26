@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/stretchr/testify/assert"
@@ -302,4 +303,141 @@ func TestDoctorToolOutputSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
+}
+
+func TestFindingsListToolOutputSchema(t *testing.T) {
+	schema, err := findingsListToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+
+	// Even on list rows, Agents may include `trigger_detail` (it's omitempty
+	// on the Go side but the API does emit it on some rows). The schema
+	// must accept any JSON value rather than the byte-slice default.
+	assertOpenJSONSchema(t, schema, "findings", "items", "trigger_detail")
+}
+
+// TestFindingsGetToolOutputSchema asserts the schema's object-ness and
+// also pins the open-schema treatment of every Agents field documented as
+// `unknown` / `Record<string, unknown>`. Without the rawJSONSchemaOverride
+// jsonschema-go infers json.RawMessage as `{"type":["null","array"],
+// "items":{"type":"integer","minimum":0,"maximum":255}}` — which rejects
+// every real payload the API returns (object, scalar, etc.) and was the
+// proximate cause of the validation error this regression test guards.
+func TestFindingsGetToolOutputSchema(t *testing.T) {
+	schema, err := findingsGetToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+
+	assertOpenJSONSchema(t, schema, "finding", "trigger_detail")
+	assertOpenJSONSchema(t, schema, "finding", "tasks", "items", "action_context")
+	assertOpenJSONSchema(t, schema, "finding", "tasks", "items", "events", "items", "detail")
+	assertOpenJSONSchema(t, schema, "finding", "actions", "items", "config")
+	assertOpenJSONSchema(t, schema, "finding", "actions", "items", "result")
+	assertOpenJSONSchema(t, schema, "finding", "events", "items", "detail")
+}
+
+func TestPreviewFixToolOutputSchema(t *testing.T) {
+	schema, err := previewFixToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+
+	// PreviewFixResult.Config is the drafted action blob — open JSON so
+	// the agent (and any client) can hand it back to create_fix verbatim.
+	assertOpenJSONSchema(t, schema, "config")
+}
+
+func TestCreateFixToolOutputSchema(t *testing.T) {
+	schema, err := createFixToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
+
+// TestCreateFixToolInputSchema is the input-side counterpart. The MCP
+// SDK normally infers the input schema by reflection, which would render
+// CreateFixInput.ConfigJSON (json.RawMessage) as an integer array —
+// making it impossible for an LLM to round-trip the config blob it just
+// received from preview_fix. createFixToolInputSchema applies the same
+// rawJSONSchemaOverride so the wire shapes match on both ends.
+func TestCreateFixToolInputSchema(t *testing.T) {
+	schema, err := createFixToolInputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+
+	assertOpenJSONSchema(t, schema, "config")
+}
+
+func TestUpdateFindingStatusToolOutputSchema(t *testing.T) {
+	schema, err := updateFindingStatusToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+
+	// The wrapped Finding carries the same RawMessage fields findings_get
+	// does — make sure the override carried through this schema too.
+	assertOpenJSONSchema(t, schema, "finding", "trigger_detail")
+	assertOpenJSONSchema(t, schema, "finding", "actions", "items", "config")
+}
+
+func TestUpdateTaskStatusToolOutputSchema(t *testing.T) {
+	schema, err := updateTaskStatusToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+
+	// The nested Task carries action_context + event detail as
+	// RawMessage; the open-schema treatment is required for the same
+	// reason findings_get needs it.
+	assertOpenJSONSchema(t, schema, "task", "action_context")
+	assertOpenJSONSchema(t, schema, "task", "events", "items", "detail")
+}
+
+func TestRetryActionToolOutputSchema(t *testing.T) {
+	schema, err := retryActionToolOutputSchema()
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	assert.Equal(t, "object", schema.Type)
+}
+
+// assertOpenJSONSchema follows the given object-property / "items" path
+// through schema and asserts the leaf is the permissive object schema
+// rawJSONSchemaOverride installs — `type: object`, no per-property /
+// item constraints. The regression we're guarding against is
+// jsonschema-go's default RawMessage inference (a byte-array schema
+// with `items.type=integer, minimum=0, maximum=255` and an outer
+// `type: ["null", "array"]`), which would reappear as `cur.Items !=
+// nil` or `cur.Types != nil`. The leaf is also asserted to marshal as
+// a JSON object rather than the boolean `true` an empty schema would
+// produce, because MCP hosts reject boolean tool schemas at
+// registration time.
+func assertOpenJSONSchema(t *testing.T, schema *jsonschema.Schema, path ...string) {
+	t.Helper()
+	require.NotNil(t, schema, "starting schema is nil")
+	cur := schema
+	for i, step := range path {
+		require.NotNilf(t, cur, "schema is nil at %v", path[:i])
+		if step == "items" {
+			require.NotNilf(t, cur.Items, "missing items at %v", path[:i+1])
+			cur = cur.Items
+			continue
+		}
+		require.NotNilf(t, cur.Properties, "missing properties at %v", path[:i])
+		next, ok := cur.Properties[step]
+		require.Truef(t, ok, "missing property %q at %v", step, path[:i])
+		cur = next
+	}
+	require.NotNilf(t, cur, "leaf schema is nil at %v", path)
+	assert.Equalf(t, "object", cur.Type, "expected open object schema at %v, got Type=%q", path, cur.Type)
+	assert.Nilf(t, cur.Types, "expected open object schema at %v, got Types=%v", path, cur.Types)
+	assert.Nilf(t, cur.Items, "expected open object schema at %v (Items being set means the byte-array default crept back), got Items=%v", path, cur.Items)
+	assert.Nilf(t, cur.Properties, "expected open object schema at %v, got Properties=%v", path, cur.Properties)
+
+	encoded, err := json.Marshal(cur)
+	require.NoError(t, err)
+	assert.Truef(t, len(encoded) > 0 && encoded[0] == '{',
+		"expected leaf at %v to marshal as a JSON object so MCP hosts accept it, got %s", path, encoded)
 }
