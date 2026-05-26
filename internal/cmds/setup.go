@@ -14,6 +14,7 @@ import (
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/version"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 )
 
 // requireUserLogin returns an error if the user is authenticated via a service
@@ -37,11 +38,82 @@ func requireUserLogin(cfg *config.Config) error {
 // is mostly a no-op — the user/org cache is consulted with no API call
 // unless it's stale.
 func ensureAuthAndOrg(ctx context.Context, cfg *config.Config) error {
-	if ts := cfg.Auth.TokenFromCache(ctx); ts != nil {
+	ts := cfg.Auth.TokenFromCache(ctx)
+	if ts != nil {
 		ui.Success("Already logged in")
-		return resolveOrg(ctx, cfg, ts)
+	} else {
+		if err := RunLogin(ctx, cfg); err != nil {
+			return err
+		}
+		ts, _ = cfg.Auth.Token(ctx)
 	}
-	return RunLogin(ctx, cfg)
+
+	if err := resolveOrg(ctx, cfg, ts); err != nil {
+		return err
+	}
+	return ensureOrgExists(ctx, cfg, ts)
+}
+
+// ensureOrgExists handles the brand-new-signup case where the user
+// authenticated successfully but doesn't belong to any organization yet.
+// Auth0's register action can leave a user in this state when the
+// dashboard's separateUserAndOrganization signup flag is on (see
+// FIX-189), so the CLI creates the org itself rather than punting the
+// user to the web dashboard.
+func ensureOrgExists(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) error {
+	uc, err := cfg.Auth.LoadUserCache()
+	if err != nil || uc == nil || len(uc.Organizations) > 0 {
+		return nil
+	}
+
+	if !ui.IsInteractive() {
+		return fmt.Errorf("you don't belong to any organizations yet — create one with 'infracost org create \"<name>\"', then re-run this command")
+	}
+
+	fmt.Println()
+	ui.Heading("Create your organization")
+	fmt.Println()
+
+	name, err := promptForOrgName(suggestedOrgName(uc.Email))
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return errors.New("organization creation cancelled")
+		}
+		return err
+	}
+
+	org, err := createOrgAndCache(ctx, cfg, source, name)
+	if err != nil {
+		return err
+	}
+
+	ui.Successf("Created organization %s", ui.Accent(org.Slug))
+	return nil
+}
+
+// suggestedOrgName turns the user's email into a plausible default org
+// name (e.g. "alice@acme.io" → "Acme"). Returns "" if the email doesn't
+// look usable, which leaves the prompt empty and lets the user type
+// whatever they want.
+func suggestedOrgName(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 || at == len(email)-1 {
+		return ""
+	}
+	domain := email[at+1:]
+	if dot := strings.Index(domain, "."); dot > 0 {
+		domain = domain[:dot]
+	}
+	// Skip personal-email providers — defaulting to "Gmail" or "Outlook"
+	// would just confuse people. Better to start with an empty prompt.
+	switch strings.ToLower(domain) {
+	case "gmail", "googlemail", "outlook", "hotmail", "yahoo", "icloud", "proton", "protonmail":
+		return ""
+	}
+	if domain == "" {
+		return ""
+	}
+	return strings.ToUpper(domain[:1]) + domain[1:]
 }
 
 func Setup(cfg *config.Config) *cobra.Command {

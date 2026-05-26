@@ -44,6 +44,7 @@ type RunParameters struct {
 
 type Client interface {
 	CurrentUser(ctx context.Context) (CurrentUser, error)
+	CreateOrganization(ctx context.Context, name string) (Organization, error)
 	RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error)
 	HasRepo(ctx context.Context, orgID, repoName string) (bool, error)
 }
@@ -89,6 +90,41 @@ func (c *client) CurrentUser(ctx context.Context) (CurrentUser, error) {
 		return r.Data.CurrentUser, errors.New(strings.Join(errs, ";"))
 	}
 	return r.Data.CurrentUser, nil
+}
+
+func (c *client) CreateOrganization(ctx context.Context, name string) (Organization, error) {
+	const query = `mutation CreateOrganization($organization: CreateOrganizationInput!) {
+  createOrganization(organization: $organization) {
+    id
+    name
+    slug
+    roles {
+      id
+    }
+  }
+}`
+
+	type response struct {
+		CreateOrganization Organization `json:"createOrganization"`
+	}
+
+	variables := map[string]interface{}{
+		"organization": map[string]interface{}{"name": name},
+	}
+
+	r, err := graphql.Query[response](ctx, c.client, fmt.Sprintf("%s/graphql", c.config.Endpoint), query, variables)
+	if err != nil {
+		return Organization{}, err
+	}
+
+	if len(r.Errors) > 0 {
+		var errs []string
+		for _, e := range r.Errors {
+			errs = append(errs, e.Message)
+		}
+		return Organization{}, errors.New(strings.Join(errs, ";"))
+	}
+	return r.Data.CreateOrganization, nil
 }
 
 func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error) {
