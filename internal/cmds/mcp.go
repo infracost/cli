@@ -43,6 +43,14 @@ stdin/stdout.`,
 			if err != nil {
 				return fmt.Errorf("infracost mcp cannot start: authenticating: %w", err)
 			}
+			// Long-lived MCP sessions outlive a single oauth refresh
+			// token. Another process (a CLI invocation, a web login)
+			// can rotate the token while we hold a stale in-memory
+			// snapshot; WrapWithReload re-reads the on-disk cache on
+			// invalid_grant so the next tool call recovers
+			// transparently instead of failing until the user bounces
+			// the server.
+			source = cfg.Auth.WrapWithReload(cmd.Context(), source)
 			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
 				return fmt.Errorf("infracost mcp cannot start: %w", err)
 			}
