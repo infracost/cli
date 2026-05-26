@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,6 +55,75 @@ func (c *Config) wrapWithCache(src oauth2.TokenSource, token *oauth2.Token) oaut
 		p.lastRefresh = token.RefreshToken
 	}
 	return p
+}
+
+// rereadingTokenSource wraps an oauth2.TokenSource so that an
+// invalid_grant from the underlying source triggers a one-time re-read
+// of the on-disk cache. The in-memory refresh token can fall out of
+// sync with the on-disk cache when another process (a CLI invocation,
+// a web login) rotates it, and Auth0 invalidates the previous refresh
+// token on rotation; without this, long-lived oauth-backed processes
+// (the MCP server) keep using the stale in-memory copy and fail every
+// request until they're bounced.
+type rereadingTokenSource struct {
+	reload func() (oauth2.TokenSource, error)
+	mu     sync.Mutex
+	inner  oauth2.TokenSource
+}
+
+func (r *rereadingTokenSource) Token() (*oauth2.Token, error) {
+	r.mu.Lock()
+	src := r.inner
+	r.mu.Unlock()
+
+	tok, err := src.Token()
+	if err == nil || !isInvalidGrant(err) {
+		return tok, err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Another goroutine may have already reloaded between our unlock
+	// and re-lock; if so, try its source before reloading again.
+	if r.inner != src {
+		return r.inner.Token()
+	}
+	fresh, ferr := r.reload()
+	if ferr != nil || fresh == nil {
+		return nil, err // surface the original invalid_grant
+	}
+	r.inner = fresh
+	return r.inner.Token()
+}
+
+func isInvalidGrant(err error) bool {
+	var oerr *oauth2.RetrieveError
+	return errors.As(err, &oerr) && oerr.ErrorCode == "invalid_grant"
+}
+
+// WrapWithReload wraps ts so an oauth2 invalid_grant from a subsequent
+// refresh triggers a re-read of the on-disk token cache and a single
+// retry. Intended for long-lived oauth-backed processes (the MCP
+// server) where another process may rotate the refresh token between
+// requests. Short-lived CLI invocations don't need this — their
+// in-memory snapshot and the on-disk cache are always the same age.
+//
+// The reload path is non-interactive: if the on-disk cache is also
+// dead, the original invalid_grant surfaces so the user can re-auth.
+func (c *Config) WrapWithReload(ctx context.Context, ts oauth2.TokenSource) oauth2.TokenSource {
+	return &rereadingTokenSource{
+		inner: ts,
+		reload: func() (oauth2.TokenSource, error) {
+			fresh, _, err := c.LoadCache(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if fresh == nil {
+				return nil, fmt.Errorf("no usable token in on-disk cache")
+			}
+			return fresh, nil
+		},
+	}
 }
 
 func (c *Config) LoadCache(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, error) {
