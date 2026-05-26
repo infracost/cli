@@ -27,7 +27,13 @@ type Target struct {
 	Dir         string         // absolute path to a checked-out Terraform tree
 	FixturePath string         // absolute path to the cached infracost --json output
 	Fixture     *format.Output // parsed fixture (ground truth)
-	SkillSource string         // raw upstream SKILL.md including YAML frontmatter
+	// SkillSources maps each skill-* format in cfg.Formats to the raw
+	// SKILL.md body it should embed. By default every format gets the
+	// same body (fetched from cfg.SkillURL or the upstream default), but
+	// cfg.SkillSourceOverrides can swap individual formats — typically
+	// pointing skill-mcp at a local MCP-rewritten SKILL.md while the CLI
+	// variants keep the published upstream body.
+	SkillSources map[string]string
 	// BinPath is the absolute path to the infracost binary cells should
 	// invoke. Threaded into the skill variants so the model never types
 	// bare `infracost` (which can hit a system-installed legacy version
@@ -70,18 +76,18 @@ func resolveTarget(ctx context.Context, cfg runConfig) (*Target, error) {
 		return nil, fmt.Errorf("parse fixture %s: %w", fixturePath, err)
 	}
 
-	skillSource, err := resolveSkillSource(ctx, cfg, cacheRoot)
+	skillSources, err := resolveSkillSources(ctx, cfg, cacheRoot)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Target{
-		Slug:        slug,
-		Dir:         dir,
-		FixturePath: fixturePath,
-		Fixture:     &out,
-		SkillSource: skillSource,
-		BinPath:     cfg.InfracostBin,
+		Slug:         slug,
+		Dir:          dir,
+		FixturePath:  fixturePath,
+		Fixture:      &out,
+		SkillSources: skillSources,
+		BinPath:      cfg.InfracostBin,
 	}, nil
 }
 
@@ -90,46 +96,96 @@ func resolveTarget(ctx context.Context, cfg runConfig) (*Target, error) {
 // runConfig.SkillURL for a private fork.
 const defaultSkillURL = "https://raw.githubusercontent.com/infracost/agent-skills/main/plugins/infracost/skills/scan/SKILL.md"
 
-// resolveSkillSource fetches the upstream SKILL.md verbatim (frontmatter
-// included) and caches it. We keep the raw markdown rather than a stripped
-// "prompt body" because each skill cell writes a copy to its temp dir's
-// `.claude/skills/infracost-scan/SKILL.md`, where Claude Code's skill
-// loader expects the original frontmatter to be present.
-func resolveSkillSource(ctx context.Context, cfg runConfig, cacheRoot string) (string, error) {
-	url := cfg.SkillURL
-	if url == "" {
-		url = defaultSkillURL
-	}
+// resolveSkillSources fetches one SKILL.md body per skill-* format in
+// cfg.Formats and returns them keyed by format. Formats with an entry in
+// cfg.SkillSourceOverrides use that URL/path; the rest fall back to
+// cfg.SkillURL (or the upstream default).
+//
+// Bodies are kept raw (frontmatter included) because each skill cell
+// writes a copy to its temp dir's `.claude/skills/infracost-scan/
+// SKILL.md`, where Claude Code's skill loader expects the original
+// frontmatter to be present.
+//
+// The same source URL is fetched at most once per call: when multiple
+// formats share a source (e.g. skill-default + skill-llm both default to
+// the upstream URL), they get the same in-memory body.
+func resolveSkillSources(ctx context.Context, cfg runConfig, cacheRoot string) (map[string]string, error) {
 	skillsDir := filepath.Join(cacheRoot, "skills")
 	if err := os.MkdirAll(skillsDir, 0o750); err != nil {
-		return "", err
+		return nil, err
 	}
+
+	defaultURL := cfg.SkillURL
+	if defaultURL == "" {
+		defaultURL = defaultSkillURL
+	}
+
+	byURL := map[string]string{} // memoize per-source so we don't re-fetch
+	out := map[string]string{}
+	for _, f := range cfg.Formats {
+		if !strings.HasPrefix(f, "skill-") {
+			continue
+		}
+		src := defaultURL
+		if override, ok := cfg.SkillSourceOverrides[f]; ok && override != "" {
+			src = override
+		}
+		if body, ok := byURL[src]; ok {
+			out[f] = body
+			continue
+		}
+		body, err := fetchSkillSource(ctx, src, skillsDir, cfg.RefreshTarget)
+		if err != nil {
+			return nil, fmt.Errorf("resolve skill for %s: %w", f, err)
+		}
+		byURL[src] = body
+		out[f] = body
+	}
+	return out, nil
+}
+
+// fetchSkillSource loads a SKILL.md body from either an HTTP(S) URL or a
+// local file. file:// URLs and bare absolute paths both read directly
+// from disk and skip the cache — local files are already on the user's
+// machine, so caching just creates a stale-copy trap. Remote URLs are
+// fetched once and cached under cacheDir so repeat runs are offline-safe.
+func fetchSkillSource(ctx context.Context, urlOrPath, cacheDir string, refresh bool) (string, error) {
+	if strings.HasPrefix(urlOrPath, "file://") || strings.HasPrefix(urlOrPath, "/") {
+		path := strings.TrimPrefix(urlOrPath, "file://")
+		b, err := os.ReadFile(path) //nolint:gosec // path is bench-operator-supplied via --skill-url / --skill-sources flag
+		if err != nil {
+			return "", fmt.Errorf("read local skill %s: %w", path, err)
+		}
+		fmt.Printf("Using local skill: %s\n", path)
+		return string(b), nil
+	}
+
 	// Drop any trailing `.md` from the URL slug so we don't end up with
 	// foo-SKILL.md.md when the URL itself ends in .md.
-	cacheBase := strings.TrimSuffix(slugifyURL(url), ".md")
-	cachePath := filepath.Join(skillsDir, cacheBase+".md")
+	cacheBase := strings.TrimSuffix(slugifyURL(urlOrPath), ".md")
+	cachePath := filepath.Join(cacheDir, cacheBase+".md")
 
-	if !cfg.RefreshTarget {
+	if !refresh {
 		if b, err := os.ReadFile(cachePath); err == nil { //nolint:gosec // cachePath is bench cache dir + slug, not user input
 			fmt.Printf("Using cached skill: %s\n", cachePath)
 			return string(b), nil
 		}
 	}
 
-	fmt.Printf("Fetching skill: %s → %s\n", url, cachePath)
+	fmt.Printf("Fetching skill: %s → %s\n", urlOrPath, cachePath)
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(cctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, urlOrPath, nil)
 	if err != nil {
 		return "", err
 	}
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // URL is from bench config / built-in default, not user input
 	if err != nil {
-		return "", fmt.Errorf("fetch skill %s: %w", url, err)
+		return "", fmt.Errorf("fetch skill %s: %w", urlOrPath, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("fetch skill %s: HTTP %d", url, resp.StatusCode)
+		return "", fmt.Errorf("fetch skill %s: HTTP %d", urlOrPath, resp.StatusCode)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -153,12 +209,27 @@ func resolveSkillSource(ctx context.Context, cfg runConfig, cacheRoot string) (s
 //
 // `skill-llm` / `skill-json` add the format-flag override appendix on
 // top, again referring to the bench-built binary by absolute path.
+//
+// `skill-mcp` is a pure passthrough: the source body is already
+// MCP-native and host-agnostic (it names tools by their bare names and
+// trusts the agent to resolve them against whatever namespace the host
+// applies — `mcp__infracost__<name>` in Claude Code, something else in
+// other hosts). Injecting a Claude-Code-specific preamble would couple
+// the bench to one host's convention and stop measuring the skill as
+// real users will see it.
 func (t *Target) SkillVariant(format string) (string, error) {
+	source, ok := t.SkillSources[format]
+	if !ok {
+		return "", fmt.Errorf("no skill source resolved for format %q", format)
+	}
+	if format == "skill-mcp" {
+		return source, nil
+	}
 	preamble, err := t.skillBinaryPathPreamble()
 	if err != nil {
 		return "", err
 	}
-	body := injectBinaryPath(t.SkillSource, preamble)
+	body := injectBinaryPath(source, preamble)
 	switch format {
 	case "skill-default":
 		return body, nil
@@ -330,6 +401,39 @@ Do not:
 `
 }
 
+// writeMCPConfig writes a .mcp.json into the cell's cwd that registers
+// the bench-built infracost binary as an MCP server named "infracost".
+// Returns the absolute path so the caller can pass it to claude via
+// --mcp-config (which bypasses the interactive approval headless `claude
+// -p` would otherwise demand for project-level MCP servers).
+//
+// We resolve to absolute up front because the cell's cwd is a relative
+// MkdirTemp path under our TMPDIR; claude resolves a relative
+// --mcp-config arg against its own cwd, which would double-prefix it
+// (cell-cwd + cell-cwd + .mcp.json) and 404.
+func writeMCPConfig(cwd, binPath string) (string, error) {
+	cfg := map[string]any{
+		"mcpServers": map[string]any{
+			"infracost": map[string]any{
+				"command": binPath,
+				"args":    []string{"mcp"},
+			},
+		},
+	}
+	body, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal mcp config: %w", err)
+	}
+	path, err := filepath.Abs(filepath.Join(cwd, ".mcp.json"))
+	if err != nil {
+		return "", fmt.Errorf("resolve mcp config path: %w", err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return "", fmt.Errorf("write mcp config: %w", err)
+	}
+	return path, nil
+}
+
 func resolveTargetDir(ctx context.Context, cfg runConfig, cacheRoot string) (string, string, error) {
 	if cfg.TargetDir != "" {
 		abs, err := filepath.Abs(cfg.TargetDir)
@@ -404,11 +508,19 @@ func resolveFixture(ctx context.Context, cfg runConfig, cacheRoot, slug, repoDir
 		}
 	}
 
-	infracost := infracostBinary()
+	// Prefer the bench-built infracost (absolute path) over PATH lookup.
+	// PATH-prepending lands us a relative path like
+	// `tools/llmbench/.cache/bin/infracost` which Go refuses to exec
+	// (relative-from-PATH-lookup is blocked since 1.19), and a
+	// system-installed `infracost` would likely lack scan / --llm / etc.
+	infracost := cfg.InfracostBin
+	if infracost == "" {
+		infracost = infracostBinary()
+	}
 	fmt.Printf("Running %s scan --json %s → %s\n", infracost, repoDir, fixturePath)
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, infracost, "scan", "--json", repoDir) //nolint:gosec // infracost binary path resolved via PATH lookup, repoDir from bench config
+	cmd := exec.CommandContext(cctx, infracost, "scan", "--json", repoDir) //nolint:gosec // infracost binary path is cfg.InfracostBin (absolute, bench-built) or a PATH lookup fallback
 	out, err := cmd.Output()
 	if err != nil {
 		// Surface stderr so the user sees auth / plugin errors, not just exit code.

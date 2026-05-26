@@ -93,6 +93,7 @@ func writeReport(dir string, cells []Cell, cfg runConfig) (string, error) {
 		"skill-default": 1,
 		"skill-llm":     2,
 		"skill-json":    3,
+		"skill-mcp":     4,
 	}
 	sort.Slice(keys, func(i, j int) bool {
 		if keys[i].target != keys[j].target {
@@ -167,7 +168,7 @@ func writeReport(dir string, cells []Cell, cfg runConfig) (string, error) {
 
 	// Per-question breakdown.
 	w("\n## Per-question accuracy\n\n")
-	allCols := []string{"bare-tf", "skill-default", "skill-llm", "skill-json"}
+	allCols := []string{"bare-tf", "skill-default", "skill-llm", "skill-json", "skill-mcp"}
 	seenCols := map[string]bool{}
 	for _, c := range cells {
 		seenCols[c.Format] = true
