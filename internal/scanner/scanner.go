@@ -240,6 +240,21 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
+	// Populate the parser's ARM supported-resource set from the
+	// Azurerm provider plugin once per scan, when any project in the
+	// run is ARM-typed. Without this the parser defaults to
+	// "everything supported" and ARM types the providers binary
+	// doesn't handle get silently dropped on the providers
+	// translator's unhandled-fallthrough.
+	if hasARMProject(repoConfig.Projects) {
+		if err := s.populateARMSupportedResources(ctx); err != nil {
+			// Non-fatal: scan can still proceed with the parser's
+			// supported-by-default behaviour; only the
+			// silently-dropped-as-unsupported quirk persists.
+			logging.WithError(err).Msg("failed to fetch ARM supported resources from Azurerm provider plugin; falling back to parser defaults")
+		}
+	}
+
 	for _, project := range repoConfig.Projects {
 		projectResult, err := pkgscanner.ScanProject(ctx, &pkgscanner.ScanProjectOptions{
 			RootDir:           absoluteDirectory,
@@ -316,4 +331,33 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	}
 
 	return &result, nil
+}
+
+// hasARMProject reports whether any of the autodetect-emitted
+// projects in this scan is ARM-typed. Used to decide whether to load
+// the Azurerm provider plugin early (to call ListSupportedResources)
+// rather than waiting for the post-parse Process step.
+func hasARMProject(projects []*repoconfig.Project) bool {
+	for _, p := range projects {
+		if p.Type == repoconfig.ProjectTypeARM {
+			return true
+		}
+	}
+	return false
+}
+
+// populateARMSupportedResources ensures the Azurerm provider plugin
+// is on disk, spawns it, asks for its supported set, and stashes the
+// ARM slice on the parser plugin config. parseARM picks it up and
+// passes it through InitializeRequest before each parse.
+func (s *Scanner) populateARMSupportedResources(ctx context.Context) error {
+	if err := s.Plugins.EnsureProvider(provider.Provider_PROVIDER_AZURERM); err != nil {
+		return fmt.Errorf("failed to ensure Azurerm provider plugin: %w", err)
+	}
+	supp, err := s.Plugins.Providers.ARMSupportedResources(ctx, s.Plugins.Providers.LoadAzurerm)
+	if err != nil {
+		return fmt.Errorf("failed to query Azurerm provider plugin for supported resources: %w", err)
+	}
+	s.Plugins.Parser.SupportedARMResources = supp
+	return nil
 }

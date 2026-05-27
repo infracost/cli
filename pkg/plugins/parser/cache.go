@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -13,6 +14,22 @@ import (
 	"github.com/infracost/cli/internal/protocache"
 	repoconfig "github.com/infracost/config"
 )
+
+// pluginCacheVersion returns a stable string keyed to the parser
+// plugin binary itself. Used in the parse-cache key so rebuilding the
+// plugin invalidates the cached result. Falls back to the empty
+// string when the binary can't be statted — same shape as the
+// pre-version cache, so worst case we degrade to "always cache hit".
+func pluginCacheVersion(path string) string {
+	if path == "" {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatInt(info.ModTime().UnixNano(), 10)
+}
 
 func createCacheKey(path, parserVersion string, cfg *repoconfig.Config, project *repoconfig.Project) protocache.Key {
 	return protocache.Key(hash(
@@ -83,6 +100,11 @@ func projectConfigToString(project *repoconfig.Project) string {
 			project.AWS.StackName,
 			project.AWS.Region,
 			project.AWS.AccountID,
+			project.Azure.SubscriptionID,
+			project.Azure.TenantID,
+			project.Azure.ResourceGroupName,
+			project.Azure.Location,
+			project.Azure.ManagementGroupID,
 		},
 		"\x00",
 	)

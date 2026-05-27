@@ -122,6 +122,89 @@ func (_c *MockProviderServiceClient_ListFinopsPolicies_Call) RunAndReturn(run fu
 	return _c
 }
 
+// ListSupportedResources provides a mock function for the type MockProviderServiceClient
+func (_mock *MockProviderServiceClient) ListSupportedResources(ctx context.Context, in *provider.ListSupportedResourcesRequest, opts ...grpc.CallOption) (*provider.ListSupportedResourcesResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListSupportedResources")
+	}
+
+	var r0 *provider.ListSupportedResourcesResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *provider.ListSupportedResourcesRequest, ...grpc.CallOption) (*provider.ListSupportedResourcesResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *provider.ListSupportedResourcesRequest, ...grpc.CallOption) *provider.ListSupportedResourcesResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*provider.ListSupportedResourcesResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *provider.ListSupportedResourcesRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockProviderServiceClient_ListSupportedResources_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListSupportedResources'
+type MockProviderServiceClient_ListSupportedResources_Call struct {
+	*mock.Call
+}
+
+// ListSupportedResources is a helper method to define mock.On call
+//   - ctx context.Context
+//   - in *provider.ListSupportedResourcesRequest
+//   - opts ...grpc.CallOption
+func (_e *MockProviderServiceClient_Expecter) ListSupportedResources(ctx interface{}, in interface{}, opts ...interface{}) *MockProviderServiceClient_ListSupportedResources_Call {
+	return &MockProviderServiceClient_ListSupportedResources_Call{Call: _e.mock.On("ListSupportedResources",
+		append([]interface{}{ctx, in}, opts...)...)}
+}
+
+func (_c *MockProviderServiceClient_ListSupportedResources_Call) Run(run func(ctx context.Context, in *provider.ListSupportedResourcesRequest, opts ...grpc.CallOption)) *MockProviderServiceClient_ListSupportedResources_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *provider.ListSupportedResourcesRequest
+		if args[1] != nil {
+			arg1 = args[1].(*provider.ListSupportedResourcesRequest)
+		}
+		var arg2 []grpc.CallOption
+		var variadicArgs []grpc.CallOption
+		if len(args) > 2 {
+			variadicArgs = args[2].([]grpc.CallOption)
+		}
+		arg2 = variadicArgs
+		run(
+			arg0,
+			arg1,
+			arg2...,
+		)
+	})
+	return _c
+}
+
+func (_c *MockProviderServiceClient_ListSupportedResources_Call) Return(listSupportedResourcesResponse *provider.ListSupportedResourcesResponse, err error) *MockProviderServiceClient_ListSupportedResources_Call {
+	_c.Call.Return(listSupportedResourcesResponse, err)
+	return _c
+}
+
+func (_c *MockProviderServiceClient_ListSupportedResources_Call) RunAndReturn(run func(ctx context.Context, in *provider.ListSupportedResourcesRequest, opts ...grpc.CallOption) (*provider.ListSupportedResourcesResponse, error)) *MockProviderServiceClient_ListSupportedResources_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Process provides a mock function for the type MockProviderServiceClient
 func (_mock *MockProviderServiceClient) Process(ctx context.Context, in *provider.ProcessRequest, opts ...grpc.CallOption) (*provider.ProcessResponse, error) {
 	var tmpRet mock.Arguments

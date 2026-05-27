@@ -87,6 +87,7 @@ func (c *Config) ensurePerIaCPlugins() {
 	perIaCPlugins := []string{
 		"infracost-parser-plugin-terraform",
 		"infracost-parser-plugin-cloudformation",
+		"infracost-parser-plugin-arm",
 	}
 
 	for _, name := range perIaCPlugins {

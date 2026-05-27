@@ -13,6 +13,7 @@ import (
 	"github.com/infracost/cli/pkg/logging"
 	repoconfig "github.com/infracost/config"
 	"github.com/infracost/proto/gen/go/infracost/parser/api"
+	armpb "github.com/infracost/proto/gen/go/infracost/parser/arm"
 	"github.com/infracost/proto/gen/go/infracost/parser/cloudformation"
 	"github.com/infracost/proto/gen/go/infracost/parser/options"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
@@ -26,9 +27,13 @@ func (c *Config) Parse(ctx context.Context, path string, cfg *repoconfig.Config,
 
 	var cache protocache.Cache[*api.ParseResponse]
 
-	// TODO: we probably want to include the parser plugin version in the cache key, but we need to decide how to get that - we could add a new method to the plugin interface that returns the version
-	parserPluginVersion := ""
-	cacheKey := createCacheKey(path, parserPluginVersion, cfg, project)
+	// Bind the cache key to the plugin binary's mtime — a deterministic
+	// stand-in for a real plugin version. Without this, iterating on the
+	// parser plugin (rebuild, re-scan) silently returns the old cached
+	// response. A proper Version RPC on the plugin would be cleaner, but
+	// mtime gives us correctness today and falls back to "" cleanly when
+	// the path isn't statable.
+	cacheKey := createCacheKey(path, pluginCacheVersion(c.Plugin), cfg, project)
 	if response, err := cache.Load(cacheKey); err == nil {
 		return response, nil
 	} else if !errors.Is(err, protocache.ErrCacheMiss) {
@@ -39,7 +44,6 @@ func (c *Config) Parse(ctx context.Context, path string, cfg *repoconfig.Config,
 		return nil, err
 	}
 	if err := cache.Save(cacheKey, response); err != nil {
-		// log the error but don't fail the whole parse if we can't save to cache
 		logging.Warnf("failed to save parse result to cache: %s", err)
 	}
 	return response, nil
@@ -85,7 +89,6 @@ func (c *Config) tryPerIaCPlugins(ctx context.Context, path string, cfg *repocon
 		return nil, false, fmt.Errorf("failed to initialize per-IaC plugin %s: %w", plugin.Name, err)
 	}
 
-	// Route to appropriate parse method based on what the plugin detected.
 	switch projectType {
 	case "terraform":
 		resp, err := c.parseTerraformWith(ctx, client, path, cfg, project, opts)
@@ -96,6 +99,9 @@ func (c *Config) tryPerIaCPlugins(ctx context.Context, path string, cfg *repocon
 	case "cloudformation":
 		resp, err := c.parseCloudFormationWith(ctx, client, path, project, opts)
 		return resp, true, err
+	case "arm":
+		resp, err := c.parseARMWith(ctx, client, path, project, opts)
+		return resp, true, err
 	default:
 		logging.Debugf("per-IaC plugin %q returned unknown project type %q, falling back", plugin.Name, projectType)
 		return nil, false, nil
@@ -104,6 +110,21 @@ func (c *Config) tryPerIaCPlugins(ctx context.Context, path string, cfg *repocon
 
 // legacyRoute is the existing hardcoded routing logic (mono-parser fallback).
 func (c *Config) legacyRoute(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
+	// When the project config declares a type, honour it. Autodetect
+	// populates Type for every project it discovers, so this is the
+	// fast path. Extension-based dispatch below is a fallback for
+	// callers that pass a bare path without going through autodetect
+	// (eg. the LSP single-file flow).
+	switch project.Type {
+	case repoconfig.ProjectTypeTerraform, repoconfig.ProjectTypeTerragrunt:
+		return c.parseTerraform(ctx, terraformDir(path), cfg, project, level, options)
+	case repoconfig.ProjectTypeCloudFormation:
+		return c.parseCloudFormation(ctx, path, project, level, options)
+	case repoconfig.ProjectTypeARM:
+		return c.parseARM(ctx, path, project, level, options)
+	}
+
+	// If the path points to a directory, assume Terraform.
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return c.parseTerraform(ctx, path, cfg, project, level, options)
 	}
@@ -120,7 +141,17 @@ func (c *Config) legacyRoute(ctx context.Context, path string, cfg *repoconfig.C
 		return c.parseCloudFormation(ctx, path, project, level, options)
 	}
 
-	return nil, fmt.Errorf("unsupported file type: %s, only Terraform and CloudFormation are supported", ext)
+	return nil, fmt.Errorf("unsupported file type: %s, only Terraform, CloudFormation, and ARM are supported", ext)
+}
+
+// terraformDir resolves the directory to hand to the terraform parser.
+// Terraform projects are directory-shaped (the parser loads every .tf
+// file alongside), so if path is a file we walk up one level.
+func terraformDir(path string) string {
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return path
+	}
+	return filepath.Dir(path)
 }
 
 // parseTerraformWith uses a specific client (per-IaC plugin) instead of loading the mono-parser.
@@ -197,6 +228,40 @@ func (c *Config) parseCloudFormationWith(ctx context.Context, client api.ParserS
 	})
 }
 
+// parseARMWith uses a specific client (per-IaC plugin) instead of loading the mono-parser.
+func (c *Config) parseARMWith(ctx context.Context, client api.ParserServiceClient, path string, project *repoconfig.Project, opts *options.GenericOptions) (*api.ParseResponse, error) {
+	var azureContext *armpb.AzureContext
+	if project.Azure.SubscriptionID != "" ||
+		project.Azure.TenantID != "" ||
+		project.Azure.ResourceGroupName != "" ||
+		project.Azure.Location != "" ||
+		project.Azure.ManagementGroupID != "" {
+		azureContext = &armpb.AzureContext{
+			SubscriptionId:    project.Azure.SubscriptionID,
+			TenantId:          project.Azure.TenantID,
+			ResourceGroupName: project.Azure.ResourceGroupName,
+			Location:          project.Azure.Location,
+			ManagementGroupId: project.Azure.ManagementGroupID,
+		}
+	}
+
+	return client.Parse(ctx, &api.ParseRequest{
+		RepoDirectory:    opts.RepoDirectory,
+		WorkingDirectory: opts.WorkingDirectory,
+		Target: &api.ParseRequestTarget{
+			Value: &api.ParseRequestTarget_Arm{
+				Arm: &armpb.Target{
+					TemplatePath: path,
+					Options: &armpb.Options{
+						Generic:      opts,
+						AzureContext: azureContext,
+					},
+				},
+			},
+		},
+	})
+}
+
 func (c *Config) parseTerraform(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
 	client, stop, err := c.Load(level)
 	if stop != nil {
@@ -234,18 +299,18 @@ func (c *Config) parseTerraform(ctx context.Context, path string, cfg *repoconfi
 			Value: &api.ParseRequestTarget_Terraform{
 				Terraform: &terraform.Target{
 					Directory:    path,
-					LoadedModule: nil, // not needed for root module
+					LoadedModule: nil,
 					Options: &terraform.Options{
 						Generic:                     options,
-						SourceMap:                   nil, // only currently supported in ICP
+						SourceMap:                   nil,
 						RegexSourceMap:              regexSourceMap,
 						Env:                         project.Env,
-						Vars:                        nil, // TODO: we need to convert these from the project config format to the parser plugin format
-						DefaultTags:                 nil, // we don't currently load these from yor/hcp etc. but may want to in the future
-						RemoteVars:                  nil, // we might want to load these from hcp/spacelift etc. in future
+						Vars:                        nil,
+						DefaultTags:                 nil,
+						RemoteVars:                  nil,
 						Workspace:                   project.Terraform.Workspace,
 						TfVarsFiles:                 project.Terraform.VarFiles,
-						ForceLocalModulePaths:       false, // only needed for debugging - we probably prefer showing remove module paths rather than local cache ones...
+						ForceLocalModulePaths:       false,
 						TerraformCloudConfiguration: cloudConfig,
 					},
 				},
@@ -254,6 +319,60 @@ func (c *Config) parseTerraform(ctx context.Context, path string, cfg *repoconfi
 	})
 	if err != nil {
 		return response, fmt.Errorf("failed to parse terraform: %w", err)
+	}
+	return response, nil
+}
+
+func (c *Config) parseARM(ctx context.Context, path string, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
+	client, stop, err := c.Load(level)
+	if stop != nil {
+		defer stop()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to load parser plugin: %w", err)
+	}
+
+	initReq := &api.InitializeRequest{
+		ArmSupportedResources: c.SupportedARMResources,
+	}
+	if _, err := client.Initialize(ctx, initReq); err != nil {
+		return nil, fmt.Errorf("failed to initialize parser: %w", err)
+	}
+
+	var azureContext *armpb.AzureContext
+	if project.Azure.SubscriptionID != "" ||
+		project.Azure.TenantID != "" ||
+		project.Azure.ResourceGroupName != "" ||
+		project.Azure.Location != "" ||
+		project.Azure.ManagementGroupID != "" {
+		azureContext = &armpb.AzureContext{
+			SubscriptionId:    project.Azure.SubscriptionID,
+			TenantId:          project.Azure.TenantID,
+			ResourceGroupName: project.Azure.ResourceGroupName,
+			Location:          project.Azure.Location,
+			ManagementGroupId: project.Azure.ManagementGroupID,
+		}
+	}
+
+	response, err := client.Parse(ctx, &api.ParseRequest{
+		RepoDirectory:    options.RepoDirectory,
+		WorkingDirectory: options.WorkingDirectory,
+		Target: &api.ParseRequestTarget{
+			Value: &api.ParseRequestTarget_Arm{
+				Arm: &armpb.Target{
+					TemplatePath: path,
+					Flags:        0,
+					Options: &armpb.Options{
+						Generic:         options,
+						InputParameters: nil,
+						AzureContext:    azureContext,
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return response, fmt.Errorf("failed to parse arm: %w", err)
 	}
 	return response, nil
 }
@@ -288,10 +407,10 @@ func (c *Config) parseCloudFormation(ctx context.Context, path string, project *
 			Value: &api.ParseRequestTarget_Cloudformation{
 				Cloudformation: &cloudformation.Target{
 					TemplatePath: path,
-					Flags:        0, // empty by default
+					Flags:        0,
 					Options: &cloudformation.Options{
 						Generic:         options,
-						InputParameters: nil, // TODO: load these from somewhere
+						InputParameters: nil,
 						AwsContext:      awsContext,
 					},
 				},

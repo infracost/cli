@@ -94,4 +94,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/infracost/proto => ../proto
+replace (
+	github.com/infracost/config => ../config
+	github.com/infracost/proto => ../proto
+)

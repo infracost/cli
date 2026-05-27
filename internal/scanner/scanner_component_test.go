@@ -6,6 +6,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +19,8 @@ import (
 	providerMock "github.com/infracost/cli/pkg/plugins/providers/mocks"
 	"github.com/infracost/proto/gen/go/infracost/parser"
 	"github.com/infracost/proto/gen/go/infracost/parser/api"
+	armpb "github.com/infracost/proto/gen/go/infracost/parser/arm"
+	"github.com/infracost/proto/gen/go/infracost/parser/cloudformation"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
 	"github.com/infracost/proto/gen/go/infracost/provider"
@@ -81,6 +84,11 @@ func newTestScanner(t *testing.T, opts testScannerOpts) *Scanner {
 		m.EXPECT().ListFinopsPolicies(mock.Anything, mock.Anything).Return(&provider.ListFinopsPoliciesResponse{
 			Policies: policies,
 		}, nil).Maybe()
+		// Optional — scanner.Scan calls this once for ARM-typed projects to
+		// populate the parser's InitializeRequest. .Maybe() so non-ARM tests
+		// don't trip over an unexpected-call assertion.
+		m.EXPECT().ListSupportedResources(mock.Anything, mock.Anything).
+			Return(&provider.ListSupportedResourcesResponse{}, nil).Maybe()
 		processCall := m.EXPECT().Process(mock.Anything, mock.Anything)
 		if opts.processValidator != nil {
 			processCall.Run(func(_ context.Context, in *provider.ProcessRequest, _ ...grpc.CallOption) {
@@ -293,6 +301,44 @@ func awsTerraformParseResponse(resourceTypes ...string) *api.ParseResponse {
 	}
 }
 
+// awsCloudFormationParseResponse returns a ParseResponse shaped like a
+// CFN parse result. The resource types don't drive provider routing
+// (the scanner hardcodes CFN → AWS), so the keys are illustrative.
+func awsCloudFormationParseResponse(resourceTypes ...string) *api.ParseResponse {
+	resources := make(map[string]*cloudformation.Resource, len(resourceTypes))
+	for i, rt := range resourceTypes {
+		resources[fmt.Sprintf("R%d", i)] = &cloudformation.Resource{Type: rt}
+	}
+	return &api.ParseResponse{
+		Result: &api.ParseResponseResult{
+			Value: &api.ParseResponseResult_Cloudformation{
+				Cloudformation: &cloudformation.Result{
+					Resources: resources,
+				},
+			},
+		},
+	}
+}
+
+// azureARMParseResponse returns a ParseResponse shaped like an ARM
+// parse result. Scanner routing for ARM is hardcoded to AZURERM, so
+// the resource types are illustrative only.
+func azureARMParseResponse(resourceTypes ...string) *api.ParseResponse {
+	resources := make(map[string]*armpb.Resource, len(resourceTypes))
+	for i, rt := range resourceTypes {
+		resources[fmt.Sprintf("R%d", i)] = &armpb.Resource{Type: rt}
+	}
+	return &api.ParseResponse{
+		Result: &api.ParseResponseResult{
+			Value: &api.ParseResponseResult_Arm{
+				Arm: &armpb.Result{
+					Resources: resources,
+				},
+			},
+		},
+	}
+}
+
 func TestScan(t *testing.T) {
 	t.Run("basic scan with aws resources", func(t *testing.T) {
 		dir := writeTestProject(t)
@@ -315,6 +361,52 @@ func TestScan(t *testing.T) {
 		if result.Projects[0].Resources[0].Name != "aws_instance.web" {
 			t.Errorf("expected resource name %q, got %q", "aws_instance.web", result.Projects[0].Resources[0].Name)
 		}
+	})
+
+	t.Run("cloudformation result routes to aws provider", func(t *testing.T) {
+		dir := writeTestProject(t, `version: "0.3"
+projects:
+  - path: .
+    name: test-project
+    type: cloudformation
+`)
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: awsCloudFormationParseResponse("AWS::EC2::Instance"),
+			awsResources: []*provider.Resource{
+				{Name: "MyInstance", Type: "AWS::EC2::Instance"},
+			},
+		})
+
+		result, err := s.Scan(context.Background(), dashboard.RunParameters{
+			UsageDefaults: emptyUsageDefaults(t),
+		}, dir, "main", auth.AuthenticationToken("test-token"))
+		require.NoError(t, err)
+		require.Len(t, result.Projects, 1)
+		require.Len(t, result.Projects[0].Resources, 1, "expected the AWS provider mock to be invoked for a CFN parse response")
+		require.Equal(t, "MyInstance", result.Projects[0].Resources[0].Name)
+	})
+
+	t.Run("arm result routes to azurerm provider", func(t *testing.T) {
+		dir := writeTestProject(t, `version: "0.3"
+projects:
+  - path: .
+    name: test-project
+    type: arm
+`)
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: azureARMParseResponse("Microsoft.Storage/storageAccounts"),
+			azureResources: []*provider.Resource{
+				{Name: "examplestorage", Type: "Microsoft.Storage/storageAccounts"},
+			},
+		})
+
+		result, err := s.Scan(context.Background(), dashboard.RunParameters{
+			UsageDefaults: emptyUsageDefaults(t),
+		}, dir, "main", auth.AuthenticationToken("test-token"))
+		require.NoError(t, err)
+		require.Len(t, result.Projects, 1)
+		require.Len(t, result.Projects[0].Resources, 1, "expected the Azurerm provider mock to be invoked for an ARM parse response")
+		require.Equal(t, "examplestorage", result.Projects[0].Resources[0].Name)
 	})
 
 	t.Run("repo usage file is loaded", func(t *testing.T) {
