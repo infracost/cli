@@ -178,7 +178,7 @@ const (
 // UpdateTaskStatus is the unified task-mutation entry point. It validates
 // the verb + reason combination, then routes to whichever Agents endpoint
 // matches the user's intent. The two Agents endpoints have different wire
-// shapes; the function normalises them into UpdateTaskStatusResult so
+// shapes; the function normalizes them into UpdateTaskStatusResult so
 // the CLI / MCP layers only need one renderer.
 //
 // Confirm and correct go through POST /report (so the AgentLearning
