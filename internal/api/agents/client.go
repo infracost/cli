@@ -7,7 +7,7 @@
 // Shapes mirror coast/packages/types/index.ts. Where Agents emits
 // snake_case JSON, the Go fields use the canonical Go casing with
 // explicit json tags; numeric money fields are float64s because the
-// underlying TS API serialises them that way.
+// underlying TS API serializes them that way.
 package agents
 
 import (
@@ -190,7 +190,7 @@ type CreateActionResponse struct {
 // endpoint. The API rejects anything outside this set with a 400; we
 // constrain at the type level so callers can't accidentally send a
 // task-level status (e.g. "in_progress") which is a transition the
-// finding lifecycle doesn't recognise.
+// finding lifecycle doesn't recognize.
 type FindingStatus string
 
 const (
@@ -229,7 +229,7 @@ type ReportTaskRequest struct {
 }
 
 // TaskStatus is the discriminator accepted by the task-status PATCH
-// endpoint. Agents itself recognises more transient states
+// endpoint. Agents itself recognizes more transient states
 // (`in_progress`, `awaiting_resolution`, `auto_*`) which are normally
 // derived from the action lifecycle rather than set by hand; the CLI
 // exposes only the user-driven targets, with [TaskStatusDismissed]
@@ -243,7 +243,7 @@ const (
 )
 
 // UpdateTaskStatusRequest is the PATCH body. DismissedReason is only
-// honoured by Agents when status is `dismissed` — for other targets the
+// honored by Agents when status is `dismissed` — for other targets the
 // field is ignored server-side, so omitempty keeps the wire shape clean.
 type UpdateTaskStatusRequest struct {
 	Status           TaskStatus `json:"status"`

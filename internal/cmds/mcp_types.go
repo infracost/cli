@@ -18,7 +18,7 @@ import (
 // Action.Config / Action.Result, FindingEvent.Detail,
 // FindingTaskEvent.Detail, plus PreviewFixResult.Config and
 // CreateFixInput.ConfigJSON in the CLI's own types). jsonschema-go's
-// reflection-based inference doesn't recognise RawMessage as opaque JSON
+// reflection-based inference doesn't recognize RawMessage as opaque JSON
 // — it sees `type RawMessage []byte` and emits
 // `{"type":["null","array"],"items":{"type":"integer","minimum":0,"maximum":255}}`,
 // which rejects every real payload the API returns.
@@ -27,7 +27,7 @@ import (
 //   - MCP hosts (which require tool schemas to be objects) accept the
 //     declaration at registration time.
 //   - LLM tool-use layers know to send a JSON object on the wire rather
-//     than serialising the value as a string. Without a declared type
+//     than serializing the value as a string. Without a declared type
 //     they default to string, which is what Agents rejected as
 //     `invalid type or config` when create_fix received a stringified
 //     config.
