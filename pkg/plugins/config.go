@@ -61,6 +61,8 @@ func (c *Config) Process() {
 
 func (c *Config) EnsureParser() error {
 	if c.Parser.Plugin != "" {
+		parser.PluginDir = filepath.Dir(c.Parser.Plugin)
+		c.ensurePerIaCPlugins()
 		return nil
 	}
 
@@ -69,7 +71,44 @@ func (c *Config) EnsureParser() error {
 		return err
 	}
 	c.Parser.Plugin = path
+	parser.PluginDir = filepath.Dir(path)
+	c.ensurePerIaCPlugins()
 	return nil
+}
+
+// ensurePerIaCPlugins downloads any available per-IaC parser plugins into the
+// same directory as the mono-parser. Failures are non-fatal — the mono-parser
+// fallback still works.
+func (c *Config) ensurePerIaCPlugins() {
+	if parser.PluginDir == "" {
+		return
+	}
+
+	perIaCPlugins := []string{
+		"infracost-parser-plugin-terraform",
+		"infracost-parser-plugin-cloudformation",
+	}
+
+	for _, name := range perIaCPlugins {
+		path, err := c.Ensure(name, "")
+		if err != nil {
+			logging.Debugf("per-IaC plugin %s not available: %v", name, err)
+			continue
+		}
+
+		dest := filepath.Join(parser.PluginDir, pluginBinaryName(name))
+		if path == dest {
+			continue
+		}
+
+		// Symlink into the plugin directory so the manager finds it.
+		if _, err := os.Stat(dest); err == nil {
+			continue
+		}
+		if err := os.Symlink(path, dest); err != nil {
+			logging.Debugf("failed to symlink per-IaC plugin %s: %v", name, err)
+		}
+	}
 }
 
 func (c *Config) EnsureProvider(provider proto.Provider) error {

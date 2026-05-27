@@ -39,6 +39,74 @@ func (_m *MockParserServiceClient) EXPECT() *MockParserServiceClient_Expecter {
 	return &MockParserServiceClient_Expecter{mock: &_m.Mock}
 }
 
+// Describe provides a mock function for the type MockParserServiceClient
+func (_mock *MockParserServiceClient) Describe(ctx context.Context, in *api.DescribeRequest, opts ...grpc.CallOption) (*api.DescribeResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for Describe")
+	}
+
+	var r0 *api.DescribeResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *api.DescribeRequest, ...grpc.CallOption) (*api.DescribeResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *api.DescribeRequest, ...grpc.CallOption) *api.DescribeResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*api.DescribeResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *api.DescribeRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// Detect provides a mock function for the type MockParserServiceClient
+func (_mock *MockParserServiceClient) Detect(ctx context.Context, in *api.DetectRequest, opts ...grpc.CallOption) (*api.DetectResponse, error) {
+	var tmpRet mock.Arguments
+	if len(opts) > 0 {
+		tmpRet = _mock.Called(ctx, in, opts)
+	} else {
+		tmpRet = _mock.Called(ctx, in)
+	}
+	ret := tmpRet
+
+	if len(ret) == 0 {
+		panic("no return value specified for Detect")
+	}
+
+	var r0 *api.DetectResponse
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *api.DetectRequest, ...grpc.CallOption) (*api.DetectResponse, error)); ok {
+		return returnFunc(ctx, in, opts...)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *api.DetectRequest, ...grpc.CallOption) *api.DetectResponse); ok {
+		r0 = returnFunc(ctx, in, opts...)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*api.DetectResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *api.DetectRequest, ...grpc.CallOption) error); ok {
+		r1 = returnFunc(ctx, in, opts...)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
 // Initialize provides a mock function for the type MockParserServiceClient
 func (_mock *MockParserServiceClient) Initialize(ctx context.Context, in *api.InitializeRequest, opts ...grpc.CallOption) (*api.InitializeResponse, error) {
 	var tmpRet mock.Arguments

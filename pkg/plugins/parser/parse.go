@@ -18,6 +18,10 @@ import (
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
 )
 
+// PluginDir is the directory to scan for per-IaC parser plugins.
+// Set by the CLI before parsing begins. If empty, only the mono-parser is used.
+var PluginDir string
+
 func (c *Config) Parse(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
 
 	var cache protocache.Cache[*api.ParseResponse]
@@ -42,28 +46,155 @@ func (c *Config) Parse(ctx context.Context, path string, cfg *repoconfig.Config,
 }
 
 func (c *Config) parseWithoutCache(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
-	// If the path points to a directory, assume Terraform.
+	// Step 1: Try per-IaC plugins if any are available.
+	if resp, handled, err := c.tryPerIaCPlugins(ctx, path, cfg, project, level, options); handled {
+		return resp, err
+	}
+
+	// Step 2: Fallback to existing mono-parser routing.
+	return c.legacyRoute(ctx, path, cfg, project, level, options)
+}
+
+// tryPerIaCPlugins attempts to detect and parse using per-IaC plugins.
+// Returns (response, true, err) if a plugin handled the path, or (nil, false, nil) to fall back.
+func (c *Config) tryPerIaCPlugins(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, opts *options.GenericOptions) (*api.ParseResponse, bool, error) {
+	if PluginDir == "" {
+		return nil, false, nil
+	}
+
+	mgr := NewPluginManager(PluginDir, level)
+	defer mgr.Close()
+
+	if !mgr.HasPlugins() {
+		return nil, false, nil
+	}
+
+	plugin, projectType, err := mgr.Detect(ctx, path)
+	if err != nil {
+		logging.Debugf("per-IaC plugin detection error: %v, falling back to mono-parser", err)
+		return nil, false, nil
+	}
+	if plugin == nil {
+		return nil, false, nil
+	}
+
+	logging.Debugf("per-IaC plugin %q claimed path %s as %s", plugin.Name, path, projectType)
+
+	client := plugin.Client()
+	if _, err := client.Initialize(ctx, new(api.InitializeRequest)); err != nil {
+		return nil, false, fmt.Errorf("failed to initialize per-IaC plugin %s: %w", plugin.Name, err)
+	}
+
+	// Route to appropriate parse method based on what the plugin detected.
+	switch projectType {
+	case "terraform":
+		resp, err := c.parseTerraformWith(ctx, client, path, cfg, project, opts)
+		return resp, true, err
+	case "terragrunt":
+		resp, err := c.parseTerraformWith(ctx, client, path, cfg, project, opts)
+		return resp, true, err
+	case "cloudformation":
+		resp, err := c.parseCloudFormationWith(ctx, client, path, project, opts)
+		return resp, true, err
+	default:
+		logging.Debugf("per-IaC plugin %q returned unknown project type %q, falling back", plugin.Name, projectType)
+		return nil, false, nil
+	}
+}
+
+// legacyRoute is the existing hardcoded routing logic (mono-parser fallback).
+func (c *Config) legacyRoute(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return c.parseTerraform(ctx, path, cfg, project, level, options)
 	}
 
-	// If it's a file (or Stat failed), decide by extension.
 	name := filepath.Base(path)
 	ext := strings.ToLower(filepath.Ext(name))
 
-	// Terraform: .tf files or .tf.json
 	if ext == ".tf" || strings.HasSuffix(strings.ToLower(name), ".tf.json") {
 		return c.parseTerraform(ctx, filepath.Dir(path), cfg, project, level, options)
-
 	}
 
-	// CloudFormation common template extensions: .json, .yaml, .yml, .template
 	switch ext {
 	case ".json", ".yaml", ".yml", ".template":
 		return c.parseCloudFormation(ctx, path, project, level, options)
 	}
 
 	return nil, fmt.Errorf("unsupported file type: %s, only Terraform and CloudFormation are supported", ext)
+}
+
+// parseTerraformWith uses a specific client (per-IaC plugin) instead of loading the mono-parser.
+func (c *Config) parseTerraformWith(ctx context.Context, client api.ParserServiceClient, path string, cfg *repoconfig.Config, project *repoconfig.Project, opts *options.GenericOptions) (*api.ParseResponse, error) {
+	dir := path
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		dir = filepath.Dir(path)
+	}
+
+	var regexSourceMap map[string]string
+	if len(cfg.Terraform.SourceMap) > 0 {
+		regexSourceMap = make(map[string]string, len(cfg.Terraform.SourceMap))
+		for _, source := range cfg.Terraform.SourceMap {
+			regexSourceMap[source.Match] = source.Replace
+		}
+	}
+
+	var cloudConfig *terraform.TerraformCloudConfiguration
+	if project.Terraform.Cloud.Org != "" {
+		cloudConfig = &terraform.TerraformCloudConfiguration{
+			Organization: project.Terraform.Cloud.Org,
+			Hostname:     project.Terraform.Cloud.Host,
+			Workspace:    project.Terraform.Cloud.Workspace,
+		}
+	}
+
+	return client.Parse(ctx, &api.ParseRequest{
+		RepoDirectory:    opts.RepoDirectory,
+		WorkingDirectory: opts.WorkingDirectory,
+		Target: &api.ParseRequestTarget{
+			Value: &api.ParseRequestTarget_Terraform{
+				Terraform: &terraform.Target{
+					Directory: dir,
+					Options: &terraform.Options{
+						Generic:                     opts,
+						RegexSourceMap:              regexSourceMap,
+						Env:                         project.Env,
+						Workspace:                   project.Terraform.Workspace,
+						TfVarsFiles:                 project.Terraform.VarFiles,
+						TerraformCloudConfiguration: cloudConfig,
+					},
+				},
+			},
+		},
+	})
+}
+
+// parseCloudFormationWith uses a specific client (per-IaC plugin) instead of loading the mono-parser.
+func (c *Config) parseCloudFormationWith(ctx context.Context, client api.ParserServiceClient, path string, project *repoconfig.Project, opts *options.GenericOptions) (*api.ParseResponse, error) {
+	var awsContext *cloudformation.AwsContext
+	if project.AWS.AccountID != "" || project.AWS.Region != "" || project.AWS.StackID != "" || project.AWS.StackName != "" {
+		awsContext = &cloudformation.AwsContext{
+			AccountId: project.AWS.AccountID,
+			Region:    project.AWS.Region,
+			StackId:   project.AWS.StackID,
+			StackName: project.AWS.StackName,
+		}
+	}
+
+	return client.Parse(ctx, &api.ParseRequest{
+		RepoDirectory:    opts.RepoDirectory,
+		WorkingDirectory: opts.WorkingDirectory,
+		Target: &api.ParseRequestTarget{
+			Value: &api.ParseRequestTarget_Cloudformation{
+				Cloudformation: &cloudformation.Target{
+					TemplatePath: path,
+					Options: &cloudformation.Options{
+						Generic:    opts,
+						AwsContext: awsContext,
+					},
+				},
+			},
+		},
+	})
 }
 
 func (c *Config) parseTerraform(ctx context.Context, path string, cfg *repoconfig.Config, project *repoconfig.Project, level hclog.Level, options *options.GenericOptions) (*api.ParseResponse, error) {
