@@ -16,6 +16,11 @@ type Organization struct {
 	Name  string `json:"name"`
 	Slug  string `json:"slug"`
 	Roles []Role `json:"roles"`
+	// AgentsEnabled reports whether Infracost Agents (findings / tasks /
+	// actions) is enabled for this org. Driven server-side by the
+	// coast-access entitlement; the CLI gates the Agents commands and MCP
+	// tools on it, surfacing a waitlist message when it's false.
+	AgentsEnabled bool `json:"agentsEnabled"`
 }
 
 type Role struct {
@@ -66,6 +71,7 @@ func (c *client) CurrentUser(ctx context.Context) (CurrentUser, error) {
       id
       name
       slug
+      agentsEnabled
       roles {
         id
       }

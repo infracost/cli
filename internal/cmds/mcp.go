@@ -3,7 +3,6 @@ package cmds
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/infracost/cli/internal/api/events"
@@ -17,18 +16,6 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 )
-
-// agentsToolsEnabled reports whether the Agents-backed MCP tools
-// (findings_list / findings_get / preview_fix / create_fix /
-// update_finding_status / update_task_status / retry_action) should be
-// registered. Defaults to off: the feature is internal until the
-// product rename is complete, and gating at registration time keeps it
-// invisible from tools/list rather than surfacing a "disabled"
-// description the LLM might still try to call.
-func agentsToolsEnabled() bool {
-	v := os.Getenv("INFRACOST_CLI_AGENTS_ENABLED")
-	return v == "1" || v == "true"
-}
 
 // MCPCmd builds the `infracost mcp` cobra command — a Model Context
 // Protocol stdio server. Authentication and the active organization are
@@ -284,9 +271,7 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 			return nil, result, nil
 		})
 
-	if agentsToolsEnabled() {
-		registerAgentsMCPTools(srv, cfg, source)
-	}
+	registerAgentsMCPTools(srv, cfg, source)
 
 	registerInspectMCPTools(srv, store)
 
@@ -322,10 +307,11 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 		})
 }
 
-// registerAgentsMCPTools attaches the Agents-backed tools to srv.
-// Gated by [agentsToolsEnabled] from the caller — these are the
-// findings / tasks / actions surfaces, kept hidden from default MCP
-// sessions until the rebrand is complete.
+// registerAgentsMCPTools attaches the Agents-backed tools (findings /
+// tasks / actions) to srv. The tools are always registered so an agent
+// can discover them; each handler gates on the active org's agentsEnabled
+// flag via ensureAgentsEnabled and returns a friendly early-access /
+// waitlist message when the org isn't switched on.
 func registerAgentsMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSource) {
 	findingsListSchema, err := findingsListToolOutputSchema()
 	if err != nil {
@@ -902,9 +888,11 @@ func setOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, 
 
 	// Update the in-memory cfg so subsequent tool calls in this session
 	// operate against the new org without going through the whole
-	// resolveOrg pipeline again.
+	// resolveOrg pipeline again. applyActiveOrgByID also refreshes the
+	// resolved slug + agentsEnabled flag so the Agents gate reflects the
+	// newly-selected org rather than the one resolved at startup.
 	cfg.Org = in.Slug
-	cfg.OrgID = orgID
+	applyActiveOrgByID(cfg, uc.Organizations, orgID)
 
 	// Persist so the next MCP session (or CLI invocation) starts on
 	// the same org, mirroring what `infracost org switch <slug>` does.

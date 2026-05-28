@@ -68,6 +68,9 @@ func PreviewFix(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	if cfg.OrgID == "" {
 		return PreviewFixResult{}, fmt.Errorf("no organization selected")
 	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return PreviewFixResult{}, err
+	}
 	actionType, err := resolveAutomatableActionType(in.Type)
 	if err != nil {
 		return PreviewFixResult{}, err
@@ -104,6 +107,9 @@ func CreateFix(ctx context.Context, cfg *config.Config, source oauth2.TokenSourc
 	}
 	if cfg.OrgID == "" {
 		return CreateFixResult{}, fmt.Errorf("no organization selected")
+	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return CreateFixResult{}, err
 	}
 	actionType, err := resolveAnyActionType(in.Type)
 	if err != nil {
@@ -201,6 +207,9 @@ func UpdateTaskStatus(ctx context.Context, cfg *config.Config, source oauth2.Tok
 	}
 	if cfg.OrgID == "" {
 		return UpdateTaskStatusResult{}, fmt.Errorf("no organization selected")
+	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return UpdateTaskStatusResult{}, err
 	}
 
 	client := cfg.Agents.Client(api.Client(ctx, source, cfg.OrgID))

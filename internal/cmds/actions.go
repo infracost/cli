@@ -40,6 +40,9 @@ func RetryAction(ctx context.Context, cfg *config.Config, source oauth2.TokenSou
 	if cfg.OrgID == "" {
 		return RetryActionResult{}, fmt.Errorf("no organization selected")
 	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return RetryActionResult{}, err
+	}
 
 	client := cfg.Agents.Client(api.Client(ctx, source, cfg.OrgID))
 	events.RegisterMetadata("orgId", cfg.OrgID)

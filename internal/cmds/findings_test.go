@@ -18,10 +18,11 @@ import (
 )
 
 // agentsConfig builds a config with the Agents client factory swapped for
-// the mock. cfg.OrgID is pre-set so the pure functions skip the auth /
-// resolveOrg path the cobra wrapper handles.
+// the mock. cfg.OrgID and cfg.AgentsEnabled are pre-set so the pure functions
+// skip the auth / resolveOrg path (and its Agents-access gate) that the cobra
+// wrapper handles.
 func agentsConfig(mockClient *agentsmocks.MockClient) *config.Config {
-	cfg := &config.Config{OrgID: "org-1"}
+	cfg := &config.Config{OrgID: "org-1", AgentsEnabled: true}
 	cfg.Agents.Client = func(_ *http.Client) agents.Client {
 		return mockClient
 	}
@@ -91,6 +92,19 @@ func TestListFindings_NoOrg(t *testing.T) {
 	_, err := cmds.ListFindings(context.Background(), cfg, nil, cmds.FindingsListInput{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no organization selected")
+}
+
+func TestListFindings_AgentsNotEnabled(t *testing.T) {
+	mockClient := agentsmocks.NewMockClient(t)
+	// Org is resolved but Agents isn't enabled for it — the gate should
+	// short-circuit with the early-access message before any API call.
+	cfg := &config.Config{OrgID: "org-1", OrgSlug: "acme", AgentsEnabled: false}
+	cfg.Agents.Client = func(_ *http.Client) agents.Client { return mockClient }
+
+	_, err := cmds.ListFindings(context.Background(), cfg, nil, cmds.FindingsListInput{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "early access")
+	assert.Contains(t, err.Error(), "dashboard.infracost.io/org/acme/agents")
 }
 
 func TestListFindings_APIError(t *testing.T) {

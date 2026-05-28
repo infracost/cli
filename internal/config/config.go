@@ -36,6 +36,16 @@ type Config struct {
 	// OrgID is the resolved organization ID, set after resolving --org or from RunParameters.
 	OrgID string
 
+	// OrgSlug is the resolved active organization's slug, set alongside OrgID
+	// when the org is resolved from the user cache. Used for building org-
+	// scoped dashboard links (e.g. the Agents waitlist).
+	OrgSlug string
+
+	// AgentsEnabled mirrors the resolved active org's agentsEnabled flag (the
+	// dashboard's coast-access entitlement). The Agents commands and MCP tools
+	// gate on it; see ensureAgentsEnabled.
+	AgentsEnabled bool
+
 	// ClaudePath is the path to the Claude CLI binary. Defaults to "claude" (looked up on PATH).
 	ClaudePath string `env:"INFRACOST_CLI_CLAUDE_PATH" flag:"claude-path;hidden" usage:"Path to the Claude CLI binary"`
 
