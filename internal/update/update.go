@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/google/go-github/v83/github"
@@ -101,7 +100,7 @@ func Update(ctx context.Context) error {
 			return fmt.Errorf("no release asset found for %s/%s (expected %s)", runtime.GOOS, runtime.GOARCH, assetName)
 		}
 
-		rc, _, err := client.Repositories.DownloadReleaseAsset(ctx, repoOwner, repoName, assetID, &http.Client{Timeout: 60 * time.Second})
+		rc, _, err := client.Repositories.DownloadReleaseAsset(ctx, repoOwner, repoName, assetID, http.DefaultClient)
 		if err != nil {
 			return fmt.Errorf("failed to download asset: %w", err)
 		}
