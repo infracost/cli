@@ -220,7 +220,7 @@
       }
     },
     "infracost-plugin-terraform": {
-      "latest": "0.0.1",
+      "latest": "0.0.2",
       "versions": {
         "0.0.1": {
           "artifacts": {
@@ -252,6 +252,40 @@
             "windows_arm64": {
               "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.1/infracost-plugin-terraform-windows-arm64.zip",
               "sha": "bbeaf0851c8c2f6eb0c23280dea5439f0dc77ec2778a5567d54687952d7fcafc",
+              "name": "infracost-plugin-terraform-windows-arm64.zip"
+            }
+          }
+        },
+        "0.0.2": {
+          "artifacts": {
+            "darwin_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.2/infracost-plugin-terraform-darwin-amd64.tar.gz",
+              "sha": "4dd3060e384f9c135267a85e712b23c4d128640576b720110c051ed8120b62e5",
+              "name": "infracost-plugin-terraform-darwin-amd64.tar.gz"
+            },
+            "darwin_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.2/infracost-plugin-terraform-darwin-arm64.tar.gz",
+              "sha": "b3b730e677faeb75bbd187f8c669a449699aa0efe2de6c98ca6b4bf204243ac7",
+              "name": "infracost-plugin-terraform-darwin-arm64.tar.gz"
+            },
+            "linux_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.2/infracost-plugin-terraform-linux-amd64.tar.gz",
+              "sha": "f9ce281d957d191b342403a2d50cc9afce616b2e5af997dbad8c0d77b66cc335",
+              "name": "infracost-plugin-terraform-linux-amd64.tar.gz"
+            },
+            "linux_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.2/infracost-plugin-terraform-linux-arm64.tar.gz",
+              "sha": "009da01636858a5384558823b5eb020e8d291ee02f9908de376801e5ece5c1cb",
+              "name": "infracost-plugin-terraform-linux-arm64.tar.gz"
+            },
+            "windows_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.2/infracost-plugin-terraform-windows-amd64.zip",
+              "sha": "10d7d62a6f41c510fe39f63c1def9aa624ba9d3ad9681d1fa25cec4375d91870",
+              "name": "infracost-plugin-terraform-windows-amd64.zip"
+            },
+            "windows_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.2/infracost-plugin-terraform-windows-arm64.zip",
+              "sha": "0deb0c82e5873098b1fab5a8c0b359c4bba3c1f9287ce5a15a08ba4a4d7ce443",
               "name": "infracost-plugin-terraform-windows-arm64.zip"
             }
           }
