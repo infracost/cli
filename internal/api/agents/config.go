@@ -12,10 +12,10 @@ var (
 
 	defaultValues = map[string]map[string]string{
 		environment.Production: {
-			"endpoint": "https://app.coast.infracost.io/agents",
+			"endpoint": "https://dashboard.api.infracost.io/agents",
 		},
 		environment.Development: {
-			"endpoint": "https://app.coast.dev.infracost.io/agents",
+			"endpoint": "https://dashboard.api.dev.infracost.io/agents",
 		},
 		environment.Local: {
 			"endpoint": "http://localhost:8787/agents",
