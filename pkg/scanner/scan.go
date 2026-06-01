@@ -12,11 +12,11 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/pkg/logging"
-	"github.com/infracost/go-proto/pkg/flag"
 	"github.com/infracost/cli/pkg/plugins"
 	repoconfig "github.com/infracost/config"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 	goprotoevent "github.com/infracost/go-proto/pkg/event"
+	"github.com/infracost/go-proto/pkg/flag"
 	providerconv "github.com/infracost/go-proto/pkg/providers"
 	"github.com/infracost/go-proto/pkg/rat"
 	parserpb "github.com/infracost/proto/gen/go/infracost/parser/api"
@@ -25,6 +25,7 @@ import (
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"github.com/infracost/proto/gen/go/infracost/usage"
+	"golang.org/x/oauth2"
 )
 
 // ProjectResult holds the outputs for a single project scan.
@@ -46,6 +47,10 @@ type ScanProjectOptions struct {
 	RepoConfig *repoconfig.Config
 	Project    *repoconfig.Project
 
+	// TokenSource is consulted immediately before each provider plugin call so
+	// long multi-project scans don't reuse an expired access token.
+	TokenSource oauth2.TokenSource
+	// AccessToken is a fallback for callers that don't have a refresh-capable token source.
 	AccessToken     string // nolint:gosec // G117: passed to providers, and not exposed
 	BranchName      string
 	RepositoryName  string
@@ -171,6 +176,14 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 			TraceId:            opts.TraceID,
 			OrgId:              &opts.OrgID,
 		},
+	}
+
+	if opts.TokenSource != nil {
+		token, err := opts.TokenSource.Token()
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve access token: %w", err)
+		}
+		input.Infracost.ApiKey = token.AccessToken
 	}
 
 	for _, rp := range requiredProviders {

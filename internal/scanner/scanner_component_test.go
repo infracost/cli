@@ -23,9 +23,24 @@ import (
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 )
+
+type sequenceTokenSource struct {
+	tokens []string
+	calls  int
+}
+
+func (s *sequenceTokenSource) Token() (*oauth2.Token, error) {
+	idx := s.calls
+	s.calls++
+	if idx >= len(s.tokens) {
+		idx = len(s.tokens) - 1
+	}
+	return &oauth2.Token{AccessToken: s.tokens[idx]}, nil
+}
 
 type testScannerOpts struct {
 	// Parser mock responses (used by Scan tests).
@@ -317,6 +332,35 @@ func TestScan(t *testing.T) {
 		}
 	})
 
+	t.Run("refreshes access token before each provider call", func(t *testing.T) {
+		dir := writeTestProject(t, `version: "0.3"
+projects:
+  - path: p1
+    name: project-one
+  - path: p2
+    name: project-two
+`)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "p1"), 0755))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "p2"), 0755))
+
+		var providerTokens []string
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: awsTerraformParseResponse("aws_instance"),
+			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
+			processValidator: func(_ *testing.T, input *provider.Input) {
+				providerTokens = append(providerTokens, input.Infracost.ApiKey)
+			},
+		})
+
+		tokenSource := &sequenceTokenSource{tokens: []string{"token-1", "token-2"}}
+		_, err := s.Scan(context.Background(), dashboard.RunParameters{
+			UsageDefaults: emptyUsageDefaults(t),
+		}, dir, "main", tokenSource)
+		require.NoError(t, err)
+		require.Equal(t, []string{"token-1", "token-2"}, providerTokens)
+		require.Equal(t, 2, tokenSource.calls)
+	})
+
 	t.Run("repo usage file is loaded", func(t *testing.T) {
 		dir := writeTestProject(t, `version: "0.3"
 usage_file: usage.yml
@@ -364,7 +408,7 @@ projects:
 			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
 			currency:      "EUR",
 		})
-		
+
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
 		}, dir, "main", auth.AuthenticationToken("test-token"))

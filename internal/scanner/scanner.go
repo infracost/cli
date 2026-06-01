@@ -153,11 +153,6 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absoluteDirectory, branchName string, tokenSource oauth2.TokenSource) (*format.Result, error) {
 	var result format.Result
 
-	token, err := tokenSource.Token()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve access token: %w", err)
-	}
-
 	repositoryName := runParameters.RepositoryName
 
 	usageDefaults := new(event.UsageDefaults)
@@ -246,7 +241,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			CacheDir:          cacheDir,
 			RepoConfig:        repoConfig,
 			Project:           project,
-			AccessToken:       token.AccessToken,
+			TokenSource:       tokenSource,
 			BranchName:        branchName,
 			RepositoryName:    repositoryName,
 			OrgID:             runParameters.OrganizationID,
