@@ -116,11 +116,12 @@ func main() {
 
 	manifest.Plugins[cfg.Plugin] = plugin
 
-	data, err := json.Marshal(manifest)
+	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Error serializing manifest: %v\n", err)
 		os.Exit(1)
 	}
+	data = append(data, '\n')
 
 	if err := os.MkdirAll(filepath.Dir(cfg.Target), 0750); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Error creating directory: %v\n", err)
