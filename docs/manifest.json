@@ -142,7 +142,7 @@
       }
     },
     "infracost-plugin-ciscostacks": {
-      "latest": "0.0.2",
+      "latest": "0.0.3",
       "versions": {
         "0.0.1": {
           "artifacts": {
@@ -208,6 +208,40 @@
             "windows_arm64": {
               "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.2/infracost-plugin-ciscostacks-windows-arm64.zip",
               "sha": "2ed27fb148de6c143bf6ae8f7da465f2865b503ed7c42d8ab8b5e8032458bab3",
+              "name": "infracost-plugin-ciscostacks-windows-arm64.zip"
+            }
+          }
+        },
+        "0.0.3": {
+          "artifacts": {
+            "darwin_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.3/infracost-plugin-ciscostacks-darwin-amd64.tar.gz",
+              "sha": "47afde6d2647e9bd9d1dbc2870876005c39cf2311673d505ebdb3e6c0e59e356",
+              "name": "infracost-plugin-ciscostacks-darwin-amd64.tar.gz"
+            },
+            "darwin_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.3/infracost-plugin-ciscostacks-darwin-arm64.tar.gz",
+              "sha": "56351c9550939102099fff29eaf9123be979581f5212ee452ed5cd63c1cbcb4e",
+              "name": "infracost-plugin-ciscostacks-darwin-arm64.tar.gz"
+            },
+            "linux_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.3/infracost-plugin-ciscostacks-linux-amd64.tar.gz",
+              "sha": "b761a930d2f278aecdf6db866fbfadc33de58756fdae7be23ca30683b11fe999",
+              "name": "infracost-plugin-ciscostacks-linux-amd64.tar.gz"
+            },
+            "linux_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.3/infracost-plugin-ciscostacks-linux-arm64.tar.gz",
+              "sha": "6ba37275cda154a4e2111dbc038120284c9df2fceeac8842d41b9f518ad6ab08",
+              "name": "infracost-plugin-ciscostacks-linux-arm64.tar.gz"
+            },
+            "windows_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.3/infracost-plugin-ciscostacks-windows-amd64.zip",
+              "sha": "4a3a6fc12e27956032e15f795e7dc261fda3b0ff0b823c1a21c2a78851914427",
+              "name": "infracost-plugin-ciscostacks-windows-amd64.zip"
+            },
+            "windows_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.3/infracost-plugin-ciscostacks-windows-arm64.zip",
+              "sha": "ac00b6d320fc48300feb2f65d4f5eafcf30e19f3fdcbbac1a7de548c3612036a",
               "name": "infracost-plugin-ciscostacks-windows-arm64.zip"
             }
           }
