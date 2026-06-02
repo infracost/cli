@@ -41,9 +41,9 @@ func CheckLatestVersion(ctx context.Context) (VersionInfo, error) {
 
 	client := newGitHubClient()
 
-	release, _, err := client.Repositories.GetLatestRelease(ctx, repoOwner, repoName)
+	release, err := getLatestCLIRelease(ctx, client)
 	if err != nil {
-		return VersionInfo{}, fmt.Errorf("failed to fetch latest release: %w", err)
+		return VersionInfo{}, err
 	}
 
 	tag := release.GetTagName()
@@ -58,6 +58,48 @@ func CheckLatestVersion(ctx context.Context) (VersionInfo, error) {
 		Latest:   fmt.Sprintf("v%s", latestVersion),
 		UpToDate: upToDate,
 	}, nil
+}
+
+// getLatestCLIRelease returns the most recent published CLI release on the
+// repo. The CLI shares a repo with several plugins whose tags look like
+// `plugin-name/v1.2.3`, so GetLatestRelease can return a plugin release. We
+// page through releases newest-first and pick the first one whose tag is a
+// plain `vX.Y.Z` semver (no `prefix/`).
+func getLatestCLIRelease(ctx context.Context, client *github.Client) (*github.RepositoryRelease, error) {
+	opts := &github.ListOptions{PerPage: 50}
+	for {
+		releases, resp, err := client.Repositories.ListReleases(ctx, repoOwner, repoName, opts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list releases: %w", err)
+		}
+		for _, r := range releases {
+			if r.GetDraft() || r.GetPrerelease() {
+				continue
+			}
+			tag := r.GetTagName()
+			if !isCLIReleaseTag(tag) {
+				continue
+			}
+			return r, nil
+		}
+		if resp.NextPage == 0 {
+			return nil, fmt.Errorf("no CLI release found")
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+// isCLIReleaseTag reports whether tag identifies a CLI release (e.g. "v2.2.3")
+// rather than a plugin release (e.g. "infracost-plugin-foo/v0.0.1").
+func isCLIReleaseTag(tag string) bool {
+	if !strings.HasPrefix(tag, "v") {
+		return false
+	}
+	if strings.Contains(tag, "/") {
+		return false
+	}
+	_, err := semver.NewVersion(tag)
+	return err == nil
 }
 
 func Update(ctx context.Context) error {
@@ -84,9 +126,9 @@ func Update(ctx context.Context) error {
 
 	return ui.RunWithSpinnerErr(ctx, "Downloading update...", "Download complete", func(ctx context.Context) error {
 		client := newGitHubClient()
-		release, _, err := client.Repositories.GetLatestRelease(ctx, repoOwner, repoName)
+		release, err := getLatestCLIRelease(ctx, client)
 		if err != nil {
-			return fmt.Errorf("failed to fetch latest release: %w", err)
+			return err
 		}
 
 		assetName := expectedAssetName()

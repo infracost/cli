@@ -50,19 +50,26 @@ func fakeGitHubServer(t *testing.T, tagName string, assetName string, assetConte
 
 	mux := http.NewServeMux()
 
-	// GET /api/v3/repos/{owner}/{repo}/releases/latest
-	mux.HandleFunc(fmt.Sprintf("/api/v3/repos/%s/%s/releases/latest", repoOwner, repoName), func(w http.ResponseWriter, _ *http.Request) {
-		release := &github.RepositoryRelease{
-			TagName: github.Ptr(tagName),
-			Assets: []*github.ReleaseAsset{
-				{
-					ID:   github.Ptr(assetID),
-					Name: github.Ptr(assetName),
+	// GET /api/v3/repos/{owner}/{repo}/releases
+	mux.HandleFunc(fmt.Sprintf("/api/v3/repos/%s/%s/releases", repoOwner, repoName), func(w http.ResponseWriter, _ *http.Request) {
+		releases := []*github.RepositoryRelease{
+			// A plugin release that should be skipped because its tag contains "/".
+			{
+				TagName: github.Ptr("infracost-plugin-terraform/v9.9.9"),
+				Assets:  []*github.ReleaseAsset{},
+			},
+			{
+				TagName: github.Ptr(tagName),
+				Assets: []*github.ReleaseAsset{
+					{
+						ID:   github.Ptr(assetID),
+						Name: github.Ptr(assetName),
+					},
 				},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(release)
+		_ = json.NewEncoder(w).Encode(releases)
 	})
 
 	// GET /api/v3/repos/{owner}/{repo}/releases/assets/{id}
@@ -81,6 +88,27 @@ func fakeGitHubServer(t *testing.T, tagName string, assetName string, assetConte
 	})
 
 	return httptest.NewServer(mux)
+}
+
+func TestIsCLIReleaseTag(t *testing.T) {
+	cases := []struct {
+		tag  string
+		want bool
+	}{
+		{"v2.2.3", true},
+		{"v0.0.1", true},
+		{"v1.2.3-rc.1", true},
+		{"infracost-plugin-terraform/v0.0.2", false},
+		{"infracost-provider-plugin-aws/v0.3.0", false},
+		{"2.2.3", false},
+		{"vNotSemver", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isCLIReleaseTag(c.tag); got != c.want {
+			t.Errorf("isCLIReleaseTag(%q) = %v, want %v", c.tag, got, c.want)
+		}
+	}
 }
 
 func TestUpdate_NewerVersionAvailable(t *testing.T) {
