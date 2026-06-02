@@ -171,7 +171,9 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
   # Scan against a different organization's policies & prices
   $ infracost scan --org acme`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
+			startTime := time.Now()
+
 			if len(args) > 0 {
 				in.Path = args[0]
 			}
@@ -188,6 +190,21 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 			case cfg.JSON.Value:
 				outputFormat = "json"
 			}
+
+			defer func() {
+				if runErr != nil {
+					msg := runErr.Error()
+					if len(msg) > 200 {
+						msg = msg[:200]
+					}
+					eventsClient := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+					eventsClient.Push(context.Background(), "infracost-error",
+						"error", msg,
+						"runSeconds", time.Since(startTime).Seconds(),
+						"outputFormat", outputFormat,
+					)
+				}
+			}()
 
 			source, err := cfg.Auth.Token(cmd.Context())
 			if err != nil {

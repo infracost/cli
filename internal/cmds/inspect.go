@@ -1,6 +1,7 @@
 package cmds
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,8 +79,24 @@ func Inspect(cfg *config.Config) *cobra.Command {
 			}
 			return inspect.ValidateGroupBy(opts.GroupBy)
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			startTime := time.Now()
+
+			defer func() {
+				if runErr != nil {
+					msg := runErr.Error()
+					if len(msg) > 200 {
+						msg = msg[:200]
+					}
+					eventsClient := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+					eventsClient.Push(context.Background(), "infracost-error",
+						"error", msg,
+						"runSeconds", time.Since(startTime).Seconds(),
+						"outputFormat", "inspect",
+					)
+				}
+			}()
+
 			var data *format.Output
 			var err error
 
