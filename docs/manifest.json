@@ -142,7 +142,7 @@
       }
     },
     "infracost-plugin-ciscostacks": {
-      "latest": "0.0.3",
+      "latest": "0.0.4",
       "versions": {
         "0.0.1": {
           "artifacts": {
@@ -242,6 +242,40 @@
             "windows_arm64": {
               "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.3/infracost-plugin-ciscostacks-windows-arm64.zip",
               "sha": "ac00b6d320fc48300feb2f65d4f5eafcf30e19f3fdcbbac1a7de548c3612036a",
+              "name": "infracost-plugin-ciscostacks-windows-arm64.zip"
+            }
+          }
+        },
+        "0.0.4": {
+          "artifacts": {
+            "darwin_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.4/infracost-plugin-ciscostacks-darwin-amd64.tar.gz",
+              "sha": "8117a647d2de6320336110bf5795d1058f9cf06b44e0dc9a9b0f419aa1cb47e7",
+              "name": "infracost-plugin-ciscostacks-darwin-amd64.tar.gz"
+            },
+            "darwin_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.4/infracost-plugin-ciscostacks-darwin-arm64.tar.gz",
+              "sha": "97e9d6a7600d37523a2d8678d2373ececc739978f91947fef0ff7fc7b4773c92",
+              "name": "infracost-plugin-ciscostacks-darwin-arm64.tar.gz"
+            },
+            "linux_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.4/infracost-plugin-ciscostacks-linux-amd64.tar.gz",
+              "sha": "b9e88776232e6bb385c5913a3cda1737ad157b0159fc156e2bf14de60ae78ea0",
+              "name": "infracost-plugin-ciscostacks-linux-amd64.tar.gz"
+            },
+            "linux_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.4/infracost-plugin-ciscostacks-linux-arm64.tar.gz",
+              "sha": "5339faa3c65403c9a455876b3a7da6c75cb974ef4d212633390cfe7a7fca517b",
+              "name": "infracost-plugin-ciscostacks-linux-arm64.tar.gz"
+            },
+            "windows_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.4/infracost-plugin-ciscostacks-windows-amd64.zip",
+              "sha": "4f3cf38e52bff8eece0ea1cef0c402149fad85229f17156df7485280f65a7c99",
+              "name": "infracost-plugin-ciscostacks-windows-amd64.zip"
+            },
+            "windows_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-ciscostacks/v0.0.4/infracost-plugin-ciscostacks-windows-arm64.zip",
+              "sha": "3463cfa32cd4a09a6341fa19807454145a40b7dd5165c75375a3d39de6d82626",
               "name": "infracost-plugin-ciscostacks-windows-arm64.zip"
             }
           }
@@ -425,11 +459,45 @@
               "name": "infracost-plugin-terraform-windows-arm64.zip"
             }
           }
+        },
+        "0.0.3": {
+          "artifacts": {
+            "darwin_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.3/infracost-plugin-terraform-darwin-amd64.tar.gz",
+              "sha": "ec0a28b21e33b4189907d2534d0fa65f47d4347e1981151ce87c9e3c5971b2b5",
+              "name": "infracost-plugin-terraform-darwin-amd64.tar.gz"
+            },
+            "darwin_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.3/infracost-plugin-terraform-darwin-arm64.tar.gz",
+              "sha": "edc01e336cf697e13d5fc392ab5fb1cc8cfcb56dbe6d937a61793e3082cbac4a",
+              "name": "infracost-plugin-terraform-darwin-arm64.tar.gz"
+            },
+            "linux_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.3/infracost-plugin-terraform-linux-amd64.tar.gz",
+              "sha": "8d87d0f6e3e98b5182b51b14d246bab2380b990af70d98f109d6088013f82c73",
+              "name": "infracost-plugin-terraform-linux-amd64.tar.gz"
+            },
+            "linux_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.3/infracost-plugin-terraform-linux-arm64.tar.gz",
+              "sha": "0808d0a1b67f7028d65fa2e1c24be0ca5bd8e1bee8d12362adf765587649e929",
+              "name": "infracost-plugin-terraform-linux-arm64.tar.gz"
+            },
+            "windows_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.3/infracost-plugin-terraform-windows-amd64.zip",
+              "sha": "d766bf0adf31325cdff5dfe55722672fd5be3357ab6d269c08434aecebc5760e",
+              "name": "infracost-plugin-terraform-windows-amd64.zip"
+            },
+            "windows_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terraform/v0.0.3/infracost-plugin-terraform-windows-arm64.zip",
+              "sha": "895c696c5b4b4db295acf3b47f50dedb910f3dd8c6ec73c281393ae19ebcd4b3",
+              "name": "infracost-plugin-terraform-windows-arm64.zip"
+            }
+          }
         }
       }
     },
     "infracost-plugin-terragrunt": {
-      "latest": "0.0.1",
+      "latest": "0.0.2",
       "versions": {
         "0.0.1": {
           "artifacts": {
@@ -461,6 +529,40 @@
             "windows_arm64": {
               "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.1/infracost-plugin-terragrunt-windows-arm64.zip",
               "sha": "adc978945a2d7a376f5653eefaf5ba4cfe3ab4d7138c10efb012a65a32577e27",
+              "name": "infracost-plugin-terragrunt-windows-arm64.zip"
+            }
+          }
+        },
+        "0.0.2": {
+          "artifacts": {
+            "darwin_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-darwin-amd64.tar.gz",
+              "sha": "f368a45b12a95eea4d218cb96e6f218880fb825430414c6deb764cd09a73e544",
+              "name": "infracost-plugin-terragrunt-darwin-amd64.tar.gz"
+            },
+            "darwin_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-darwin-arm64.tar.gz",
+              "sha": "f61c2dbd8a7d7f710290dc6e95a05fe927d1b3658881eb89ede994d516054341",
+              "name": "infracost-plugin-terragrunt-darwin-arm64.tar.gz"
+            },
+            "linux_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-linux-amd64.tar.gz",
+              "sha": "8946539740b8fbb30371a4e341f4d7ec7d45a08e0aa753b2d3a621b745f8bca2",
+              "name": "infracost-plugin-terragrunt-linux-amd64.tar.gz"
+            },
+            "linux_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-linux-arm64.tar.gz",
+              "sha": "c1ae92e9b398e1aa5a0e9227e93c085741c42b0d26ed8979bd508ee783109df3",
+              "name": "infracost-plugin-terragrunt-linux-arm64.tar.gz"
+            },
+            "windows_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-windows-amd64.zip",
+              "sha": "7cd8465410107033e7f548ac23ca27303f704c275bc5620b0abf736e90db9f69",
+              "name": "infracost-plugin-terragrunt-windows-amd64.zip"
+            },
+            "windows_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-windows-arm64.zip",
+              "sha": "f8e9530c23a98545ea3f81965a1317bd60bca0147d58096cae1e90d463747555",
               "name": "infracost-plugin-terragrunt-windows-arm64.zip"
             }
           }
