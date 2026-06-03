@@ -429,7 +429,7 @@
       }
     },
     "infracost-plugin-terragrunt": {
-      "latest": "0.0.1",
+      "latest": "0.0.2",
       "versions": {
         "0.0.1": {
           "artifacts": {
@@ -461,6 +461,40 @@
             "windows_arm64": {
               "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.1/infracost-plugin-terragrunt-windows-arm64.zip",
               "sha": "adc978945a2d7a376f5653eefaf5ba4cfe3ab4d7138c10efb012a65a32577e27",
+              "name": "infracost-plugin-terragrunt-windows-arm64.zip"
+            }
+          }
+        },
+        "0.0.2": {
+          "artifacts": {
+            "darwin_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-darwin-amd64.tar.gz",
+              "sha": "f368a45b12a95eea4d218cb96e6f218880fb825430414c6deb764cd09a73e544",
+              "name": "infracost-plugin-terragrunt-darwin-amd64.tar.gz"
+            },
+            "darwin_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-darwin-arm64.tar.gz",
+              "sha": "f61c2dbd8a7d7f710290dc6e95a05fe927d1b3658881eb89ede994d516054341",
+              "name": "infracost-plugin-terragrunt-darwin-arm64.tar.gz"
+            },
+            "linux_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-linux-amd64.tar.gz",
+              "sha": "8946539740b8fbb30371a4e341f4d7ec7d45a08e0aa753b2d3a621b745f8bca2",
+              "name": "infracost-plugin-terragrunt-linux-amd64.tar.gz"
+            },
+            "linux_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-linux-arm64.tar.gz",
+              "sha": "c1ae92e9b398e1aa5a0e9227e93c085741c42b0d26ed8979bd508ee783109df3",
+              "name": "infracost-plugin-terragrunt-linux-arm64.tar.gz"
+            },
+            "windows_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-windows-amd64.zip",
+              "sha": "7cd8465410107033e7f548ac23ca27303f704c275bc5620b0abf736e90db9f69",
+              "name": "infracost-plugin-terragrunt-windows-amd64.zip"
+            },
+            "windows_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-terragrunt/v0.0.2/infracost-plugin-terragrunt-windows-arm64.zip",
+              "sha": "f8e9530c23a98545ea3f81965a1317bd60bca0147d58096cae1e90d463747555",
               "name": "infracost-plugin-terragrunt-windows-arm64.zip"
             }
           }
