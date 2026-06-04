@@ -64,7 +64,7 @@ type InternalConfig struct {
 	AuthEndpoint string `env:"INFRACOST_CLI_OAUTH_ENDPOINT" flag:"oauth-endpoint;hidden" usage:"The auth endpoint to use for authentication"`
 
 	// CallbackPort is the port to listen on for the callback from Auth0.
-	CallbackPort int `env:"INFRACOST_CLI_OAUTH_CALLBACK_PORT" flag:"oauth-callback-port;hidden" usage:"The callback port to use for authentication" default:"8080"`
+	CallbackPort int `env:"INFRACOST_CLI_OAUTH_CALLBACK_PORT" flag:"oauth-callback-port;hidden" usage:"The callback port to use for authentication" default:"26372"`
 
 	// Audience is the expected audience of the token (i.e., the Infracost API URL).
 	Audience string `env:"INFRACOST_CLI_OAUTH_AUDIENCE" flag:"oauth-audience;hidden" usage:"The audience to use for authentication"`
@@ -209,12 +209,15 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 		}
 	}
 
-	login := c.PKCE
 	if c.UseDeviceFlow {
-		login = c.DeviceFlow
+		ts, token, err = c.DeviceFlow(ctx)
+	} else {
+		ts, token, err = c.PKCE(ctx)
+		if isCallbackPortInUse(err) {
+			fmt.Printf("Port %d is already in use, falling back to device authentication.\n", c.CallbackPort)
+			ts, token, err = c.DeviceFlow(ctx)
+		}
 	}
-
-	ts, token, err = login(ctx)
 	if err != nil {
 		return nil, err
 	}
