@@ -385,7 +385,7 @@
       }
     },
     "infracost-plugin-cloudformation": {
-      "latest": "0.0.4",
+      "latest": "0.0.5",
       "versions": {
         "0.0.1": {
           "artifacts": {
@@ -519,6 +519,40 @@
             "windows_arm64": {
               "url": "https://infracost.io/downloads/infracost-plugin-cloudformation/v0.0.4/infracost-plugin-cloudformation-windows-arm64.zip",
               "sha": "458a06a2735ddaebebc32423386edec00eb8155729891de7773fc114e1fe4416",
+              "name": "infracost-plugin-cloudformation-windows-arm64.zip"
+            }
+          }
+        },
+        "0.0.5": {
+          "artifacts": {
+            "darwin_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-cloudformation/v0.0.5/infracost-plugin-cloudformation-darwin-amd64.tar.gz",
+              "sha": "1513b4c93f8c4938d7cf15954b364e4b630b22ef40546000c179748e912f09f9",
+              "name": "infracost-plugin-cloudformation-darwin-amd64.tar.gz"
+            },
+            "darwin_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-cloudformation/v0.0.5/infracost-plugin-cloudformation-darwin-arm64.tar.gz",
+              "sha": "0d2af781b816f0b8ed5479bee4a38012d9ca6acfa09d31bc1c23b233351953b5",
+              "name": "infracost-plugin-cloudformation-darwin-arm64.tar.gz"
+            },
+            "linux_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-cloudformation/v0.0.5/infracost-plugin-cloudformation-linux-amd64.tar.gz",
+              "sha": "a0303b6b0595c154d008e730ba4a2917f3e13e38e7613b17564225f6e97a7771",
+              "name": "infracost-plugin-cloudformation-linux-amd64.tar.gz"
+            },
+            "linux_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-cloudformation/v0.0.5/infracost-plugin-cloudformation-linux-arm64.tar.gz",
+              "sha": "5c8d542f1c3a64ee725b41742076d930260fb004bb0d537a6954c1e13801e666",
+              "name": "infracost-plugin-cloudformation-linux-arm64.tar.gz"
+            },
+            "windows_amd64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-cloudformation/v0.0.5/infracost-plugin-cloudformation-windows-amd64.zip",
+              "sha": "4ab24f476825cd7eae27a5627aff259e5ccafb10ffb15e99e21d2c3b1a018bc6",
+              "name": "infracost-plugin-cloudformation-windows-amd64.zip"
+            },
+            "windows_arm64": {
+              "url": "https://infracost.io/downloads/infracost-plugin-cloudformation/v0.0.5/infracost-plugin-cloudformation-windows-arm64.zip",
+              "sha": "d492816659c84141fd71a7d62cc20ae1a6fc0fa11a6fbf7ea1475a99d7261754",
               "name": "infracost-plugin-cloudformation-windows-arm64.zip"
             }
           }
