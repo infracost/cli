@@ -71,6 +71,7 @@ jobs:
     needs: [version, draft-release]
     permissions:
       contents: write
+      id-token: write
     strategy:
       matrix:
         include:
@@ -164,6 +165,31 @@ jobs:
           gh release upload "$VERSION" ./dist/* \
             --repo "${{ github.repository }}" \
             --clobber
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSET_PUBLICATION_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload to S3
+        env:
+          BUCKET: ${{ secrets.AWS_ASSET_BUCKET }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: v${{ needs.version.outputs.version }}
+        run: |
+          if [ "$GOOS" = "windows" ]; then
+            EXT="zip"
+            SRC="dist/infracost-${GOOS}-${GOARCH}.zip"
+          else
+            EXT="tar.gz"
+            SRC="dist/infracost-${GOOS}-${GOARCH}.tar.gz"
+          fi
+          aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}"
+          aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}"
+          aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}.sha256"
+          aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}.sha256"
 
   publish-release:
     runs-on: ubuntu-24.04
