@@ -31,6 +31,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
 
 jobs:
   update-manifest:
@@ -97,12 +98,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - run: |
-          gh pr create \
-            --base published \
-            --head "update-manifest/${{ inputs.plugin }}/${{ inputs.version }}" \
-            --draft \
-            --title "Update manifest for ${{ inputs.plugin }} ${{ inputs.version }}" \
-            --body "Automated manifest update for \`${{ inputs.plugin }}\` version \`${{ inputs.version }}\`."
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSET_PUBLICATION_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload manifest to S3
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          BUCKET: ${{ secrets.AWS_ASSET_BUCKET }}
+        run: |
+          aws s3 cp docs/manifest.json "s3://${BUCKET}/plugins/manifest.json"
