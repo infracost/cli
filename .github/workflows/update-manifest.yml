@@ -109,3 +109,11 @@ jobs:
           BUCKET: ${{ secrets.AWS_ASSET_BUCKET }}
         run: |
           aws s3 cp docs/manifest.json "s3://${BUCKET}/plugins/manifest.json"
+
+      - name: Invalidate CloudFront manifest
+        env:
+          DISTRIBUTION_ID: ${{ secrets.AWS_ASSET_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION_ID" \
+            --paths "/plugins/manifest.json"
