@@ -109,7 +109,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		WorkingDirectory:   opts.RootDir,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("parser plugin error: %w (set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
+		return nil, fmt.Errorf("parser plugin error: %w (run with --debug or set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
 	}
 
 	projectResult := &ProjectResult{

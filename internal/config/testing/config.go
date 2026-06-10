@@ -56,8 +56,8 @@ func Config(t *testing.T) config.Config {
 		},
 		Plugins: plugins.Config{
 			Providers: providers.Config{
-				// by setting the AWS, Google and Azure fields, we should prevent the system from hitting the manifest
-				// url when these are required.
+				// by setting the AWS, Google and Azure fields, we should prevent the system from downloading
+				// plugins when these are required.
 				AWS:    "aws",
 				Google: "google",
 				Azure:  "azure",
@@ -72,7 +72,7 @@ func Config(t *testing.T) config.Config {
 				},
 			},
 			Parser: parser.Config{
-				Plugin: "parser", // set this so it doesn't attempt to load the manifest url
+				Plugin: "parser", // set this so it doesn't attempt to download the parser plugin
 				Load: func(hclog.Level) (api.ParserServiceClient, func(), error) {
 					return new(parserMock.MockParserServiceClient), func() {}, nil
 				},
@@ -80,7 +80,7 @@ func Config(t *testing.T) config.Config {
 			Cache: filepath.Join(temp, "plugins"), // hopefully shouldn't use the cache
 		},
 		Cache: cache.Config{
-			Cache:     filepath.Join(temp, "cache"),
+			Cache: filepath.Join(temp, "cache"),
 		},
 	}
 	cfg.Logging.ForTest(t) // we'll make sure the logger uses the test output

@@ -60,6 +60,7 @@ func Output() io.Writer { return output }
 type Config struct {
 	WriteLevel string `env:"INFRACOST_CLI_LOG_LEVEL" default:"warn"`
 	JSON       bool   `flagvalue:"json"`
+	Debug      bool   `flagvalue:"debug"`
 }
 
 // ToHCLogLevel converts the WriteLevel to an hclog.Level for use in logging outputs from the
@@ -86,6 +87,10 @@ func (config *Config) ToHCLogLevel() hclog.Level {
 }
 
 func (config *Config) Process() {
+	if config.Debug {
+		config.WriteLevel = zerolog.DebugLevel.String()
+	}
+
 	if loggerConfigured {
 		return
 	}

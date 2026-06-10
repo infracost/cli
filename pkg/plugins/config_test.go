@@ -6,12 +6,13 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/infracost/cli/pkg/plugins/providers"
@@ -58,6 +59,14 @@ func createTestZip(t *testing.T, dir string, fileName string, content []byte) st
 	require.NoError(t, zw.Close())
 	require.NoError(t, f.Close())
 	return archivePath
+}
+
+func createPluginArchive(t *testing.T, dir, archiveName, binaryName string, content []byte) string {
+	t.Helper()
+	if strings.HasSuffix(archiveName, ".zip") {
+		return createTestZip(t, dir, binaryName, content)
+	}
+	return createTestTarGz(t, dir, binaryName, content)
 }
 
 func fileSHA256(t *testing.T, path string) string {
@@ -184,78 +193,55 @@ func sha256HexString(data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-func TestLoadManifest(t *testing.T) {
-	manifest := Manifest{
-		Plugins: map[string]Plugin{
-			"test-plugin": {Latest: "1.0.0"},
-		},
-	}
-
+func TestFetchSHA256(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(manifest)
+			_, _ = w.Write([]byte("abc123  data.tar.gz\n"))
 		}))
 		defer srv.Close()
 
-		c := &Config{ManifestURL: srv.URL}
-		got, err := c.loadManifest()
+		got, err := fetchSHA256(srv.URL)
 		require.NoError(t, err)
-		assert.Equal(t, "1.0.0", got.Plugins["test-plugin"].Latest)
-	})
-
-	t.Run("caching", func(t *testing.T) {
-		calls := 0
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			calls++
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(manifest)
-		}))
-		defer srv.Close()
-
-		c := &Config{ManifestURL: srv.URL}
-		first, err := c.loadManifest()
-		require.NoError(t, err)
-		second, err := c.loadManifest()
-		require.NoError(t, err)
-
-		assert.Same(t, first, second)
-		assert.Equal(t, 1, calls)
+		assert.Equal(t, "abc123", got)
 	})
 
 	t.Run("non-200 status fails", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusNotFound)
 		}))
 		defer srv.Close()
 
-		c := &Config{ManifestURL: srv.URL}
-		_, err := c.loadManifest()
-		assert.ErrorContains(t, err, "failed to fetch plugin manifest")
+		_, err := fetchSHA256(srv.URL)
+		assert.ErrorContains(t, err, "unexpected HTTP status")
 	})
 
-	t.Run("invalid JSON fails", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("not json"))
-		}))
+	t.Run("empty response fails", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 		defer srv.Close()
 
-		c := &Config{ManifestURL: srv.URL}
-		_, err := c.loadManifest()
-		assert.Error(t, err)
+		_, err := fetchSHA256(srv.URL)
+		assert.ErrorContains(t, err, "empty checksum response")
 	})
+}
+
+func TestPluginArtifactURL(t *testing.T) {
+	c := Config{BaseURL: "https://example.com/bucket/"}
+	got := c.pluginArtifactURL("test-plugin", "linux", "amd64", "latest", "data.tar.gz")
+	assert.Equal(t, "https://example.com/bucket/test-plugin/linux/amd64/latest/data.tar.gz", got)
 }
 
 func TestEnsure(t *testing.T) {
 	platform := runtime.GOOS + "_" + runtime.GOARCH
 	pluginName := "test-plugin"
+	binaryName := pluginBinaryName(pluginName)
+	archiveName := pluginArchiveName()
 	pluginContent := []byte("fake-binary-data")
 
 	t.Run("specific version already cached", func(t *testing.T) {
 		cacheDir := t.TempDir()
 		binaryDir := filepath.Join(cacheDir, pluginName, platform, "1.0.0")
 		require.NoError(t, os.MkdirAll(binaryDir, 0750))
-		binaryPath := filepath.Join(binaryDir, pluginName)
+		binaryPath := filepath.Join(binaryDir, binaryName)
 		require.NoError(t, os.WriteFile(binaryPath, pluginContent, 0750))
 
 		c := &Config{Cache: cacheDir}
@@ -269,108 +255,117 @@ func TestEnsure(t *testing.T) {
 		for _, ver := range []string{"0.1.0", "0.3.0", "0.2.0"} {
 			dir := filepath.Join(cacheDir, pluginName, platform, ver)
 			require.NoError(t, os.MkdirAll(dir, 0750))
-			require.NoError(t, os.WriteFile(filepath.Join(dir, pluginName), []byte(ver), 0750))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, binaryName), []byte(ver), 0750))
 		}
 
 		c := &Config{Cache: cacheDir, AutoUpdate: false}
 		got, err := c.Ensure(pluginName, "")
 		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(cacheDir, pluginName, platform, "0.3.0", pluginName), got)
+		assert.Equal(t, filepath.Join(cacheDir, pluginName, platform, "0.3.0", binaryName), got)
 	})
 
-	t.Run("plugin not in manifest", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_ = json.NewEncoder(w).Encode(Manifest{Plugins: map[string]Plugin{}})
-		}))
-		defer srv.Close()
-
-		c := &Config{Cache: t.TempDir(), ManifestURL: srv.URL, AutoUpdate: true}
-		_, err := c.Ensure("nonexistent", "")
-		assert.ErrorContains(t, err, "not found in manifest")
-	})
-
-	t.Run("version not in manifest", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_ = json.NewEncoder(w).Encode(Manifest{
-				Plugins: map[string]Plugin{
-					pluginName: {Latest: "1.0.0", Versions: map[string]Version{}},
-				},
-			})
-		}))
-		defer srv.Close()
-
-		c := &Config{Cache: t.TempDir(), ManifestURL: srv.URL, AutoUpdate: true}
-		_, err := c.Ensure(pluginName, "9.9.9")
-		assert.ErrorContains(t, err, "version \"9.9.9\" not found")
-	})
-
-	t.Run("no artifact for platform", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_ = json.NewEncoder(w).Encode(Manifest{
-				Plugins: map[string]Plugin{
-					pluginName: {
-						Latest: "1.0.0",
-						Versions: map[string]Version{
-							"1.0.0": {Artifacts: map[string]Artifact{}},
-						},
-					},
-				},
-			})
-		}))
-		defer srv.Close()
-
-		c := &Config{Cache: t.TempDir(), ManifestURL: srv.URL, AutoUpdate: true}
-		_, err := c.Ensure(pluginName, "")
-		assert.ErrorContains(t, err, "is not available for your platform")
-	})
-
-	t.Run("successful download and install tar.gz", func(t *testing.T) {
+	t.Run("successful download and install latest", func(t *testing.T) {
 		archiveDir := t.TempDir()
-		archivePath := createTestTarGz(t, archiveDir, pluginName, pluginContent)
+		archivePath := createPluginArchive(t, archiveDir, archiveName, binaryName, pluginContent)
 		archiveSHA := fileSHA256(t, archivePath)
 		archiveData, err := os.ReadFile(archivePath)
 		require.NoError(t, err)
 
-		var srvURL string
+		expectedArchivePath := fmt.Sprintf("/%s/%s/%s/latest/%s", pluginName, runtime.GOOS, runtime.GOARCH, archiveName)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/manifest.json":
-				_ = json.NewEncoder(w).Encode(Manifest{
-					Plugins: map[string]Plugin{
-						pluginName: {
-							Latest: "2.0.0",
-							Versions: map[string]Version{
-								"2.0.0": {
-									Artifacts: map[string]Artifact{
-										platform: {
-											URL:  srvURL + "/download",
-											SHA:  archiveSHA,
-											Name: pluginName + ".tar.gz",
-										},
-									},
-								},
-							},
-						},
-					},
-				})
-			case "/download":
+			case expectedArchivePath + ".sha256":
+				_, _ = w.Write([]byte(archiveSHA + "  " + archiveName + "\n"))
+			case expectedArchivePath:
 				_, _ = w.Write(archiveData)
+			default:
+				w.WriteHeader(http.StatusNotFound)
 			}
 		}))
 		defer srv.Close()
-		srvURL = srv.URL
 
 		cacheDir := t.TempDir()
-		c := &Config{Cache: cacheDir, ManifestURL: srv.URL + "/manifest.json", AutoUpdate: true}
+		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
 		got, err := c.Ensure(pluginName, "")
 		require.NoError(t, err)
 
-		expected := filepath.Join(cacheDir, pluginName, platform, "2.0.0", pluginName)
+		expected := filepath.Join(cacheDir, pluginName, platform, "latest", binaryName)
 		assert.Equal(t, expected, got)
 
 		data, err := os.ReadFile(got)
 		require.NoError(t, err)
 		assert.Equal(t, pluginContent, data)
+		assert.Equal(t, archiveSHA, cachedPluginSHA(got))
+	})
+
+	t.Run("successful download and install specific version", func(t *testing.T) {
+		archiveDir := t.TempDir()
+		archivePath := createPluginArchive(t, archiveDir, archiveName, binaryName, pluginContent)
+		archiveSHA := fileSHA256(t, archivePath)
+		archiveData, err := os.ReadFile(archivePath)
+		require.NoError(t, err)
+
+		expectedArchivePath := fmt.Sprintf("/%s/%s/%s/2.0.0/%s", pluginName, runtime.GOOS, runtime.GOARCH, archiveName)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case expectedArchivePath + ".sha256":
+				_, _ = w.Write([]byte(archiveSHA + "\n"))
+			case expectedArchivePath:
+				_, _ = w.Write(archiveData)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer srv.Close()
+
+		cacheDir := t.TempDir()
+		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
+		got, err := c.Ensure(pluginName, "2.0.0")
+		require.NoError(t, err)
+
+		expected := filepath.Join(cacheDir, pluginName, platform, "2.0.0", binaryName)
+		assert.Equal(t, expected, got)
+	})
+
+	t.Run("latest cached with matching checksum skips download", func(t *testing.T) {
+		cacheDir := t.TempDir()
+		binaryDir := filepath.Join(cacheDir, pluginName, platform, "latest")
+		require.NoError(t, os.MkdirAll(binaryDir, 0750))
+		binaryPath := filepath.Join(binaryDir, binaryName)
+		require.NoError(t, os.WriteFile(binaryPath, pluginContent, 0750))
+		require.NoError(t, os.WriteFile(binaryPath+".sha256", []byte("abc123\n"), 0600))
+
+		downloads := 0
+		expectedArchivePath := fmt.Sprintf("/%s/%s/%s/latest/%s", pluginName, runtime.GOOS, runtime.GOARCH, archiveName)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case expectedArchivePath + ".sha256":
+				_, _ = w.Write([]byte("abc123\n"))
+			case expectedArchivePath:
+				downloads++
+				w.WriteHeader(http.StatusInternalServerError)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer srv.Close()
+
+		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
+		got, err := c.Ensure(pluginName, "")
+		require.NoError(t, err)
+		assert.Equal(t, binaryPath, got)
+		assert.Equal(t, 0, downloads)
+	})
+
+	t.Run("checksum not found fails", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		c := &Config{Cache: t.TempDir(), BaseURL: srv.URL, AutoUpdate: true}
+		_, err := c.Ensure(pluginName, "")
+		assert.ErrorContains(t, err, "failed to fetch plugin checksum")
 	})
 }
 
@@ -386,49 +381,36 @@ func TestEnsureParser(t *testing.T) {
 
 	t.Run("not set calls Ensure", func(t *testing.T) {
 		platform := runtime.GOOS + "_" + runtime.GOARCH
+		pluginName := parserPluginName
+		binaryName := pluginBinaryName(pluginName)
+		archiveName := pluginArchiveName()
 		content := []byte("parser-binary")
 
 		archiveDir := t.TempDir()
-		archivePath := createTestTarGz(t, archiveDir, "infracost-parser-plugin", content)
+		archivePath := createPluginArchive(t, archiveDir, archiveName, binaryName, content)
 		archiveSHA := fileSHA256(t, archivePath)
 		archiveData, err := os.ReadFile(archivePath)
 		require.NoError(t, err)
 
-		var srvURL string
+		expectedArchivePath := fmt.Sprintf("/%s/%s/%s/latest/%s", pluginName, runtime.GOOS, runtime.GOARCH, archiveName)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/manifest.json":
-				_ = json.NewEncoder(w).Encode(Manifest{
-					Plugins: map[string]Plugin{
-						"infracost-parser-plugin": {
-							Latest: "1.0.0",
-							Versions: map[string]Version{
-								"1.0.0": {
-									Artifacts: map[string]Artifact{
-										platform: {
-											URL:  srvURL + "/download",
-											SHA:  archiveSHA,
-											Name: "infracost-parser-plugin.tar.gz",
-										},
-									},
-								},
-							},
-						},
-					},
-				})
-			case "/download":
+			case expectedArchivePath + ".sha256":
+				_, _ = w.Write([]byte(archiveSHA + "\n"))
+			case expectedArchivePath:
 				_, _ = w.Write(archiveData)
+			default:
+				w.WriteHeader(http.StatusNotFound)
 			}
 		}))
 		defer srv.Close()
-		srvURL = srv.URL
 
 		cacheDir := t.TempDir()
-		c := &Config{Cache: cacheDir, ManifestURL: srv.URL + "/manifest.json", AutoUpdate: true}
+		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
 
 		err = c.EnsureParser()
 		require.NoError(t, err)
-		assert.NotEmpty(t, c.Parser.Plugin)
+		assert.Equal(t, filepath.Join(cacheDir, pluginName, platform, "latest", binaryName), c.Parser.Plugin)
 	})
 }
 
@@ -443,46 +425,31 @@ func TestEnsureProvider(t *testing.T) {
 	})
 
 	t.Run("unknown provider returns error", func(t *testing.T) {
-		platform := runtime.GOOS + "_" + runtime.GOARCH
 		content := []byte("provider-binary")
 		pluginName := "infracost-provider-plugin-"
+		binaryName := pluginBinaryName(pluginName)
+		archiveName := pluginArchiveName()
 
 		archiveDir := t.TempDir()
-		archivePath := createTestTarGz(t, archiveDir, pluginName, content)
+		archivePath := createPluginArchive(t, archiveDir, archiveName, binaryName, content)
 		archiveSHA := fileSHA256(t, archivePath)
 		archiveData, err := os.ReadFile(archivePath)
 		require.NoError(t, err)
 
-		var srvURL string
+		expectedArchivePath := fmt.Sprintf("/%s/%s/%s/latest/%s", pluginName, runtime.GOOS, runtime.GOARCH, archiveName)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/manifest.json":
-				_ = json.NewEncoder(w).Encode(Manifest{
-					Plugins: map[string]Plugin{
-						pluginName: {
-							Latest: "1.0.0",
-							Versions: map[string]Version{
-								"1.0.0": {
-									Artifacts: map[string]Artifact{
-										platform: {
-											URL:  srvURL + "/download",
-											SHA:  archiveSHA,
-											Name: pluginName + ".tar.gz",
-										},
-									},
-								},
-							},
-						},
-					},
-				})
-			case "/download":
+			case expectedArchivePath + ".sha256":
+				_, _ = w.Write([]byte(archiveSHA + "\n"))
+			case expectedArchivePath:
 				_, _ = w.Write(archiveData)
+			default:
+				w.WriteHeader(http.StatusNotFound)
 			}
 		}))
 		defer srv.Close()
-		srvURL = srv.URL
 
-		c := &Config{Cache: t.TempDir(), ManifestURL: srv.URL + "/manifest.json", AutoUpdate: true}
+		c := &Config{Cache: t.TempDir(), BaseURL: srv.URL, AutoUpdate: true}
 		err = c.EnsureProvider(proto.Provider_PROVIDER_UNSPECIFIED)
 		assert.ErrorContains(t, err, "unknown provider")
 	})

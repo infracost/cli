@@ -118,7 +118,7 @@ infracost inspect --summary
 
 ### Plugins
 
-Plugins are downloaded automatically from the manifest when you run the CLI. No manual setup is required.
+Plugins are downloaded automatically from the plugin Infracost releases when you run the CLI. No manual setup is required.
 
 #### Version Pinning
 
@@ -132,7 +132,9 @@ variables:
 
 #### Updates
 
-Plugins auto-update by default. Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to disable automatic plugin updates. When disabled, the CLI uses the latest cached version if one exists, and only downloads from the manifest if no cached version is found.
+Plugins auto-update by default. Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to disable automatic plugin updates. When disabled, the CLI uses the latest cached version if one exists, and only downloads from the plugin Infracost releases if no cached version is found.
+
+Set `INFRACOST_CLI_PLUGIN_BASE_URL` to override the plugin Infracost releases URL. Use `--debug` to show plugin download URLs and other debug logs.
 
 To update the CLI itself, you can use the `update` command. This will update the CLI binary by downloading the latest release from GitHub. Note that this does not update plugins, which are managed separately as described above.
 
@@ -143,7 +145,7 @@ builds:
 
 ```bash
 # Parser
-export INFRACOST_CLI_PARSER_PLUGIN=/path/to/bin/infracost-parser-plugin
+export INFRACOST_CLI_PARSER_PLUGIN=/path/to/bin/infracost-plugin-terraform
 
 # Providers
 export INFRACOST_CLI_PROVIDER_PLUGIN_AWS=/path/to/bin/infracost-provider-plugin-aws
@@ -153,12 +155,10 @@ export INFRACOST_CLI_PROVIDER_PLUGIN_AZURERM=/path/to/bin/infracost-provider-plu
 
 When a plugin path override is set, the CLI uses that binary directly and skips downloading for that plugin.
 
-
 ## Bugs and feedback
 
 If you run into any issues or have feedback, please open a thread in [GitHub Discussions](https://github.com/infracost/infracost/discussions).
 
 ## Contributing
 
-We ❤️ contributions big or small. Please start by opening a thread in [GitHub Discussions](https://github.com/infracost/infracost/discussions) to discuss your idea before submitting a PR. 
-
+We ❤️ contributions big or small. Please start by opening a thread in [GitHub Discussions](https://github.com/infracost/infracost/discussions) to discuss your idea before submitting a PR.

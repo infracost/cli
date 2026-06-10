@@ -57,6 +57,9 @@ type Config struct {
 	// any sub-config that registers `flagvalue:"json"` (e.g. logging).
 	JSON process.BoolFlag `env:"INFRACOST_CLI_LOG_JSON" flag:"json" usage:"Output logs and command results as JSON"`
 
+	// Debug enables debug logging. Shared with logging.
+	Debug process.BoolFlag `flag:"debug" usage:"Enable debug logging"`
+
 	// LLM toggles a compact, token-efficient output format intended for piping
 	// into LLM prompts. Carries the same data as --json in fewer tokens.
 	LLM process.BoolFlag `env:"INFRACOST_CLI_LLM" flag:"llm" usage:"Output command results in a compact, token-efficient format intended for LLM prompts"`
