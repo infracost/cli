@@ -6,12 +6,9 @@ import (
 	"sync"
 
 	"github.com/hashicorp/go-hclog"
-	"github.com/infracost/cli/pkg/config/process"
 	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
 )
-
-var _ process.Processor = (*Config)(nil)
 
 type cachedProviderClient struct {
 	client pluginpb.ProviderServiceClient
@@ -121,17 +118,5 @@ func (c *Config) Close() {
 		if cached.stop != nil {
 			cached.stop()
 		}
-	}
-}
-
-func (c *Config) Process() {
-	c.LoadAWS = func(level hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
-		return Connect(c.AWS, level)
-	}
-	c.LoadGoogle = func(level hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
-		return Connect(c.Google, level)
-	}
-	c.LoadAzurerm = func(level hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
-		return Connect(c.Azure, level)
 	}
 }

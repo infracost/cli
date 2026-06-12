@@ -11,7 +11,7 @@ import (
 
 func PluginsCmd(cfg *config.Config) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "plugins",
+		Use:   "plugin",
 		Short: "Manage Infracost plugins",
 	}
 	cmd.AddCommand(pluginsListCmd(cfg))

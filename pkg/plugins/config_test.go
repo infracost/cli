@@ -437,13 +437,72 @@ func TestEnsurePlugins(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, mgr)
 
-		assert.Equal(t, filepath.Join(dir, pluginBinaryName(parserPluginName)), c.Parser.Plugin)
-		assert.Equal(t, filepath.Join(dir, pluginBinaryName("infracost-plugin-aws")), c.Providers.AWS)
-		assert.Equal(t, filepath.Join(dir, pluginBinaryName("infracost-plugin-google")), c.Providers.Google)
-		assert.Equal(t, filepath.Join(dir, pluginBinaryName("infracost-plugin-azure")), c.Providers.Azure)
+		assert.Empty(t, c.Parser.Plugin)
+		assert.Empty(t, c.Providers.AWS)
+		assert.Equal(t, filepath.Join(dir, pluginBinaryName("infracost-plugin-aws")), c.providerPluginPath(proto.Provider_PROVIDER_AWS))
+		assert.Equal(t, filepath.Join(dir, pluginBinaryName("infracost-plugin-google")), c.providerPluginPath(proto.Provider_PROVIDER_GOOGLE))
+		assert.Equal(t, filepath.Join(dir, pluginBinaryName("infracost-plugin-azure")), c.providerPluginPath(proto.Provider_PROVIDER_AZURERM))
 	})
 
-	t.Run("installs parser plugins into flat directory", func(t *testing.T) {
+	t.Run("installs plugins into flat directory", func(t *testing.T) {
+		archiveName := pluginArchiveName()
+		archiveData := make(map[string][]byte)
+		archiveSHA := make(map[string]string)
+		archiveDir := t.TempDir()
+		for _, spec := range pluginSpecs {
+			archivePath := createPluginArchive(t, archiveDir, archiveName+"-"+spec.Name, pluginBinaryName(spec.Name), []byte(spec.Name))
+			data, err := os.ReadFile(archivePath)
+			require.NoError(t, err)
+			archiveData[spec.Name] = data
+			archiveSHA[spec.Name] = fileSHA256(t, archivePath)
+		}
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+			if len(parts) != 5 || parts[1] != runtime.GOOS || parts[2] != runtime.GOARCH || parts[3] != "latest" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			name := parts[0]
+			if _, ok := archiveData[name]; !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if parts[4] == "version" {
+				_, _ = w.Write([]byte("0.0.1\n"))
+				return
+			}
+			if parts[4] == archiveName+".sha256" {
+				_, _ = w.Write([]byte(archiveSHA[name] + "\n"))
+				return
+			}
+			if parts[4] == archiveName {
+				_, _ = w.Write(archiveData[name])
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		cacheDir := t.TempDir()
+		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
+		_, err := c.EnsurePlugins()
+		require.NoError(t, err)
+
+		for _, spec := range pluginSpecs {
+			path := filepath.Join(cacheDir, pluginBinaryName(spec.Name))
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, []byte(spec.Name), data)
+			assert.Equal(t, archiveSHA[spec.Name], cachedPluginSHA(path))
+		}
+		assert.Empty(t, c.Providers.AWS)
+		assert.Equal(t, filepath.Join(cacheDir, pluginBinaryName("infracost-plugin-aws")), c.providerPluginPath(proto.Provider_PROVIDER_AWS))
+		assert.Equal(t, filepath.Join(cacheDir, pluginBinaryName("infracost-plugin-google")), c.providerPluginPath(proto.Provider_PROVIDER_GOOGLE))
+		assert.Equal(t, filepath.Join(cacheDir, pluginBinaryName("infracost-plugin-azure")), c.providerPluginPath(proto.Provider_PROVIDER_AZURERM))
+	})
+
+	t.Run("provider override skips provider downloads", func(t *testing.T) {
 		archiveName := pluginArchiveName()
 		archiveData := make(map[string][]byte)
 		archiveSHA := make(map[string]string)
@@ -486,60 +545,18 @@ func TestEnsurePlugins(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		cacheDir := t.TempDir()
-		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
+		c := &Config{
+			Cache:      t.TempDir(),
+			BaseURL:    srv.URL,
+			AutoUpdate: true,
+			Providers:  makeProvidersConfig("aws-override", "google-override", "azure-override", "", "", ""),
+		}
+
 		_, err := c.EnsurePlugins()
 		require.NoError(t, err)
-
-		for _, spec := range pluginSpecs {
-			path := filepath.Join(cacheDir, pluginBinaryName(spec.Name))
-			if spec.Type != pluginTypeParser {
-				assert.NoFileExists(t, path)
-				continue
-			}
-			data, err := os.ReadFile(path)
-			require.NoError(t, err)
-			assert.Equal(t, []byte(spec.Name), data)
-			assert.Equal(t, archiveSHA[spec.Name], cachedPluginSHA(path))
-		}
-	})
-
-	t.Run("installs provider plugin on demand", func(t *testing.T) {
-		archiveName := pluginArchiveName()
-		spec := providerSpec(proto.Provider_PROVIDER_AWS)
-		archiveDir := t.TempDir()
-		archivePath := createPluginArchive(t, archiveDir, archiveName, pluginBinaryName(spec.Name), []byte(spec.Name))
-		archiveSHA := fileSHA256(t, archivePath)
-		archiveData, err := os.ReadFile(archivePath)
-		require.NoError(t, err)
-
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			expectedPrefix := fmt.Sprintf("/%s/%s/%s/latest/", spec.Name, runtime.GOOS, runtime.GOARCH)
-			switch r.URL.Path {
-			case expectedPrefix + "version":
-				_, _ = w.Write([]byte("0.0.1\n"))
-			case expectedPrefix + archiveName + ".sha256":
-				_, _ = w.Write([]byte(archiveSHA + "\n"))
-			case expectedPrefix + archiveName:
-				_, _ = w.Write(archiveData)
-			default:
-				w.WriteHeader(http.StatusNotFound)
-			}
-		}))
-		defer srv.Close()
-
-		cacheDir := t.TempDir()
-		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
-		err = c.EnsureProvider(proto.Provider_PROVIDER_AWS)
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join(cacheDir, pluginBinaryName(spec.Name)), c.Providers.AWS)
-		assert.NoFileExists(t, filepath.Join(cacheDir, pluginBinaryName(parserPluginName)))
-	})
-
-	t.Run("unknown provider returns error", func(t *testing.T) {
-		c := &Config{Cache: t.TempDir(), AutoUpdate: true}
-		err := c.EnsureProvider(proto.Provider_PROVIDER_UNSPECIFIED)
-		assert.ErrorContains(t, err, "unknown provider")
+		assert.Equal(t, "aws-override", c.Providers.AWS)
+		assert.Equal(t, "google-override", c.Providers.Google)
+		assert.Equal(t, "azure-override", c.Providers.Azure)
 	})
 }
 
@@ -558,7 +575,7 @@ func TestPluginVersion(t *testing.T) {
 
 	t.Run("legacy provider version is provider fallback", func(t *testing.T) {
 		c := &Config{Providers: makeProvidersConfig("", "", "", "v4.5.6", "", "")}
-		assert.Equal(t, "v4.5.6", c.pluginVersion(providerSpec(proto.Provider_PROVIDER_AWS)))
+		assert.Equal(t, "v4.5.6", c.pluginVersion(pluginSpecs[4]))
 	})
 }
 

@@ -204,11 +204,6 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	}
 
 	for _, rp := range requiredProviders {
-		if err := opts.Plugins.EnsureProvider(rp); err != nil {
-			logging.WithError(err).Msgf("failed to ensure provider %s", rp)
-			continue
-		}
-
 		var loader func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error)
 		switch rp {
 		case provider.Provider_PROVIDER_AWS:

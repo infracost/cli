@@ -78,6 +78,10 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		hasRunParameters = true
 	}
 
+	if _, err := s.Plugins.EnsurePlugins(); err != nil {
+		return nil, nil, fmt.Errorf("failed to ensure plugins: %w", err)
+	}
+
 	pluginLoaders := map[provider.Provider]func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error){
 		provider.Provider_PROVIDER_AWS:     s.Plugins.Providers.LoadAWS,
 		provider.Provider_PROVIDER_GOOGLE:  s.Plugins.Providers.LoadGoogle,
@@ -96,10 +100,6 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 	for _, prov := range providers {
 		pluginLoader, ok := pluginLoaders[prov]
 		if !ok {
-			continue
-		}
-		if err := s.Plugins.EnsureProvider(prov); err != nil {
-			logging.WithError(err).Msgf("failed to ensure provider %s", prov)
 			continue
 		}
 		providerFinopsPolicies, err := s.Plugins.Providers.ListFinopsPolicies(ctx, prov, pluginLoader)

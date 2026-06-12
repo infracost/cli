@@ -18,11 +18,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins/parser"
 	"github.com/infracost/cli/pkg/plugins/providers"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
 )
 
@@ -34,12 +36,10 @@ const (
 
 	pluginTypeParser   = "parser"
 	pluginTypeProvider = "provider"
-
-	parserPluginName = "infracost-plugin-terraform"
 )
 
 var pluginSpecs = []pluginSpec{
-	{Key: "terraform", Name: parserPluginName, Type: pluginTypeParser},
+	{Key: "terraform", Name: "infracost-plugin-terraform", Type: pluginTypeParser},
 	{Key: "terragrunt", Name: "infracost-plugin-terragrunt", Type: pluginTypeParser},
 	{Key: "cloudformation", Name: "infracost-plugin-cloudformation", Type: pluginTypeParser},
 	{Key: "ciscostacks", Name: "infracost-plugin-ciscostacks", Type: pluginTypeParser},
@@ -53,15 +53,6 @@ type pluginSpec struct {
 	Name     string
 	Type     string
 	Provider proto.Provider
-}
-
-func providerSpec(provider proto.Provider) pluginSpec {
-	for _, spec := range pluginSpecs {
-		if spec.Type == pluginTypeProvider && spec.Provider == provider {
-			return spec
-		}
-	}
-	return pluginSpec{}
 }
 
 type Config struct {
@@ -93,6 +84,9 @@ func (c *Config) Process() {
 	if len(c.Cache) == 0 {
 		c.Cache = defaultPluginCachePath()
 	}
+	c.Providers.LoadAWS = c.providerLoader(proto.Provider_PROVIDER_AWS)
+	c.Providers.LoadGoogle = c.providerLoader(proto.Provider_PROVIDER_GOOGLE)
+	c.Providers.LoadAzurerm = c.providerLoader(proto.Provider_PROVIDER_AZURERM)
 }
 
 func (c *Config) ParserPluginForProject(ctx context.Context, projectTypeOrPluginName string) (*ParserPlugin, error) {
@@ -124,61 +118,30 @@ func (c *Config) Close() {
 	c.Providers.Close()
 }
 
-func (c *Config) EnsureProvider(provider proto.Provider) error {
-	spec := providerSpec(provider)
-	if spec.Name == "" {
-		return fmt.Errorf("unknown provider: %s", provider.String())
-	}
-
-	if c.Dir != "" {
-		c.setPluginPath(spec, filepath.Join(c.pluginDir(), pluginBinaryName(spec.Name)))
-		return nil
-	}
-
-	if override := c.pluginPathOverride(spec); override != "" {
-		c.setPluginPath(spec, override)
-		return nil
-	}
-
-	path, err := c.Ensure(spec.Name, c.pluginVersion(spec))
-	if err != nil {
-		return err
-	}
-	c.setPluginPath(spec, path)
-	return nil
-}
-
 func (c *Config) EnsurePlugins() (*Manager, error) {
 	c.managerMu.Lock()
 	defer c.managerMu.Unlock()
 
 	c.ensureOnce.Do(func() {
-		c.manager, c.ensureErr = c.ensureParserPlugins()
+		c.manager, c.ensureErr = c.ensureAllPlugins()
 	})
 	return c.manager, c.ensureErr
 }
 
-func (c *Config) ensureParserPlugins() (*Manager, error) {
+func (c *Config) ensureAllPlugins() (*Manager, error) {
 	pluginDir := c.pluginDir()
 	if c.Dir != "" {
-		c.setPluginPaths(pluginDir)
 		return NewManager(pluginDir)
 	}
 
 	for _, spec := range pluginSpecs {
-		if spec.Type != pluginTypeParser {
-			continue
-		}
-		if override := c.pluginPathOverride(spec); override != "" {
-			c.setPluginPath(spec, override)
+		if c.pluginPathOverride(spec) != "" {
 			continue
 		}
 
-		path, err := c.Ensure(spec.Name, c.pluginVersion(spec))
-		if err != nil {
+		if _, err := c.Ensure(spec.Name, c.pluginVersion(spec)); err != nil {
 			return nil, err
 		}
-		c.setPluginPath(spec, path)
 	}
 
 	return NewManager(pluginDir)
@@ -194,41 +157,30 @@ func (c *Config) pluginDir() string {
 	return c.Cache
 }
 
-func (c *Config) setPluginPaths(dir string) {
-	for _, spec := range pluginSpecs {
-		c.setPluginPath(spec, filepath.Join(dir, pluginBinaryName(spec.Name)))
+func (c *Config) providerLoader(provider proto.Provider) func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+	return func(level hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+		return providers.Connect(c.providerPluginPath(provider), level)
 	}
 }
 
-func (c *Config) setPluginPath(spec pluginSpec, path string) {
-	switch spec.Type {
-	case pluginTypeParser:
-		if spec.Key == "terraform" {
-			c.Parser.Plugin = path
-		}
-	case pluginTypeProvider:
-		switch spec.Provider {
-		case proto.Provider_PROVIDER_GOOGLE:
-			c.Providers.Google = path
-		case proto.Provider_PROVIDER_AWS:
-			c.Providers.AWS = path
-		case proto.Provider_PROVIDER_AZURERM:
-			c.Providers.Azure = path
+func (c *Config) providerPluginPath(provider proto.Provider) string {
+	if override, _ := c.providerOverride(provider); override != "" {
+		return override
+	}
+	for _, spec := range pluginSpecs {
+		if spec.Type == pluginTypeProvider && spec.Provider == provider {
+			return filepath.Join(c.pluginDir(), pluginBinaryName(spec.Name))
 		}
 	}
+	return ""
 }
 
 func (c *Config) pluginPathOverride(spec pluginSpec) string {
-	switch spec.Type {
-	case pluginTypeParser:
-		if spec.Key == "terraform" {
-			return c.Parser.Plugin
-		}
-	case pluginTypeProvider:
-		override, _ := c.providerOverride(spec.Provider)
-		return override
+	if spec.Type != pluginTypeProvider {
+		return ""
 	}
-	return ""
+	override, _ := c.providerOverride(spec.Provider)
+	return override
 }
 
 func (c *Config) pluginVersion(spec pluginSpec) string {
