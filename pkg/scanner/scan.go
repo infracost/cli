@@ -96,7 +96,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	// Evaluate production filters.
 	isProduction := EvaluateProductionFilters(opts.ProductionFilters, opts.RepositoryName, opts.BranchName, opts.Project.Name)
 
-	if err := opts.Plugins.EnsureParser(); err != nil {
+	if _, err := opts.Plugins.EnsurePlugins(); err != nil {
 		return nil, fmt.Errorf("failed to ensure parser plugin: %w", err)
 	}
 

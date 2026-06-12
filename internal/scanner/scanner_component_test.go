@@ -75,6 +75,7 @@ func newTestScanner(t *testing.T, opts testScannerOpts) *Scanner {
 	t.Helper()
 
 	cfg := testingconfig.Config(t)
+	cfg.Plugins.Dir = t.TempDir()
 
 	// Set up parser mock when a parse response is configured.
 	if opts.parseResponse != nil || opts.parseErr != nil {

@@ -14,8 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/infracost/cli/internal/ui"
@@ -23,9 +23,7 @@ import (
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins/parser"
 	"github.com/infracost/cli/pkg/plugins/providers"
-	providerconv "github.com/infracost/go-proto/pkg/providers"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
-	"golang.org/x/mod/semver"
 )
 
 var _ process.Processor = (*Config)(nil)
@@ -34,8 +32,37 @@ const (
 	// maxPluginSize is the maximum allowed size for an extracted plugin binary (1 GB).
 	maxPluginSize = 1 << 30
 
+	pluginTypeParser   = "parser"
+	pluginTypeProvider = "provider"
+
 	parserPluginName = "infracost-plugin-terraform"
 )
+
+var pluginSpecs = []pluginSpec{
+	{Key: "terraform", Name: parserPluginName, Type: pluginTypeParser},
+	{Key: "terragrunt", Name: "infracost-plugin-terragrunt", Type: pluginTypeParser},
+	{Key: "cloudformation", Name: "infracost-plugin-cloudformation", Type: pluginTypeParser},
+	{Key: "ciscostacks", Name: "infracost-plugin-ciscostacks", Type: pluginTypeParser},
+	{Key: "aws", Name: "infracost-plugin-aws", Type: pluginTypeProvider, Provider: proto.Provider_PROVIDER_AWS},
+	{Key: "google", Name: "infracost-plugin-google", Type: pluginTypeProvider, Provider: proto.Provider_PROVIDER_GOOGLE},
+	{Key: "azure", Name: "infracost-plugin-azure", Type: pluginTypeProvider, Provider: proto.Provider_PROVIDER_AZURERM},
+}
+
+type pluginSpec struct {
+	Key      string
+	Name     string
+	Type     string
+	Provider proto.Provider
+}
+
+func providerSpec(provider proto.Provider) pluginSpec {
+	for _, spec := range pluginSpecs {
+		if spec.Type == pluginTypeProvider && spec.Provider == provider {
+			return spec
+		}
+	}
+	return pluginSpec{}
+}
 
 type Config struct {
 	Providers providers.Config
@@ -44,12 +71,19 @@ type Config struct {
 	// BaseURL points to the root URL where plugin archives are hosted.
 	BaseURL string `env:"INFRACOST_CLI_PLUGIN_BASE_URL" default:"https://releases.infracost.io"`
 
-	// Cache is where the plugins should go.
+	// Cache is where managed plugins should go.
 	Cache string `env:"INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY"`
 
-	// AutoUpdate controls whether plugins are always updated to the latest
-	// version. When false, an existing cached version is used if available.
+	// Dir is a flat plugin directory override for local plugin development. When set, downloads are skipped.
+	Dir string `env:"INFRACOST_CLI_PLUGIN_DIR"`
+
+	// AutoUpdate controls whether plugins are updated to the latest version.
+	// When false, an existing flat-installed binary is used if available.
 	AutoUpdate bool `env:"INFRACOST_CLI_PLUGIN_AUTO_UPDATE" default:"true"`
+
+	ensureOnce sync.Once
+	ensureErr  error
+	manager    *Manager
 }
 
 func (c *Config) Process() {
@@ -58,42 +92,123 @@ func (c *Config) Process() {
 	}
 }
 
-func (c *Config) EnsureParser() error {
-	if c.Parser.Plugin != "" {
+func (c *Config) EnsureProvider(provider proto.Provider) error {
+	spec := providerSpec(provider)
+	if spec.Name == "" {
+		return fmt.Errorf("unknown provider: %s", provider.String())
+	}
+
+	if c.Dir != "" {
+		c.setPluginPath(spec, filepath.Join(c.pluginDir(), pluginBinaryName(spec.Name)))
 		return nil
 	}
 
-	path, err := c.Ensure(parserPluginName, c.Parser.Version)
+	if override := c.pluginPathOverride(spec); override != "" {
+		c.setPluginPath(spec, override)
+		return nil
+	}
+
+	path, err := c.Ensure(spec.Name, c.pluginVersion(spec))
 	if err != nil {
 		return err
 	}
-	c.Parser.Plugin = path
+	c.setPluginPath(spec, path)
 	return nil
 }
 
-func (c *Config) EnsureProvider(provider proto.Provider) error {
-	override, version := c.providerOverride(provider)
-	if override != "" {
-		return nil
+func (c *Config) EnsurePlugins() (*Manager, error) {
+	c.ensureOnce.Do(func() {
+		c.manager, c.ensureErr = c.ensureParserPlugins()
+	})
+	return c.manager, c.ensureErr
+}
+
+func (c *Config) ensureParserPlugins() (*Manager, error) {
+	pluginDir := c.pluginDir()
+	if c.Dir != "" {
+		c.setPluginPaths(pluginDir)
+		return NewManager(pluginDir)
 	}
 
-	path, err := c.Ensure(fmt.Sprintf("infracost-provider-plugin-%s", providerconv.FromProto(provider)), version)
-	if err != nil {
-		return err
+	for _, spec := range pluginSpecs {
+		if spec.Type != pluginTypeParser {
+			continue
+		}
+		if override := c.pluginPathOverride(spec); override != "" {
+			c.setPluginPath(spec, override)
+			continue
+		}
+
+		path, err := c.Ensure(spec.Name, c.pluginVersion(spec))
+		if err != nil {
+			return nil, err
+		}
+		c.setPluginPath(spec, path)
 	}
 
-	switch provider {
-	case proto.Provider_PROVIDER_GOOGLE:
-		c.Providers.Google = path
-	case proto.Provider_PROVIDER_AWS:
-		c.Providers.AWS = path
-	case proto.Provider_PROVIDER_AZURERM:
-		c.Providers.Azure = path
-	default:
-		return fmt.Errorf("unknown provider: %s", providerconv.FromProto(provider))
+	return NewManager(pluginDir)
+}
+
+func (c *Config) pluginDir() string {
+	if c.Dir != "" {
+		return c.Dir
+	}
+	if c.Cache == "" {
+		return defaultPluginCachePath()
+	}
+	return c.Cache
+}
+
+func (c *Config) setPluginPaths(dir string) {
+	for _, spec := range pluginSpecs {
+		c.setPluginPath(spec, filepath.Join(dir, pluginBinaryName(spec.Name)))
+	}
+}
+
+func (c *Config) setPluginPath(spec pluginSpec, path string) {
+	switch spec.Type {
+	case pluginTypeParser:
+		if spec.Key == "terraform" {
+			c.Parser.Plugin = path
+		}
+	case pluginTypeProvider:
+		switch spec.Provider {
+		case proto.Provider_PROVIDER_GOOGLE:
+			c.Providers.Google = path
+		case proto.Provider_PROVIDER_AWS:
+			c.Providers.AWS = path
+		case proto.Provider_PROVIDER_AZURERM:
+			c.Providers.Azure = path
+		}
+	}
+}
+
+func (c *Config) pluginPathOverride(spec pluginSpec) string {
+	switch spec.Type {
+	case pluginTypeParser:
+		if spec.Key == "terraform" {
+			return c.Parser.Plugin
+		}
+	case pluginTypeProvider:
+		override, _ := c.providerOverride(spec.Provider)
+		return override
+	}
+	return ""
+}
+
+func (c *Config) pluginVersion(spec pluginSpec) string {
+	if version := os.Getenv("INFRACOST_CLI_PLUGIN_" + strings.ToUpper(spec.Key) + "_VERSION"); version != "" {
+		return version
 	}
 
-	return nil
+	switch spec.Type {
+	case pluginTypeParser:
+		return c.Parser.Version
+	case pluginTypeProvider:
+		_, version := c.providerOverride(spec.Provider)
+		return version
+	}
+	return ""
 }
 
 func (c *Config) providerOverride(provider proto.Provider) (string, string) {
@@ -121,30 +236,13 @@ func pluginBinaryName(name string) string {
 func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 	logging.Debugf("ensuring plugin %q is available", plugin)
 
-	platform := runtime.GOOS + "_" + runtime.GOARCH
 	binaryName := pluginBinaryName(plugin)
+	binaryPath := filepath.Join(c.pluginDir(), binaryName)
+	installed := flatPluginBinaryExists(binaryPath)
 
-	if len(wantVersion) > 0 {
-		// The user has requested a specific version.
-		want := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
-		if _, err := os.Stat(want); err == nil {
-			return want, nil
-		}
-	}
-
-	// When auto-update is disabled and the user hasn't picked a specific version, use the latest cached version if
-	// available.
-	if len(wantVersion) == 0 && !c.AutoUpdate {
-		matches, _ := filepath.Glob(filepath.Join(c.Cache, plugin, platform, "*", binaryName))
-		if len(matches) > 0 {
-			sort.Slice(matches, func(i, j int) bool {
-				vi := "v" + filepath.Base(filepath.Dir(matches[i]))
-				vj := "v" + filepath.Base(filepath.Dir(matches[j]))
-				return semver.Compare(vi, vj) > 0
-			})
-			logging.Debugf("plugin %q using cached version at %s (auto-update disabled)", plugin, matches[0])
-			return matches[0], nil
-		}
+	if installed && !c.AutoUpdate {
+		logging.Debugf("plugin %q using existing flat-installed binary at %s (auto-update disabled)", plugin, binaryPath)
+		return binaryPath, nil
 	}
 
 	downloadVersion := wantVersion
@@ -152,38 +250,54 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 		downloadVersion = "latest"
 	}
 
+	if downloadVersion != "latest" {
+		if installed && cachedPluginVersion(binaryPath) == downloadVersion {
+			logging.Debugf("plugin %q version %s already installed at %s", plugin, downloadVersion, binaryPath)
+			return binaryPath, nil
+		}
+	}
+
 	artifactName := pluginArchiveName()
 	artifactURL := c.pluginArtifactURL(plugin, runtime.GOOS, runtime.GOARCH, downloadVersion, artifactName)
-	binaryPath := filepath.Join(c.Cache, plugin, platform, downloadVersion, binaryName)
+	resolvedVersion := downloadVersion
+	if downloadVersion == "latest" {
+		var err error
+		resolvedVersion, err = fetchPluginVersion(c.pluginVersionURL(plugin, runtime.GOOS, runtime.GOARCH, downloadVersion))
+		if err != nil {
+			return "", fmt.Errorf("failed to fetch plugin version: %w", err)
+		}
+	}
 
 	artifactSHA := ""
-	if _, err := os.Stat(binaryPath); err == nil {
-		if wantVersion != "" {
-			logging.Debugf("plugin %q already cached at %s", plugin, binaryPath)
+	if installed {
+		if cachedPluginVersion(binaryPath) == resolvedVersion {
+			logging.Debugf("plugin %q version %s already installed at %s", plugin, resolvedVersion, binaryPath)
 			return binaryPath, nil
 		}
 
-		logging.Debugf("fetching plugin checksum from %s", artifactURL+".sha256")
+		var err error
 		artifactSHA, err = fetchSHA256(artifactURL + ".sha256")
 		if err != nil {
 			return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
 		}
 		if cachedPluginSHA(binaryPath) == artifactSHA {
-			logging.Debugf("plugin %q already cached at %s", plugin, binaryPath)
+			logging.Debugf("plugin %q already installed at %s", plugin, binaryPath)
+			if err := writePluginVersion(binaryPath, resolvedVersion); err != nil {
+				return "", err
+			}
 			return binaryPath, nil
 		}
 	}
 
 	if artifactSHA == "" {
 		var err error
-		logging.Debugf("fetching plugin checksum from %s", artifactURL+".sha256")
 		artifactSHA, err = fetchSHA256(artifactURL + ".sha256")
 		if err != nil {
 			return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
 		}
 	}
 
-	logging.Infof("downloading plugin %q version %s for %s", plugin, downloadVersion, platform)
+	logging.Infof("downloading plugin %q version %s for %s/%s", plugin, downloadVersion, runtime.GOOS, runtime.GOARCH)
 
 	if err := ui.RunWithSpinnerErr(context.Background(), fmt.Sprintf("Downloading %s %s...", plugin, downloadVersion), fmt.Sprintf("Downloaded %s %s", plugin, downloadVersion), func(_ context.Context) error {
 		logging.Debugf("downloading plugin archive from %s", artifactURL)
@@ -194,7 +308,7 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 		defer func() { _ = os.Remove(archivePath) }()
 
 		if err := os.MkdirAll(filepath.Dir(binaryPath), 0o750); err != nil {
-			return fmt.Errorf("failed to create plugin cache directory: %w (use INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY to change the location)", err)
+			return fmt.Errorf("failed to create plugin directory: %w (use INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY to change the location or INFRACOST_CLI_PLUGIN_DIR for local plugins)", err)
 		}
 
 		tmpBinary := binaryPath + ".tmp"
@@ -216,10 +330,8 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 			return fmt.Errorf("failed to make plugin binary executable: %w", err)
 		}
 
-		if runtime.GOOS == "windows" {
-			if err := os.Remove(binaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("failed to replace existing plugin binary: %w", err)
-			}
+		if err := removeExistingPluginPath(binaryPath); err != nil {
+			return err
 		}
 
 		if err := renameWithRetry(tmpBinary, binaryPath); err != nil {
@@ -228,6 +340,9 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 
 		if err := os.WriteFile(binaryPath+".sha256", []byte(artifactSHA+"\n"), 0o600); err != nil {
 			return fmt.Errorf("failed to write plugin checksum: %w", err)
+		}
+		if err := writePluginVersion(binaryPath, resolvedVersion); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
@@ -249,8 +364,39 @@ func (c *Config) pluginArtifactURL(plugin, goos, goarch, version, name string) s
 	return fmt.Sprintf("%s/%s/%s/%s/%s/%s", strings.TrimRight(c.BaseURL, "/"), plugin, goos, goarch, version, name)
 }
 
+func (c *Config) pluginVersionURL(plugin, goos, goarch, version string) string {
+	return fmt.Sprintf("%s/%s/%s/%s/%s/version", strings.TrimRight(c.BaseURL, "/"), plugin, goos, goarch, version)
+}
+
+func flatPluginBinaryExists(binaryPath string) bool {
+	info, err := os.Stat(binaryPath)
+	return err == nil && !info.IsDir()
+}
+
+func removeExistingPluginPath(binaryPath string) error {
+	info, err := os.Stat(binaryPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to inspect existing plugin path: %w", err)
+	}
+	if info.IsDir() {
+		if err := os.RemoveAll(binaryPath); err != nil {
+			return fmt.Errorf("failed to replace existing plugin directory: %w", err)
+		}
+		return nil
+	}
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(binaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to replace existing plugin binary: %w", err)
+		}
+	}
+	return nil
+}
+
 func cachedPluginSHA(binaryPath string) string {
-	data, err := os.ReadFile(binaryPath + ".sha256") //nolint:gosec // G304: sidecar path is derived from the trusted plugin cache path
+	data, err := os.ReadFile(binaryPath + ".sha256") //nolint:gosec // G304: sidecar path is derived from the trusted plugin path
 	if err != nil {
 		return ""
 	}
@@ -260,6 +406,57 @@ func cachedPluginSHA(binaryPath string) string {
 		return ""
 	}
 	return fields[0]
+}
+
+func cachedPluginVersion(binaryPath string) string {
+	data, err := os.ReadFile(binaryPath + ".version") //nolint:gosec // G304: sidecar path is derived from the trusted plugin path
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func writePluginVersion(binaryPath, version string) error {
+	if err := os.WriteFile(binaryPath+".version", []byte(version+"\n"), 0o600); err != nil {
+		return fmt.Errorf("failed to write plugin version: %w", err)
+	}
+	return nil
+}
+
+func fetchPluginVersion(rawURL string) (string, error) {
+	logging.Debugf("fetching plugin version from %s", rawURL)
+
+	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
+	if err != nil {
+		return "", fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read plugin version: %w", err)
+	}
+
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty plugin version response")
+	}
+	return fields[0], nil
 }
 
 func fetchSHA256(rawURL string) (string, error) {
