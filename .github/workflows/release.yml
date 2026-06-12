@@ -178,6 +178,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           VERSION: v${{ needs.version.outputs.version }}
+          VERSION_NO_V: ${{ needs.version.outputs.version }}
         run: |
           if [ "$GOOS" = "windows" ]; then
             EXT="zip"
@@ -186,10 +187,12 @@ jobs:
             EXT="tar.gz"
             SRC="dist/infracost-${GOOS}-${GOARCH}.tar.gz"
           fi
+          printf "%s\n" "$VERSION_NO_V" > version
           aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}"
           aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}"
           aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}.sha256"
           aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}.sha256"
+          aws s3 cp version "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/version"
 
   publish-release:
     runs-on: ubuntu-24.04

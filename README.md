@@ -140,7 +140,7 @@ Plugins auto-update by default. Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to 
 
 Set `INFRACOST_CLI_PLUGIN_BASE_URL` to override the plugin Infracost releases URL. Use `--debug` to show plugin download URLs and other debug logs.
 
-To update the CLI itself, you can use the `update` command. This will update the CLI binary by downloading the latest release from GitHub. Note that this does not update plugins, which are managed separately as described above.
+To update the CLI itself, you can use the `update` command. This updates the CLI binary by downloading the latest CLI archive from the Infracost releases bucket. Note that this does not update plugins, which are managed separately as described above.
 
 #### Local Plugin Overrides
 
