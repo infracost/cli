@@ -18,6 +18,7 @@ import (
 	repoconfig "github.com/infracost/config"
 	goprotoevent "github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -77,7 +78,7 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		hasRunParameters = true
 	}
 
-	pluginLoaders := map[provider.Provider]func(hclog.Level) (provider.ProviderServiceClient, func(), error){
+	pluginLoaders := map[provider.Provider]func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error){
 		provider.Provider_PROVIDER_AWS:     s.Plugins.Providers.LoadAWS,
 		provider.Provider_PROVIDER_GOOGLE:  s.Plugins.Providers.LoadGoogle,
 		provider.Provider_PROVIDER_AZURERM: s.Plugins.Providers.LoadAzurerm,
@@ -101,7 +102,7 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 			logging.WithError(err).Msgf("failed to ensure provider %s", prov)
 			continue
 		}
-		providerFinopsPolicies, err := s.Plugins.Providers.ListFinopsPolicies(ctx, pluginLoader)
+		providerFinopsPolicies, err := s.Plugins.Providers.ListFinopsPolicies(ctx, prov, pluginLoader)
 		if err != nil {
 			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", prov)
 			continue
@@ -171,7 +172,9 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		repoConfigOpts = append(repoConfigOpts, repoconfig.WithTemplate(runParameters.ConfigTemplate))
 	}
 
-	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(absoluteDirectory, repoConfigOpts...)
+	repoConfigOpts = append(repoConfigOpts, repoconfig.WithPluginDir(s.Plugins.Dir))
+
+	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(ctx, absoluteDirectory, repoConfigOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("repository configuration error: %w", err)
 	}

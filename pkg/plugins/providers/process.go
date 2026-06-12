@@ -7,40 +7,49 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/protocache"
 	"github.com/infracost/cli/pkg/logging"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
 )
 
-func (c *Config) ProcessInput(ctx context.Context, provider proto.Provider, input *proto.Input, fn func(hclog.Level) (proto.ProviderServiceClient, func(), error), level hclog.Level) ([]*proto.Resource, []*proto.FinopsPolicyResult, error) {
+func (c *Config) ProcessTreeInput(ctx context.Context, provider proto.Provider, input *proto.TreeInput, fn func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error), level hclog.Level) ([]*proto.Resource, []*proto.FinopsPolicyResult, error) {
+	return c.processWithCache(provider, createTreeCacheKey(provider, input, c.providerVersion(provider)), fn, level, func(client pluginpb.ProviderServiceClient) (*proto.Output, error) {
+		response, err := client.Process(ctx, &pluginpb.ProcessRequest{Input: input})
+		if err != nil {
+			return nil, err
+		}
+		if response == nil || response.Output == nil {
+			return &proto.Output{}, nil
+		}
+		return response.Output, nil
+	})
+}
 
+func (c *Config) processWithCache(provider proto.Provider, key protocache.Key, fn func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error), level hclog.Level, process func(pluginpb.ProviderServiceClient) (*proto.Output, error)) ([]*proto.Resource, []*proto.FinopsPolicyResult, error) {
 	var cache protocache.Cache[*proto.Output]
 
-	// TODO: we probably want to include the provider plugin version in the cache key, but we need to decide how to get that - we could add a new method to the plugin interface that returns the version
-	providerVersion := ""
-	key := createCacheKey(provider, input, providerVersion)
 	if loaded, err := cache.Load(key); err == nil {
 		return loaded.Resources, loaded.FinopsResults, nil
 	} else if !errors.Is(err, protocache.ErrCacheMiss) {
 		logging.Warnf("failed to load provider output from cache: %s", err)
 	}
 
-	providerClient, stop, err := fn(level)
-	if stop != nil {
-		defer stop()
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	response, err := providerClient.Process(ctx, &proto.ProcessRequest{
-		Input: input,
-	})
+	providerClient, clientID, err := c.providerClient(provider, level, fn)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if err := cache.Save(key, response.Output); err != nil {
-		logging.Warnf("failed to save provider output to cache: %s", err)
+	output, err := process(providerClient)
+	if err != nil {
+		c.evictProviderClient(provider, clientID)
+		return nil, nil, err
+	}
+	if output == nil {
+		output = &proto.Output{}
 	}
 
-	return response.Output.Resources, response.Output.FinopsResults, nil
+	if err := cache.Save(key, output); err != nil {
+		logging.Warnf("failed to save provider output: %s", err)
+	}
 
+	return output.Resources, output.FinopsResults, nil
 }

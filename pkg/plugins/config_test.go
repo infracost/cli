@@ -77,6 +77,25 @@ func fileSHA256(t *testing.T, path string) string {
 	return hex.EncodeToString(h[:])
 }
 
+func TestListPlugins(t *testing.T) {
+	dir := t.TempDir()
+	terraformPath := filepath.Join(dir, pluginBinaryName("infracost-plugin-terraform"))
+	require.NoError(t, os.WriteFile(terraformPath, []byte("binary"), 0o700))
+	require.NoError(t, os.WriteFile(terraformPath+".version", []byte("1.2.3\n"), 0o600))
+
+	cfg := &Config{Dir: dir}
+	items := cfg.List()
+	require.Len(t, items, len(pluginSpecs))
+
+	assert.Equal(t, "terraform", items[0].Key)
+	assert.Equal(t, "infracost-plugin-terraform", items[0].Name)
+	assert.Equal(t, pluginTypeParser, items[0].Type)
+	assert.True(t, items[0].Installed)
+	assert.Equal(t, "1.2.3", items[0].Version)
+
+	assert.False(t, items[1].Installed)
+}
+
 func TestUnpackTarGz(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		dir := t.TempDir()
@@ -546,35 +565,35 @@ func TestPluginVersion(t *testing.T) {
 func TestProviderOverride(t *testing.T) {
 	tests := []struct {
 		name         string
-		config       Config
+		config       *Config
 		provider     proto.Provider
 		wantOverride string
 		wantVersion  string
 	}{
 		{
 			name:         "AWS",
-			config:       Config{Providers: makeProvidersConfig("aws-path", "", "", "v1", "", "")},
+			config:       &Config{Providers: makeProvidersConfig("aws-path", "", "", "v1", "", "")},
 			provider:     proto.Provider_PROVIDER_AWS,
 			wantOverride: "aws-path",
 			wantVersion:  "v1",
 		},
 		{
 			name:         "Google",
-			config:       Config{Providers: makeProvidersConfig("", "google-path", "", "", "v2", "")},
+			config:       &Config{Providers: makeProvidersConfig("", "google-path", "", "", "v2", "")},
 			provider:     proto.Provider_PROVIDER_GOOGLE,
 			wantOverride: "google-path",
 			wantVersion:  "v2",
 		},
 		{
 			name:         "Azure",
-			config:       Config{Providers: makeProvidersConfig("", "", "azure-path", "", "", "v3")},
+			config:       &Config{Providers: makeProvidersConfig("", "", "azure-path", "", "", "v3")},
 			provider:     proto.Provider_PROVIDER_AZURERM,
 			wantOverride: "azure-path",
 			wantVersion:  "v3",
 		},
 		{
 			name:         "unknown returns empty",
-			config:       Config{},
+			config:       &Config{},
 			provider:     proto.Provider_PROVIDER_UNSPECIFIED,
 			wantOverride: "",
 			wantVersion:  "",

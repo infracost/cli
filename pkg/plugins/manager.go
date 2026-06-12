@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/hashicorp/go-plugin"
@@ -35,6 +36,8 @@ var handshakeConfig = plugin.HandshakeConfig{
 
 type Manager struct {
 	dir           string
+	stateMu       sync.Mutex
+	useMu         sync.RWMutex
 	loadOnce      sync.Once
 	parserPlugins []*ParserPlugin
 	loadErr       error
@@ -68,6 +71,9 @@ func (m *Manager) LoadParserPluginForProject(ctx context.Context, projectTypeOrP
 // flat plugin directory. The result is cached on first call; subsequent calls
 // return the same plugins and error without re-scanning the directory.
 func (m *Manager) LoadParserPlugins(ctx context.Context) ([]*ParserPlugin, error) {
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+
 	m.loadOnce.Do(func() {
 		m.parserPlugins, m.loadErr = m.loadParserPlugins(ctx)
 	})
@@ -85,7 +91,7 @@ func (m *Manager) loadParserPlugins(ctx context.Context) ([]*ParserPlugin, error
 
 	var plugins []*ParserPlugin
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || isPluginSidecar(entry.Name()) || isKnownProviderPlugin(entry.Name()) {
 			continue
 		}
 
@@ -95,19 +101,42 @@ func (m *Manager) loadParserPlugins(ctx context.Context) ([]*ParserPlugin, error
 			continue
 		}
 
+		p.ParserServiceClient = lockedParserServiceClient{client: p.ParserServiceClient, mu: &m.useMu}
 		plugins = append(plugins, p)
 	}
 
 	return plugins, nil
 }
 
+func isPluginSidecar(name string) bool {
+	return strings.HasSuffix(name, ".sha256") || strings.HasSuffix(name, ".version")
+}
+
+func isKnownProviderPlugin(name string) bool {
+	for _, spec := range pluginSpecs {
+		if spec.Type == pluginTypeProvider && name == pluginBinaryName(spec.Name) {
+			return true
+		}
+	}
+	return false
+}
+
 // Close terminates every parser plugin subprocess this manager has connected to.
 func (m *Manager) Close() {
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+
+	m.useMu.Lock()
+	defer m.useMu.Unlock()
+
 	for _, p := range m.parserPlugins {
 		if p.client != nil {
 			p.client.Kill()
 		}
 	}
+	m.parserPlugins = nil
+	m.loadErr = nil
+	m.loadOnce = sync.Once{}
 }
 
 type ParserPlugin struct {
@@ -115,6 +144,29 @@ type ParserPlugin struct {
 	Info         *pb.GetPluginInfoResponse
 	ParserConfig *pb.GetParserConfigResponse
 	client       *plugin.Client
+}
+
+type lockedParserServiceClient struct {
+	client pb.ParserServiceClient
+	mu     *sync.RWMutex
+}
+
+func (c lockedParserServiceClient) GetParserConfig(ctx context.Context, in *pb.GetParserConfigRequest, opts ...grpc.CallOption) (*pb.GetParserConfigResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client.GetParserConfig(ctx, in, opts...)
+}
+
+func (c lockedParserServiceClient) IdentifyProjects(ctx context.Context, in *pb.IdentifyProjectsRequest, opts ...grpc.CallOption) (*pb.IdentifyProjectsResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client.IdentifyProjects(ctx, in, opts...)
+}
+
+func (c lockedParserServiceClient) Parse(ctx context.Context, in *pb.ParseRequest, opts ...grpc.CallOption) (*pb.ParseResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client.Parse(ctx, in, opts...)
 }
 
 type grpcPlugin struct {

@@ -19,13 +19,12 @@ import (
 	"github.com/infracost/cli/pkg/plugins/parser"
 	parserMock "github.com/infracost/cli/pkg/plugins/parser/mocks"
 	"github.com/infracost/cli/pkg/plugins/providers"
-	providerMock "github.com/infracost/cli/pkg/plugins/providers/mocks"
 	"github.com/infracost/proto/gen/go/infracost/parser/api"
-	"github.com/infracost/proto/gen/go/infracost/provider"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/rs/zerolog"
 )
 
-func Config(t *testing.T) config.Config {
+func Config(t *testing.T) *config.Config {
 	t.Helper()
 	temp := t.TempDir()
 	cfg := config.Config{
@@ -61,14 +60,14 @@ func Config(t *testing.T) config.Config {
 				AWS:    "aws",
 				Google: "google",
 				Azure:  "azure",
-				LoadAWS: func(hclog.Level) (provider.ProviderServiceClient, func(), error) {
-					return new(providerMock.MockProviderServiceClient), func() {}, nil
+				LoadAWS: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+					return nil, func() {}, nil
 				},
-				LoadGoogle: func(hclog.Level) (provider.ProviderServiceClient, func(), error) {
-					return new(providerMock.MockProviderServiceClient), func() {}, nil
+				LoadGoogle: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+					return nil, func() {}, nil
 				},
-				LoadAzurerm: func(hclog.Level) (provider.ProviderServiceClient, func(), error) {
-					return new(providerMock.MockProviderServiceClient), func() {}, nil
+				LoadAzurerm: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+					return nil, func() {}, nil
 				},
 			},
 			Parser: parser.Config{
@@ -84,5 +83,5 @@ func Config(t *testing.T) config.Config {
 		},
 	}
 	cfg.Logging.ForTest(t) // we'll make sure the logger uses the test output
-	return cfg
+	return &cfg
 }

@@ -68,27 +68,6 @@ func withCLIReleaseBaseURL(t *testing.T, url string) {
 	t.Cleanup(func() { cliReleaseBaseURL = orig })
 }
 
-func TestIsCLIReleaseTag(t *testing.T) {
-	cases := []struct {
-		tag  string
-		want bool
-	}{
-		{"v2.2.3", true},
-		{"v0.0.1", true},
-		{"v1.2.3-rc.1", true},
-		{"infracost-plugin-terraform/v0.0.2", false},
-		{"infracost-provider-plugin-aws/v0.3.0", false},
-		{"2.2.3", false},
-		{"vNotSemver", false},
-		{"", false},
-	}
-	for _, c := range cases {
-		if got := isCLIReleaseTag(c.tag); got != c.want {
-			t.Errorf("isCLIReleaseTag(%q) = %v, want %v", c.tag, got, c.want)
-		}
-	}
-}
-
 func TestCheckLatestVersion(t *testing.T) {
 	origVersion := version.Version
 	t.Cleanup(func() { version.Version = origVersion })

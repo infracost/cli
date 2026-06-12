@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -72,17 +71,6 @@ func fetchCLIVersion(ctx context.Context, releaseVersion string) (string, error)
 		return "", fmt.Errorf("empty CLI version response")
 	}
 	return fields[0], nil
-}
-
-func isCLIReleaseTag(tag string) bool {
-	if !strings.HasPrefix(tag, "v") {
-		return false
-	}
-	if strings.Contains(tag, "/") {
-		return false
-	}
-	_, err := semver.NewVersion(tag)
-	return err == nil
 }
 
 func Update(ctx context.Context) error {
@@ -307,29 +295,4 @@ var replaceBinary = func(newBinary []byte) error {
 	}
 
 	return nil
-}
-
-var ErrTokenNotFound = fmt.Errorf("github token not found")
-
-func findGitHubToken() (string, error) {
-	if tok := os.Getenv("GH_TOKEN"); tok != "" {
-		return tok, nil
-	}
-
-	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
-		return tok, nil
-	}
-
-	cmd := exec.Command("gh", "auth", "token")
-	cmd.Stderr = io.Discard
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	token := strings.TrimSpace(string(output))
-	if token != "" {
-		return token, nil
-	}
-
-	return "", ErrTokenNotFound
 }

@@ -81,15 +81,47 @@ type Config struct {
 	// When false, an existing flat-installed binary is used if available.
 	AutoUpdate bool `env:"INFRACOST_CLI_PLUGIN_AUTO_UPDATE" default:"true"`
 
+	managerMu  sync.Mutex
 	ensureOnce sync.Once
 	ensureErr  error
 	manager    *Manager
+
+	LoadParserPluginForProject func(context.Context, string) (*ParserPlugin, error)
 }
 
 func (c *Config) Process() {
 	if len(c.Cache) == 0 {
 		c.Cache = defaultPluginCachePath()
 	}
+}
+
+func (c *Config) ParserPluginForProject(ctx context.Context, projectTypeOrPluginName string) (*ParserPlugin, error) {
+	if c.LoadParserPluginForProject != nil {
+		return c.LoadParserPluginForProject(ctx, projectTypeOrPluginName)
+	}
+	manager, err := c.EnsurePlugins()
+	if err != nil {
+		return nil, err
+	}
+	return manager.LoadParserPluginForProject(ctx, projectTypeOrPluginName)
+}
+
+func (c *Config) ResetParserPlugins() {
+	c.managerMu.Lock()
+	manager := c.manager
+	c.manager = nil
+	c.ensureErr = nil
+	c.ensureOnce = sync.Once{}
+	c.managerMu.Unlock()
+
+	if manager != nil {
+		manager.Close()
+	}
+}
+
+func (c *Config) Close() {
+	c.ResetParserPlugins()
+	c.Providers.Close()
 }
 
 func (c *Config) EnsureProvider(provider proto.Provider) error {
@@ -117,6 +149,9 @@ func (c *Config) EnsureProvider(provider proto.Provider) error {
 }
 
 func (c *Config) EnsurePlugins() (*Manager, error) {
+	c.managerMu.Lock()
+	defer c.managerMu.Unlock()
+
 	c.ensureOnce.Do(func() {
 		c.manager, c.ensureErr = c.ensureParserPlugins()
 	})
