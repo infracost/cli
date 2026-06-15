@@ -194,6 +194,26 @@ jobs:
           aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}.sha256"
           aws s3 cp version.txt "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/version"
 
+  invalidate-cloudfront:
+    runs-on: ubuntu-24.04
+    needs: [version, build-and-release]
+    permissions:
+      id-token: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSET_PUBLICATION_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Invalidate CloudFront cache
+        env:
+          DISTRIBUTION_ID: ${{ secrets.AWS_ASSET_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION_ID" \
+            --paths "/cli/*"
+
   publish-release:
     runs-on: ubuntu-24.04
     needs: [version, build-and-release]
