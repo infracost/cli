@@ -7,94 +7,195 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins/parser"
 	"github.com/infracost/cli/pkg/plugins/providers"
-	providerconv "github.com/infracost/go-proto/pkg/providers"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	proto "github.com/infracost/proto/gen/go/infracost/provider"
-	"golang.org/x/mod/semver"
 )
 
-var (
-	_ process.Processor = (*Config)(nil)
+var _ process.Processor = (*Config)(nil)
+
+const (
+	// maxPluginSize is the maximum allowed size for an extracted plugin binary (1 GB).
+	maxPluginSize = 1 << 30
+
+	pluginTypeParser   = "parser"
+	pluginTypeProvider = "provider"
 )
 
-// maxPluginSize is the maximum allowed size for an extracted plugin binary (1 GB).
-const maxPluginSize = 1 << 30
+var pluginSpecs = []pluginSpec{
+	{Key: "terraform", Name: "infracost-plugin-terraform", Type: pluginTypeParser},
+	{Key: "terragrunt", Name: "infracost-plugin-terragrunt", Type: pluginTypeParser},
+	{Key: "cloudformation", Name: "infracost-plugin-cloudformation", Type: pluginTypeParser},
+	{Key: "ciscostacks", Name: "infracost-plugin-ciscostacks", Type: pluginTypeParser},
+	{Key: "aws", Name: "infracost-plugin-aws", Type: pluginTypeProvider, Provider: proto.Provider_PROVIDER_AWS},
+	{Key: "google", Name: "infracost-plugin-google", Type: pluginTypeProvider, Provider: proto.Provider_PROVIDER_GOOGLE},
+	{Key: "azure", Name: "infracost-plugin-azure", Type: pluginTypeProvider, Provider: proto.Provider_PROVIDER_AZURERM},
+}
+
+type pluginSpec struct {
+	Key      string
+	Name     string
+	Type     string
+	Provider proto.Provider
+}
 
 type Config struct {
 	Providers providers.Config
 	Parser    parser.Config
 
-	// ManifestURL points to where the plugin manifest can be retrieved.
-	ManifestURL string `env:"INFRACOST_CLI_PLUGIN_MANIFEST_URL" default:"https://releases.infracost.io/plugins/manifest.json"`
+	// BaseURL points to the root URL where plugin archives are hosted.
+	BaseURL string `env:"INFRACOST_CLI_PLUGIN_BASE_URL" default:"https://releases.infracost.io"`
 
-	// Cache is where the plugins should go.
+	// Cache is where managed plugins should go.
 	Cache string `env:"INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY"`
 
-	// AutoUpdate controls whether plugins are always updated to the latest
-	// version. When false, an existing cached version is used if available.
+	// Dir is a flat plugin directory override for local plugin development. When set, downloads are skipped.
+	Dir string `env:"INFRACOST_CLI_PLUGIN_DIR"`
+
+	// AutoUpdate controls whether plugins are updated to the latest version.
+	// When false, an existing flat-installed binary is used if available.
 	AutoUpdate bool `env:"INFRACOST_CLI_PLUGIN_AUTO_UPDATE" default:"true"`
 
-	// cached, loaded as needed via loadManifest()
-	manifest *Manifest
+	managerMu  sync.Mutex
+	ensureOnce sync.Once
+	ensureErr  error
+	manager    *Manager
+
+	LoadParserPluginForProject func(context.Context, string) (*ParserPlugin, error)
 }
 
 func (c *Config) Process() {
 	if len(c.Cache) == 0 {
 		c.Cache = defaultPluginCachePath()
 	}
+	c.Providers.LoadAWS = c.providerLoader(proto.Provider_PROVIDER_AWS)
+	c.Providers.LoadGoogle = c.providerLoader(proto.Provider_PROVIDER_GOOGLE)
+	c.Providers.LoadAzurerm = c.providerLoader(proto.Provider_PROVIDER_AZURERM)
 }
 
-func (c *Config) EnsureParser() error {
-	if c.Parser.Plugin != "" {
-		return nil
+func (c *Config) ParserPluginForProject(ctx context.Context, projectTypeOrPluginName string) (*ParserPlugin, error) {
+	if c.LoadParserPluginForProject != nil {
+		return c.LoadParserPluginForProject(ctx, projectTypeOrPluginName)
 	}
-
-	path, err := c.Ensure("infracost-parser-plugin", c.Parser.Version)
+	manager, err := c.EnsurePlugins()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	c.Parser.Plugin = path
-	return nil
+	return manager.LoadParserPluginForProject(ctx, projectTypeOrPluginName)
 }
 
-func (c *Config) EnsureProvider(provider proto.Provider) error {
-	override, version := c.providerOverride(provider)
-	if override != "" {
-		return nil
+func (c *Config) ResetParserPlugins() {
+	c.managerMu.Lock()
+	manager := c.manager
+	c.manager = nil
+	c.ensureErr = nil
+	c.ensureOnce = sync.Once{}
+	c.managerMu.Unlock()
+
+	if manager != nil {
+		manager.Close()
+	}
+}
+
+func (c *Config) Close() {
+	c.ResetParserPlugins()
+	c.Providers.Close()
+}
+
+func (c *Config) EnsurePlugins() (*Manager, error) {
+	c.managerMu.Lock()
+	defer c.managerMu.Unlock()
+
+	c.ensureOnce.Do(func() {
+		c.manager, c.ensureErr = c.ensureAllPlugins()
+	})
+	return c.manager, c.ensureErr
+}
+
+func (c *Config) ensureAllPlugins() (*Manager, error) {
+	pluginDir := c.pluginDir()
+	if c.Dir != "" {
+		return NewManager(pluginDir)
 	}
 
-	path, err := c.Ensure(fmt.Sprintf("infracost-provider-plugin-%s", providerconv.FromProto(provider)), version)
-	if err != nil {
-		return err
+	for _, spec := range pluginSpecs {
+		if c.pluginPathOverride(spec) != "" {
+			continue
+		}
+
+		if _, err := c.Ensure(spec.Name, c.pluginVersion(spec)); err != nil {
+			return nil, err
+		}
 	}
 
-	switch provider {
-	case proto.Provider_PROVIDER_GOOGLE:
-		c.Providers.Google = path
-	case proto.Provider_PROVIDER_AWS:
-		c.Providers.AWS = path
-	case proto.Provider_PROVIDER_AZURERM:
-		c.Providers.Azure = path
-	default:
-		return fmt.Errorf("unknown provider: %s", providerconv.FromProto(provider))
+	return NewManager(pluginDir)
+}
+
+func (c *Config) pluginDir() string {
+	if c.Dir != "" {
+		return c.Dir
+	}
+	if c.Cache == "" {
+		return defaultPluginCachePath()
+	}
+	return c.Cache
+}
+
+func (c *Config) providerLoader(provider proto.Provider) func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+	return func(level hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+		return providers.Connect(c.providerPluginPath(provider), level)
+	}
+}
+
+func (c *Config) providerPluginPath(provider proto.Provider) string {
+	if override, _ := c.providerOverride(provider); override != "" {
+		return override
+	}
+	for _, spec := range pluginSpecs {
+		if spec.Type == pluginTypeProvider && spec.Provider == provider {
+			return filepath.Join(c.pluginDir(), pluginBinaryName(spec.Name))
+		}
+	}
+	return ""
+}
+
+func (c *Config) pluginPathOverride(spec pluginSpec) string {
+	if spec.Type != pluginTypeProvider {
+		return ""
+	}
+	override, _ := c.providerOverride(spec.Provider)
+	return override
+}
+
+func (c *Config) pluginVersion(spec pluginSpec) string {
+	if version := os.Getenv("INFRACOST_CLI_PLUGIN_" + strings.ToUpper(spec.Key) + "_VERSION"); version != "" {
+		return version
 	}
 
-	return nil
+	switch spec.Type {
+	case pluginTypeParser:
+		return c.Parser.Version
+	case pluginTypeProvider:
+		_, version := c.providerOverride(spec.Provider)
+		return version
+	}
+	return ""
 }
 
 func (c *Config) providerOverride(provider proto.Provider) (string, string) {
@@ -122,100 +223,113 @@ func pluginBinaryName(name string) string {
 func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 	logging.Debugf("ensuring plugin %q is available", plugin)
 
-	platform := runtime.GOOS + "_" + runtime.GOARCH
 	binaryName := pluginBinaryName(plugin)
+	binaryPath := filepath.Join(c.pluginDir(), binaryName)
+	installed := flatPluginBinaryExists(binaryPath)
 
-	if len(wantVersion) > 0 {
-		// The user has requested a specific version.
-		want := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
-		if _, err := os.Stat(want); err == nil {
-			return want, nil
-		}
-	}
-
-	// When auto-update is disabled and the user hasn't picked a specific version, use the latest cached version if
-	// available.
-	if len(wantVersion) == 0 && !c.AutoUpdate {
-		matches, _ := filepath.Glob(filepath.Join(c.Cache, plugin, platform, "*", binaryName))
-		if len(matches) > 0 {
-			sort.Slice(matches, func(i, j int) bool {
-				vi := "v" + filepath.Base(filepath.Dir(matches[i]))
-				vj := "v" + filepath.Base(filepath.Dir(matches[j]))
-				return semver.Compare(vi, vj) > 0
-			})
-			logging.Debugf("plugin %q using cached version at %s (auto-update disabled)", plugin, matches[0])
-			return matches[0], nil
-		}
-	}
-
-	manifest, err := c.loadManifest()
-	if err != nil {
-		return "", fmt.Errorf("failed to load plugin manifest: %w", err)
-	}
-
-	p, ok := manifest.Plugins[plugin]
-	if !ok {
-		return "", fmt.Errorf("plugin %q not found in manifest at %s", plugin, c.ManifestURL)
-	}
-
-	if len(wantVersion) == 0 {
-		if p.Latest == "" {
-			return "", fmt.Errorf("plugin %q has no latest version defined", plugin)
-		}
-		wantVersion = p.Latest
-	}
-
-	version, ok := p.Versions[wantVersion]
-	if !ok {
-		return "", fmt.Errorf("plugin %q version %q not found in manifest (omit the version to use the latest)", plugin, wantVersion)
-	}
-
-	artifact, ok := version.Artifacts[platform]
-	if !ok {
-		return "", fmt.Errorf("plugin %q version %q is not available for your platform (%s)", plugin, wantVersion, platform)
-	}
-
-	binaryPath := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
-
-	if _, err := os.Stat(binaryPath); err == nil {
-		logging.Debugf("plugin %q already cached at %s", plugin, binaryPath)
+	if installed && !c.AutoUpdate {
+		logging.Debugf("plugin %q using existing flat-installed binary at %s (auto-update disabled)", plugin, binaryPath)
 		return binaryPath, nil
 	}
 
-	logging.Infof("downloading plugin %q version %s for %s", plugin, wantVersion, platform)
+	downloadVersion := wantVersion
+	if downloadVersion == "" {
+		downloadVersion = "latest"
+	}
 
-	if err := ui.RunWithSpinnerErr(context.Background(), fmt.Sprintf("Downloading %s %s...", plugin, wantVersion), fmt.Sprintf("Downloaded %s %s", plugin, wantVersion), func(_ context.Context) error {
-		archivePath, err := downloadAndVerify(artifact.URL, artifact.SHA)
+	if downloadVersion != "latest" {
+		if installed && cachedPluginVersion(binaryPath) == downloadVersion {
+			logging.Debugf("plugin %q version %s already installed at %s", plugin, downloadVersion, binaryPath)
+			return binaryPath, nil
+		}
+	}
+
+	artifactName := pluginArchiveName()
+	artifactURL := c.pluginArtifactURL(plugin, runtime.GOOS, runtime.GOARCH, downloadVersion, artifactName)
+	resolvedVersion := downloadVersion
+	if downloadVersion == "latest" {
+		var err error
+		resolvedVersion, err = fetchPluginVersion(c.pluginVersionURL(plugin, runtime.GOOS, runtime.GOARCH, downloadVersion))
+		if err != nil {
+			return "", fmt.Errorf("failed to fetch plugin version: %w", err)
+		}
+	}
+
+	artifactSHA := ""
+	if installed {
+		if cachedPluginVersion(binaryPath) == resolvedVersion {
+			logging.Debugf("plugin %q version %s already installed at %s", plugin, resolvedVersion, binaryPath)
+			return binaryPath, nil
+		}
+
+		var err error
+		artifactSHA, err = fetchSHA256(artifactURL + ".sha256")
+		if err != nil {
+			return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
+		}
+		if cachedPluginSHA(binaryPath) == artifactSHA {
+			logging.Debugf("plugin %q already installed at %s", plugin, binaryPath)
+			if err := writePluginVersion(binaryPath, resolvedVersion); err != nil {
+				return "", err
+			}
+			return binaryPath, nil
+		}
+	}
+
+	if artifactSHA == "" {
+		var err error
+		artifactSHA, err = fetchSHA256(artifactURL + ".sha256")
+		if err != nil {
+			return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
+		}
+	}
+
+	logging.Infof("downloading plugin %q version %s for %s/%s", plugin, downloadVersion, runtime.GOOS, runtime.GOARCH)
+
+	if err := ui.RunWithSpinnerErr(context.Background(), fmt.Sprintf("Downloading %s %s...", plugin, downloadVersion), fmt.Sprintf("Downloaded %s %s", plugin, downloadVersion), func(_ context.Context) error {
+		logging.Debugf("downloading plugin archive from %s", artifactURL)
+		archivePath, err := downloadAndVerify(artifactURL, artifactSHA)
 		if err != nil {
 			return fmt.Errorf("failed to download plugin %q: %w", plugin, err)
 		}
 		defer func() { _ = os.Remove(archivePath) }()
 
-		if err := os.MkdirAll(filepath.Dir(binaryPath), 0750); err != nil {
-			return fmt.Errorf("failed to create plugin cache directory: %w (use INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY to change the location)", err)
+		if err := os.MkdirAll(filepath.Dir(binaryPath), 0o750); err != nil {
+			return fmt.Errorf("failed to create plugin directory: %w (use INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY to change the location or INFRACOST_CLI_PLUGIN_DIR for local plugins)", err)
 		}
 
 		tmpBinary := binaryPath + ".tmp"
 		defer func() { _ = os.Remove(tmpBinary) }()
 
 		switch {
-		case strings.HasSuffix(artifact.Name, ".tar.gz"):
+		case strings.HasSuffix(artifactName, ".tar.gz"):
 			err = unpackTarGz(archivePath, tmpBinary, plugin)
-		case strings.HasSuffix(artifact.Name, ".zip"):
+		case strings.HasSuffix(artifactName, ".zip"):
 			err = unpackZip(archivePath, tmpBinary, binaryName)
 		default:
-			err = fmt.Errorf("unsupported archive format for %s", artifact.Name)
+			err = fmt.Errorf("unsupported archive format for %s", artifactName)
 		}
 		if err != nil {
 			return fmt.Errorf("failed to unpack plugin %q: %w", plugin, err)
 		}
 
-		if err := os.Chmod(tmpBinary, 0750); err != nil { //nolint:gosec // G302: plugin binary must be executable
+		if err := os.Chmod(tmpBinary, 0o750); err != nil { //nolint:gosec // G302: plugin binary must be executable
 			return fmt.Errorf("failed to make plugin binary executable: %w", err)
+		}
+
+		if err := removeExistingPluginPath(binaryPath); err != nil {
+			return err
 		}
 
 		if err := renameWithRetry(tmpBinary, binaryPath); err != nil {
 			return fmt.Errorf("failed to install plugin binary: %w", err)
+		}
+
+		if err := os.WriteFile(binaryPath+".sha256", []byte(artifactSHA+"\n"), 0o600); err != nil {
+			return fmt.Errorf("failed to write plugin checksum: %w", err)
+		}
+		if err := writePluginVersion(binaryPath, resolvedVersion); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
@@ -226,43 +340,151 @@ func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
 	return binaryPath, nil
 }
 
-func (c *Config) loadManifest() (*Manifest, error) {
-	if c.manifest != nil {
-		return c.manifest, nil
+func pluginArchiveName() string {
+	if runtime.GOOS == "windows" {
+		return "data.zip"
 	}
-
-	response, err := http.Get(c.ManifestURL) //nolint:gosec // G107: URL is from config/env, not user input
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
-
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch plugin manifest (%s): %s (check your internet connection, or use INFRACOST_CLI_PLUGIN_MANIFEST_URL to override the manifest endpoint)", c.ManifestURL, response.Status)
-	}
-
-	var manifest Manifest
-	if err := json.NewDecoder(response.Body).Decode(&manifest); err != nil {
-		return nil, err
-	}
-
-	c.manifest = &manifest
-	return c.manifest, nil
+	return "data.tar.gz"
 }
 
-func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
-	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin manifest
+func (c *Config) pluginArtifactURL(plugin, goos, goarch, version, name string) string {
+	return fmt.Sprintf("%s/%s/%s/%s/%s/%s", strings.TrimRight(c.BaseURL, "/"), plugin, goos, goarch, version, name)
+}
+
+func (c *Config) pluginVersionURL(plugin, goos, goarch, version string) string {
+	return fmt.Sprintf("%s/%s/%s/%s/%s/version", strings.TrimRight(c.BaseURL, "/"), plugin, goos, goarch, version)
+}
+
+func flatPluginBinaryExists(binaryPath string) bool {
+	info, err := os.Stat(binaryPath)
+	return err == nil && !info.IsDir()
+}
+
+func removeExistingPluginPath(binaryPath string) error {
+	info, err := os.Stat(binaryPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to inspect existing plugin path: %w", err)
+	}
+	if info.IsDir() {
+		if err := os.RemoveAll(binaryPath); err != nil {
+			return fmt.Errorf("failed to replace existing plugin directory: %w", err)
+		}
+		return nil
+	}
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(binaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to replace existing plugin binary: %w", err)
+		}
+	}
+	return nil
+}
+
+func cachedPluginSHA(binaryPath string) string {
+	data, err := os.ReadFile(binaryPath + ".sha256") //nolint:gosec // G304: sidecar path is derived from the trusted plugin path
+	if err != nil {
+		return ""
+	}
+
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func cachedPluginVersion(binaryPath string) string {
+	data, err := os.ReadFile(binaryPath + ".version") //nolint:gosec // G304: sidecar path is derived from the trusted plugin path
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func writePluginVersion(binaryPath, version string) error {
+	if err := os.WriteFile(binaryPath+".version", []byte(version+"\n"), 0o600); err != nil {
+		return fmt.Errorf("failed to write plugin version: %w", err)
+	}
+	return nil
+}
+
+func fetchPluginVersion(rawURL string) (string, error) {
+	logging.Debugf("fetching plugin version from %s", rawURL)
+
+	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
 	if err != nil {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	// Required by GitHub's release-asset API endpoint to return the binary
-	// rather than JSON metadata. Harmless on the public download URL.
-	req.Header.Set("Accept", "application/octet-stream")
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
+	if err != nil {
+		return "", fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from plugin manifest
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read plugin version: %w", err)
+	}
+
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty plugin version response")
+	}
+	return fields[0], nil
+}
+
+func fetchSHA256(rawURL string) (string, error) {
+	logging.Debugf("fetching plugin checksum from %s", rawURL)
+
+	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
+	if err != nil {
+		return "", fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if err != nil {
+		return "", fmt.Errorf("failed to read checksum: %w", err)
+	}
+
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty checksum response")
+	}
+	return fields[0], nil
+}
+
+func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
+	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -336,7 +558,7 @@ func unpackTarGz(archivePath, destPath, expectedName string) error {
 			continue
 		}
 
-		out, err := os.OpenFile(filepath.Clean(destPath), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+		out, err := os.OpenFile(filepath.Clean(destPath), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
@@ -378,7 +600,7 @@ func extractZipEntry(zf *zip.File, destPath string) error {
 		_ = f.Close()
 	}()
 
-	out, err := os.OpenFile(filepath.Clean(destPath), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	out, err := os.OpenFile(filepath.Clean(destPath), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
 	}

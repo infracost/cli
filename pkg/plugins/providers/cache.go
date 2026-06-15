@@ -11,12 +11,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func createCacheKey(prov protoprovider.Provider, input *protoprovider.Input, providerVersion string) protocache.Key {
-	// Clone the input so we can zero out volatile fields (like API tokens and
-	// trace IDs) that change between runs but don't affect the output.
-	stable := proto.Clone(input).(*protoprovider.Input)
+func createTreeCacheKey(prov protoprovider.Provider, input *protoprovider.TreeInput, providerVersion string) protocache.Key {
+	stable := proto.Clone(input).(*protoprovider.TreeInput)
 	stable.Infracost = nil
+	return createStableCacheKey(prov, stable, providerVersion)
+}
 
+func createStableCacheKey(prov protoprovider.Provider, stable proto.Message, providerVersion string) protocache.Key {
 	h := fnv.New128a()
 	h.Write([]byte(providerVersion))
 	h.Write([]byte{0})

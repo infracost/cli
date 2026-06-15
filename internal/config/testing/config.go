@@ -19,13 +19,12 @@ import (
 	"github.com/infracost/cli/pkg/plugins/parser"
 	parserMock "github.com/infracost/cli/pkg/plugins/parser/mocks"
 	"github.com/infracost/cli/pkg/plugins/providers"
-	providerMock "github.com/infracost/cli/pkg/plugins/providers/mocks"
 	"github.com/infracost/proto/gen/go/infracost/parser/api"
-	"github.com/infracost/proto/gen/go/infracost/provider"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/rs/zerolog"
 )
 
-func Config(t *testing.T) config.Config {
+func Config(t *testing.T) *config.Config {
 	t.Helper()
 	temp := t.TempDir()
 	cfg := config.Config{
@@ -56,23 +55,23 @@ func Config(t *testing.T) config.Config {
 		},
 		Plugins: plugins.Config{
 			Providers: providers.Config{
-				// by setting the AWS, Google and Azure fields, we should prevent the system from hitting the manifest
-				// url when these are required.
+				// by setting the AWS, Google and Azure fields, we should prevent the system from downloading
+				// plugins when these are required.
 				AWS:    "aws",
 				Google: "google",
 				Azure:  "azure",
-				LoadAWS: func(hclog.Level) (provider.ProviderServiceClient, func(), error) {
-					return new(providerMock.MockProviderServiceClient), func() {}, nil
+				LoadAWS: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+					return nil, func() {}, nil
 				},
-				LoadGoogle: func(hclog.Level) (provider.ProviderServiceClient, func(), error) {
-					return new(providerMock.MockProviderServiceClient), func() {}, nil
+				LoadGoogle: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+					return nil, func() {}, nil
 				},
-				LoadAzurerm: func(hclog.Level) (provider.ProviderServiceClient, func(), error) {
-					return new(providerMock.MockProviderServiceClient), func() {}, nil
+				LoadAzurerm: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
+					return nil, func() {}, nil
 				},
 			},
 			Parser: parser.Config{
-				Plugin: "parser", // set this so it doesn't attempt to load the manifest url
+				Plugin: "parser", // set this so it doesn't attempt to download the parser plugin
 				Load: func(hclog.Level) (api.ParserServiceClient, func(), error) {
 					return new(parserMock.MockParserServiceClient), func() {}, nil
 				},
@@ -80,9 +79,9 @@ func Config(t *testing.T) config.Config {
 			Cache: filepath.Join(temp, "plugins"), // hopefully shouldn't use the cache
 		},
 		Cache: cache.Config{
-			Cache:     filepath.Join(temp, "cache"),
+			Cache: filepath.Join(temp, "cache"),
 		},
 	}
 	cfg.Logging.ForTest(t) // we'll make sure the logger uses the test output
-	return cfg
+	return &cfg
 }

@@ -72,7 +72,7 @@ type MockClient_CreateOrganization_Call struct {
 // CreateOrganization is a helper method to define mock.On call
 //   - ctx context.Context
 //   - name string
-func (_e *MockClient_Expecter) CreateOrganization(ctx interface{}, name interface{}) *MockClient_CreateOrganization_Call {
+func (_e *MockClient_Expecter) CreateOrganization(ctx any, name any) *MockClient_CreateOrganization_Call {
 	return &MockClient_CreateOrganization_Call{Call: _e.mock.On("CreateOrganization", ctx, name)}
 }
 
@@ -137,7 +137,7 @@ type MockClient_CurrentUser_Call struct {
 
 // CurrentUser is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockClient_Expecter) CurrentUser(ctx interface{}) *MockClient_CurrentUser_Call {
+func (_e *MockClient_Expecter) CurrentUser(ctx any) *MockClient_CurrentUser_Call {
 	return &MockClient_CurrentUser_Call{Call: _e.mock.On("CurrentUser", ctx)}
 }
 
@@ -199,7 +199,7 @@ type MockClient_HasRepo_Call struct {
 //   - ctx context.Context
 //   - orgID string
 //   - repoName string
-func (_e *MockClient_Expecter) HasRepo(ctx interface{}, orgID interface{}, repoName interface{}) *MockClient_HasRepo_Call {
+func (_e *MockClient_Expecter) HasRepo(ctx any, orgID any, repoName any) *MockClient_HasRepo_Call {
 	return &MockClient_HasRepo_Call{Call: _e.mock.On("HasRepo", ctx, orgID, repoName)}
 }
 
@@ -271,7 +271,7 @@ type MockClient_RunParameters_Call struct {
 //   - ctx context.Context
 //   - repoURL string
 //   - branchName string
-func (_e *MockClient_Expecter) RunParameters(ctx interface{}, repoURL interface{}, branchName interface{}) *MockClient_RunParameters_Call {
+func (_e *MockClient_Expecter) RunParameters(ctx any, repoURL any, branchName any) *MockClient_RunParameters_Call {
 	return &MockClient_RunParameters_Call{Call: _e.mock.On("RunParameters", ctx, repoURL, branchName)}
 }
 

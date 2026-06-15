@@ -5,14 +5,14 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"testing"
 
-	"github.com/google/go-github/v83/github"
 	"github.com/infracost/cli/version"
 )
 
@@ -41,102 +41,70 @@ func buildTarGz(t *testing.T, fileName string, content []byte) []byte {
 	return buf.Bytes()
 }
 
-// fakeGitHubServer creates a test server that mimics the GitHub release API.
-// It returns the server and a cleanup function.
-func fakeGitHubServer(t *testing.T, tagName string, assetName string, assetContent []byte) *httptest.Server {
+func fakeCLIReleaseServer(t *testing.T, latestVersion string, assetContent []byte) *httptest.Server {
 	t.Helper()
 
-	assetID := int64(42)
+	assetName := expectedAssetName()
+	assetSHA := sha256.Sum256(assetContent)
+	assetSHAString := hex.EncodeToString(assetSHA[:])
 
 	mux := http.NewServeMux()
-
-	// GET /api/v3/repos/{owner}/{repo}/releases
-	mux.HandleFunc(fmt.Sprintf("/api/v3/repos/%s/%s/releases", repoOwner, repoName), func(w http.ResponseWriter, _ *http.Request) {
-		releases := []*github.RepositoryRelease{
-			// A plugin release that should be skipped because its tag contains "/".
-			{
-				TagName: github.Ptr("infracost-plugin-terraform/v9.9.9"),
-				Assets:  []*github.ReleaseAsset{},
-			},
-			{
-				TagName: github.Ptr(tagName),
-				Assets: []*github.ReleaseAsset{
-					{
-						ID:   github.Ptr(assetID),
-						Name: github.Ptr(assetName),
-					},
-				},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(releases)
+	mux.HandleFunc(fmt.Sprintf("/cli/%s/%s/latest/version", runtime.GOOS, runtime.GOARCH), func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(latestVersion + "\n"))
 	})
-
-	// GET /api/v3/repos/{owner}/{repo}/releases/assets/{id}
-	mux.HandleFunc(fmt.Sprintf("/api/v3/repos/%s/%s/releases/assets/%d", repoOwner, repoName, assetID), func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Accept") == "application/octet-stream" {
-			w.Header().Set("Content-Type", "application/octet-stream")
-			_, _ = w.Write(assetContent)
-			return
-		}
-		asset := &github.ReleaseAsset{
-			ID:   github.Ptr(assetID),
-			Name: github.Ptr(assetName),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(asset)
+	mux.HandleFunc(fmt.Sprintf("/cli/%s/%s/%s/%s.sha256", runtime.GOOS, runtime.GOARCH, latestVersion, assetName), func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(assetSHAString + "  " + assetName + "\n"))
 	})
-
+	mux.HandleFunc(fmt.Sprintf("/cli/%s/%s/%s/%s", runtime.GOOS, runtime.GOARCH, latestVersion, assetName), func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(assetContent)
+	})
 	return httptest.NewServer(mux)
 }
 
-func TestIsCLIReleaseTag(t *testing.T) {
-	cases := []struct {
-		tag  string
-		want bool
-	}{
-		{"v2.2.3", true},
-		{"v0.0.1", true},
-		{"v1.2.3-rc.1", true},
-		{"infracost-plugin-terraform/v0.0.2", false},
-		{"infracost-provider-plugin-aws/v0.3.0", false},
-		{"2.2.3", false},
-		{"vNotSemver", false},
-		{"", false},
+func withCLIReleaseBaseURL(t *testing.T, url string) {
+	t.Helper()
+	orig := cliReleaseBaseURL
+	cliReleaseBaseURL = func() string { return url + "/cli" }
+	t.Cleanup(func() { cliReleaseBaseURL = orig })
+}
+
+func TestCheckLatestVersion(t *testing.T) {
+	origVersion := version.Version
+	t.Cleanup(func() { version.Version = origVersion })
+
+	version.Version = "0.9.0"
+	srv := fakeCLIReleaseServer(t, "v1.0.0", nil)
+	defer srv.Close()
+	withCLIReleaseBaseURL(t, srv.URL)
+
+	info, err := CheckLatestVersion(context.Background())
+	if err != nil {
+		t.Fatalf("CheckLatestVersion() returned error: %v", err)
 	}
-	for _, c := range cases {
-		if got := isCLIReleaseTag(c.tag); got != c.want {
-			t.Errorf("isCLIReleaseTag(%q) = %v, want %v", c.tag, got, c.want)
-		}
+	if info.Current != "0.9.0" || info.Latest != "v1.0.0" || info.UpToDate {
+		t.Fatalf("unexpected info: %+v", info)
 	}
 }
 
 func TestUpdate_NewerVersionAvailable(t *testing.T) {
 	origVersion := version.Version
-	origNewClient := newGitHubClient
 	origReplace := replaceBinary
 	t.Cleanup(func() {
 		version.Version = origVersion
-		newGitHubClient = origNewClient
 		replaceBinary = origReplace
 	})
 
 	version.Version = "0.0.1"
 
 	binaryContent := []byte("new-binary-content")
-	assetName := expectedAssetName()
 	archive := buildTarGz(t, "infracost", binaryContent)
 	if runtime.GOOS == "windows" {
 		t.Skip("tar.gz test not applicable on windows")
 	}
 
-	srv := fakeGitHubServer(t, "v1.0.0", assetName, archive)
+	srv := fakeCLIReleaseServer(t, "v1.0.0", archive)
 	defer srv.Close()
-
-	newGitHubClient = func() *github.Client {
-		c, _ := github.NewClient(nil).WithEnterpriseURLs(srv.URL, srv.URL)
-		return c
-	}
+	withCLIReleaseBaseURL(t, srv.URL)
 
 	var replacedWith []byte
 	replaceBinary = func(data []byte) error {
@@ -155,24 +123,17 @@ func TestUpdate_NewerVersionAvailable(t *testing.T) {
 
 func TestUpdate_AlreadyUpToDate(t *testing.T) {
 	origVersion := version.Version
-	origNewClient := newGitHubClient
 	origReplace := replaceBinary
 	t.Cleanup(func() {
 		version.Version = origVersion
-		newGitHubClient = origNewClient
 		replaceBinary = origReplace
 	})
 
 	version.Version = "1.0.0"
 
-	assetName := expectedAssetName()
-	srv := fakeGitHubServer(t, "v1.0.0", assetName, nil)
+	srv := fakeCLIReleaseServer(t, "v1.0.0", nil)
 	defer srv.Close()
-
-	newGitHubClient = func() *github.Client {
-		c, _ := github.NewClient(nil).WithEnterpriseURLs(srv.URL, srv.URL)
-		return c
-	}
+	withCLIReleaseBaseURL(t, srv.URL)
 
 	replaceBinary = func(_ []byte) error {
 		t.Fatal("replaceBinary should not be called when already up to date")
@@ -187,30 +148,23 @@ func TestUpdate_AlreadyUpToDate(t *testing.T) {
 
 func TestUpdate_DevVersionAlwaysUpdates(t *testing.T) {
 	origVersion := version.Version
-	origNewClient := newGitHubClient
 	origReplace := replaceBinary
 	t.Cleanup(func() {
 		version.Version = origVersion
-		newGitHubClient = origNewClient
 		replaceBinary = origReplace
 	})
 
 	version.Version = "dev"
 
 	binaryContent := []byte("dev-update-binary")
-	assetName := expectedAssetName()
 	archive := buildTarGz(t, "infracost", binaryContent)
 	if runtime.GOOS == "windows" {
 		t.Skip("tar.gz test not applicable on windows")
 	}
 
-	srv := fakeGitHubServer(t, "v0.0.1", assetName, archive)
+	srv := fakeCLIReleaseServer(t, "v0.0.1", archive)
 	defer srv.Close()
-
-	newGitHubClient = func() *github.Client {
-		c, _ := github.NewClient(nil).WithEnterpriseURLs(srv.URL, srv.URL)
-		return c
-	}
+	withCLIReleaseBaseURL(t, srv.URL)
 
 	var called bool
 	replaceBinary = func(_ []byte) error {
@@ -227,34 +181,32 @@ func TestUpdate_DevVersionAlwaysUpdates(t *testing.T) {
 	}
 }
 
-func TestUpdate_NoMatchingAsset(t *testing.T) {
+func TestUpdate_NoMatchingBinaryInArchive(t *testing.T) {
 	origVersion := version.Version
-	origNewClient := newGitHubClient
 	origReplace := replaceBinary
 	t.Cleanup(func() {
 		version.Version = origVersion
-		newGitHubClient = origNewClient
 		replaceBinary = origReplace
 	})
 
 	version.Version = "0.0.1"
 
-	// Serve a release with a mismatched asset name
-	srv := fakeGitHubServer(t, "v1.0.0", "wrong-asset-name.tar.gz", nil)
-	defer srv.Close()
-
-	newGitHubClient = func() *github.Client {
-		c, _ := github.NewClient(nil).WithEnterpriseURLs(srv.URL, srv.URL)
-		return c
+	archive := buildTarGz(t, "wrong-binary", []byte("nope"))
+	if runtime.GOOS == "windows" {
+		t.Skip("tar.gz test not applicable on windows")
 	}
 
+	srv := fakeCLIReleaseServer(t, "v1.0.0", archive)
+	defer srv.Close()
+	withCLIReleaseBaseURL(t, srv.URL)
+
 	replaceBinary = func(_ []byte) error {
-		t.Fatal("replaceBinary should not be called when no asset matches")
+		t.Fatal("replaceBinary should not be called when no binary matches")
 		return nil
 	}
 
 	err := Update(context.Background())
 	if err == nil {
-		t.Fatal("expected error for missing asset")
+		t.Fatal("expected error for missing binary")
 	}
 }

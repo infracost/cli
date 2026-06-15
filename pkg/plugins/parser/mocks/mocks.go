@@ -82,9 +82,9 @@ type MockParserServiceClient_Initialize_Call struct {
 //   - ctx context.Context
 //   - in *api.InitializeRequest
 //   - opts ...grpc.CallOption
-func (_e *MockParserServiceClient_Expecter) Initialize(ctx interface{}, in interface{}, opts ...interface{}) *MockParserServiceClient_Initialize_Call {
+func (_e *MockParserServiceClient_Expecter) Initialize(ctx any, in any, opts ...any) *MockParserServiceClient_Initialize_Call {
 	return &MockParserServiceClient_Initialize_Call{Call: _e.mock.On("Initialize",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockParserServiceClient_Initialize_Call) Run(run func(ctx context.Context, in *api.InitializeRequest, opts ...grpc.CallOption)) *MockParserServiceClient_Initialize_Call {
@@ -165,9 +165,9 @@ type MockParserServiceClient_Parse_Call struct {
 //   - ctx context.Context
 //   - in *api.ParseRequest
 //   - opts ...grpc.CallOption
-func (_e *MockParserServiceClient_Expecter) Parse(ctx interface{}, in interface{}, opts ...interface{}) *MockParserServiceClient_Parse_Call {
+func (_e *MockParserServiceClient_Expecter) Parse(ctx any, in any, opts ...any) *MockParserServiceClient_Parse_Call {
 	return &MockParserServiceClient_Parse_Call{Call: _e.mock.On("Parse",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockParserServiceClient_Parse_Call) Run(run func(ctx context.Context, in *api.ParseRequest, opts ...grpc.CallOption)) *MockParserServiceClient_Parse_Call {
@@ -248,9 +248,9 @@ type MockParserServiceClient_ParseToTree_Call struct {
 //   - ctx context.Context
 //   - in *api.ParseToTreeRequest
 //   - opts ...grpc.CallOption
-func (_e *MockParserServiceClient_Expecter) ParseToTree(ctx interface{}, in interface{}, opts ...interface{}) *MockParserServiceClient_ParseToTree_Call {
+func (_e *MockParserServiceClient_Expecter) ParseToTree(ctx any, in any, opts ...any) *MockParserServiceClient_ParseToTree_Call {
 	return &MockParserServiceClient_ParseToTree_Call{Call: _e.mock.On("ParseToTree",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockParserServiceClient_ParseToTree_Call) Run(run func(ctx context.Context, in *api.ParseToTreeRequest, opts ...grpc.CallOption)) *MockParserServiceClient_ParseToTree_Call {

@@ -12,20 +12,33 @@ import (
 	"github.com/infracost/cli/pkg/plugins/consts"
 	"github.com/infracost/cli/pkg/plugins/pluginconn"
 	"github.com/infracost/cli/pkg/plugins/pluginerr"
-	proto "github.com/infracost/proto/gen/go/infracost/provider"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"google.golang.org/grpc"
 )
+
+const (
+	handshakeMagicCookieKey   = "INFRACOST_PLUGIN"
+	handshakeMagicCookieValue = "de8c7e96-497c-4168-80c4-fc875c8ce764"
+	handshakeProtocolVersion  = 1
+	dispenseName              = "plugin"
+)
+
+var handshakeConfig = plugin.HandshakeConfig{
+	ProtocolVersion:  handshakeProtocolVersion,
+	MagicCookieKey:   handshakeMagicCookieKey,
+	MagicCookieValue: handshakeMagicCookieValue,
+}
 
 var (
 	_ plugin.Plugin     = (*provider)(nil)
 	_ plugin.GRPCPlugin = (*provider)(nil)
 )
 
-func Connect(path string, level hclog.Level) (proto.ProviderServiceClient, func(), error) {
+func Connect(path string, level hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
 	return ConnectWithOptions(path, pluginconn.ConnectOptions{Level: level})
 }
 
-func ConnectWithOptions(path string, opts pluginconn.ConnectOptions) (proto.ProviderServiceClient, func(), error) {
+func ConnectWithOptions(path string, opts pluginconn.ConnectOptions) (pluginpb.ProviderServiceClient, func(), error) {
 	if path == "" {
 		return nil, nil, fmt.Errorf("%w: no plugin path provided (set INFRACOST_CLI_PLUGIN_AUTO_UPDATE=true to download plugins automatically)", pluginerr.ErrPluginNotFound)
 	}
@@ -40,13 +53,9 @@ func ConnectWithOptions(path string, opts pluginconn.ConnectOptions) (proto.Prov
 
 	startTimeout := pluginconn.StartTimeout()
 	client := plugin.NewClient(&plugin.ClientConfig{
-		HandshakeConfig: plugin.HandshakeConfig{
-			ProtocolVersion:  1,
-			MagicCookieKey:   "INFRACOST_PROVIDER_PLUGIN_MAGIC_COOKIE",
-			MagicCookieValue: "04d179d767fc",
-		},
+		HandshakeConfig: handshakeConfig,
 		Plugins: map[string]plugin.Plugin{
-			"provider": new(provider),
+			dispenseName: new(provider),
 		},
 		Cmd:              exec.Command(path),
 		StartTimeout:     startTimeout,
@@ -62,15 +71,34 @@ func ConnectWithOptions(path string, opts pluginconn.ConnectOptions) (proto.Prov
 
 	rpcClient, err := client.Client()
 	if err != nil {
+		client.Kill()
 		return nil, nil, pluginerr.WindowsHint(pluginerr.ClassifyConnect(err), path, startTimeout)
 	}
 
-	raw, err := rpcClient.Dispense("provider")
+	raw, err := rpcClient.Dispense(dispenseName)
 	if err != nil {
+		client.Kill()
 		return nil, nil, fmt.Errorf("%w: %v", pluginerr.ErrPluginHandshake, err)
 	}
 
-	return raw.(proto.ProviderServiceClient), client.Kill, nil
+	conn, ok := raw.(*grpc.ClientConn)
+	if !ok {
+		client.Kill()
+		return nil, nil, fmt.Errorf("unexpected dispensed type %T", raw)
+	}
+
+	pluginClient := pluginpb.NewPluginServiceClient(conn)
+	info, err := pluginClient.GetPluginInfo(context.Background(), &pluginpb.GetPluginInfoRequest{})
+	if err != nil {
+		client.Kill()
+		return nil, nil, fmt.Errorf("failed to get plugin info: %w", err)
+	}
+	if info == nil || info.GetType() != pluginpb.PluginType_PROVIDER {
+		client.Kill()
+		return nil, nil, fmt.Errorf("plugin %q is not a provider", path)
+	}
+
+	return pluginpb.NewProviderServiceClient(conn), client.Kill, nil
 }
 
 type provider struct {
@@ -82,5 +110,5 @@ func (p *provider) GRPCServer(*plugin.GRPCBroker, *grpc.Server) error {
 }
 
 func (p *provider) GRPCClient(_ context.Context, _ *plugin.GRPCBroker, conn *grpc.ClientConn) (interface{}, error) {
-	return proto.NewProviderServiceClient(conn), nil
+	return conn, nil
 }

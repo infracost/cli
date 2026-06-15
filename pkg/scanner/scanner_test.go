@@ -7,10 +7,11 @@ import (
 
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
-	"github.com/stretchr/testify/require"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
 	"github.com/infracost/proto/gen/go/infracost/provider"
+	treepb "github.com/infracost/proto/gen/go/infracost/tree"
 	"github.com/infracost/proto/gen/go/infracost/usage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMatchProductionFilter(t *testing.T) {
@@ -140,6 +141,38 @@ func TestGetRequiredProviders(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetRequiredProvidersFromTreeSorted(t *testing.T) {
+	got := GetRequiredProvidersFromTree(&treepb.Tree{Providers: map[string]*treepb.Provider{
+		"google":  {},
+		"azurerm": {},
+		"aws":     {},
+	}})
+
+	require.Equal(t, []provider.Provider{
+		provider.Provider_PROVIDER_AWS,
+		provider.Provider_PROVIDER_GOOGLE,
+		provider.Provider_PROVIDER_AZURERM,
+	}, got)
+}
+
+func TestNamingPolicyAttributeRequirements(t *testing.T) {
+	policies := []*event.FinopsPolicySettings{
+		{
+			Settings: `{"attributeValidationRules":["aws_instance.tags.Name: /^prod-/", "aws_instance.instance_type: /^m/", "bad rule"]}`,
+		},
+		{
+			Settings: `{"attributeValidationRules":["aws_s3_bucket.bucket: /^logs-/"]}`,
+		},
+	}
+
+	got := namingPolicyAttributeRequirements(policies)
+	require.Len(t, got, 2)
+	require.Equal(t, "aws_instance", got[0].ResourceType)
+	require.Equal(t, []string{"instance_type", "tags.Name"}, got[0].Attributes)
+	require.Equal(t, "aws_s3_bucket", got[1].ResourceType)
+	require.Equal(t, []string{"bucket"}, got[1].Attributes)
 }
 
 func TestCountUsage(t *testing.T) {
@@ -423,11 +456,11 @@ projects:
   - path: .
     name: my-project
 `
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -446,11 +479,11 @@ projects:
   - path: .
     name: from-template
 `
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -474,14 +507,14 @@ projects:
   - path: .
     name: from-template
 `
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -493,7 +526,7 @@ projects:
 	t.Run("auto-generates config for empty directory", func(t *testing.T) {
 		dir := t.TempDir()
 
-		cfg, err := LoadOrGenerateRepositoryConfig(dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -507,7 +540,7 @@ func TestFileExists(t *testing.T) {
 	t.Run("existing file", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "test.txt")
-		if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+		if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if !fileExists(path) {

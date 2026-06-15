@@ -82,9 +82,9 @@ type MockProviderServiceClient_ListFinopsPolicies_Call struct {
 //   - ctx context.Context
 //   - in *provider.ListFinopsPoliciesRequest
 //   - opts ...grpc.CallOption
-func (_e *MockProviderServiceClient_Expecter) ListFinopsPolicies(ctx interface{}, in interface{}, opts ...interface{}) *MockProviderServiceClient_ListFinopsPolicies_Call {
+func (_e *MockProviderServiceClient_Expecter) ListFinopsPolicies(ctx any, in any, opts ...any) *MockProviderServiceClient_ListFinopsPolicies_Call {
 	return &MockProviderServiceClient_ListFinopsPolicies_Call{Call: _e.mock.On("ListFinopsPolicies",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockProviderServiceClient_ListFinopsPolicies_Call) Run(run func(ctx context.Context, in *provider.ListFinopsPoliciesRequest, opts ...grpc.CallOption)) *MockProviderServiceClient_ListFinopsPolicies_Call {
@@ -165,9 +165,9 @@ type MockProviderServiceClient_Process_Call struct {
 //   - ctx context.Context
 //   - in *provider.ProcessRequest
 //   - opts ...grpc.CallOption
-func (_e *MockProviderServiceClient_Expecter) Process(ctx interface{}, in interface{}, opts ...interface{}) *MockProviderServiceClient_Process_Call {
+func (_e *MockProviderServiceClient_Expecter) Process(ctx any, in any, opts ...any) *MockProviderServiceClient_Process_Call {
 	return &MockProviderServiceClient_Process_Call{Call: _e.mock.On("Process",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockProviderServiceClient_Process_Call) Run(run func(ctx context.Context, in *provider.ProcessRequest, opts ...grpc.CallOption)) *MockProviderServiceClient_Process_Call {
@@ -248,9 +248,9 @@ type MockProviderServiceClient_ProcessTree_Call struct {
 //   - ctx context.Context
 //   - in *provider.ProcessTreeRequest
 //   - opts ...grpc.CallOption
-func (_e *MockProviderServiceClient_Expecter) ProcessTree(ctx interface{}, in interface{}, opts ...interface{}) *MockProviderServiceClient_ProcessTree_Call {
+func (_e *MockProviderServiceClient_Expecter) ProcessTree(ctx any, in any, opts ...any) *MockProviderServiceClient_ProcessTree_Call {
 	return &MockProviderServiceClient_ProcessTree_Call{Call: _e.mock.On("ProcessTree",
-		append([]interface{}{ctx, in}, opts...)...)}
+		append([]any{ctx, in}, opts...)...)}
 }
 
 func (_c *MockProviderServiceClient_ProcessTree_Call) Run(run func(ctx context.Context, in *provider.ProcessTreeRequest, opts ...grpc.CallOption)) *MockProviderServiceClient_ProcessTree_Call {

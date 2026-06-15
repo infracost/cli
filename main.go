@@ -31,6 +31,11 @@ var runTrackedCommands = map[string]bool{
 	"inspect": true,
 }
 
+var localCommandPaths = map[string]bool{
+	"infracost plugins":      true,
+	"infracost plugins list": true,
+}
+
 // telemetryFlagAllowlist names the flags whose VALUES (not just whether
 // they were set) we record on infracost-command / infracost-run events.
 // Includes the discriminating flags users explicitly pick (policy,
@@ -38,6 +43,11 @@ var runTrackedCommands = map[string]bool{
 // shapes are popular in practice. Path-shaped flags (--file) and
 // resource-address-shaped flags (--resource) are deliberately omitted —
 // they may carry customer-identifying paths or names.
+func isLocalCommandPath() bool {
+	path, ok := events.GetMetadata[string]("commandPath")
+	return ok && localCommandPaths[path]
+}
+
 var telemetryFlagAllowlist = map[string]bool{
 	"filter":         true,
 	"policy":         true,
@@ -108,6 +118,7 @@ func run() (exitCode int) {
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			events.RegisterMetadata("command", cmd.Name())
+			events.RegisterMetadata("commandPath", cmd.CommandPath())
 			events.RegisterMetadata("flags", func() []string {
 				var flags []string
 				cmd.Flags().Visit(func(flag *pflag.Flag) {
@@ -164,6 +175,7 @@ func run() (exitCode int) {
 	addCmd(cmds.Agent(cfg), "setup")
 	addCmd(cmds.IDE(cfg), "setup")
 	addCmd(cmds.CI(cfg), "setup")
+	addCmd(cmds.PluginsCmd(cfg), "setup")
 
 	addCmd(cmds.ScanCmd(cfg), "analyze")
 	addCmd(cmds.Inspect(cfg), "analyze")
@@ -205,7 +217,7 @@ func run() (exitCode int) {
 
 	// Fire a lightweight infracost-command event for commands that don't
 	// already emit their own infracost-run event.
-	if command, ok := events.GetMetadata[string]("command"); ok && !runTrackedCommands[command] {
+	if command, ok := events.GetMetadata[string]("command"); ok && !runTrackedCommands[command] && !isLocalCommandPath() {
 		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
 		extra := []interface{}{
 			"success", err == nil,

@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -25,7 +26,7 @@ func LoadUsageData(r io.Reader, defaults *usage.Usage) (*usage.Usage, error) {
 // LoadOrGenerateRepositoryConfig loads an infracost.yml config from the given directory,
 // or generates one if it doesn't exist. If an infracost.yml.tmpl template exists, it is
 // used as the basis for generation.
-func LoadOrGenerateRepositoryConfig(dir string, opts ...repoconfig.GenerationOption) (*repoconfig.Config, error) {
+func LoadOrGenerateRepositoryConfig(ctx context.Context, dir string, opts ...repoconfig.GenerationOption) (*repoconfig.Config, error) {
 	env := make(map[string]string, len(os.Environ()))
 	for _, kv := range os.Environ() {
 		key, val, _ := strings.Cut(kv, "=")
@@ -55,7 +56,7 @@ func LoadOrGenerateRepositoryConfig(dir string, opts ...repoconfig.GenerationOpt
 		opts = append(opts, repoconfig.WithTemplate(string(content)))
 	}
 
-	c, err := repoconfig.Generate(dir, opts...)
+	c, err := repoconfig.Generate(ctx, dir, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate config: %w", err)
 	}
@@ -69,3 +70,4 @@ func fileExists(path string) bool {
 	}
 	return !stat.IsDir()
 }
+
