@@ -187,12 +187,12 @@ jobs:
             EXT="tar.gz"
             SRC="dist/infracost-${GOOS}-${GOARCH}.tar.gz"
           fi
-          printf "%s\n" "$VERSION_NO_V" > version
+          printf "%s\n" "$VERSION_NO_V" > version.txt
           aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}"
           aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}"
           aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}.sha256"
           aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}.sha256"
-          aws s3 cp version "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/version"
+          aws s3 cp version.txt "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/version"
 
   publish-release:
     runs-on: ubuntu-24.04
