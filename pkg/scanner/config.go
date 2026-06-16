@@ -45,6 +45,9 @@ func LoadOrGenerateRepositoryConfig(ctx context.Context, dir string, opts ...rep
 	opts = append(
 		opts,
 		repoconfig.WithEnvVars(env),
+		repoconfig.WithIgnorePermissionErrors(true),
+		repoconfig.WithIgnoreHiddenDirs(true),
+		repoconfig.WithSkipCDK(true),
 	)
 
 	templatePath := filepath.Join(dir, RepoConfigTemplateFilename)
@@ -70,4 +73,3 @@ func fileExists(path string) bool {
 	}
 	return !stat.IsDir()
 }
-

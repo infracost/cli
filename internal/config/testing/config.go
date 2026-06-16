@@ -1,11 +1,11 @@
 package testing
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"testing"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/api/dashboard"
 	dashboardMock "github.com/infracost/cli/internal/api/dashboard/mocks"
 	"github.com/infracost/cli/internal/api/events"
@@ -16,11 +16,6 @@ import (
 	"github.com/infracost/cli/pkg/environment"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins"
-	"github.com/infracost/cli/pkg/plugins/parser"
-	parserMock "github.com/infracost/cli/pkg/plugins/parser/mocks"
-	"github.com/infracost/cli/pkg/plugins/providers"
-	"github.com/infracost/proto/gen/go/infracost/parser/api"
-	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/rs/zerolog"
 )
 
@@ -54,29 +49,12 @@ func Config(t *testing.T) *config.Config {
 			WriteLevel: zerolog.TraceLevel.String(),
 		},
 		Plugins: plugins.Config{
-			Providers: providers.Config{
-				// by setting the AWS, Google and Azure fields, we should prevent the system from downloading
-				// plugins when these are required.
-				AWS:    "aws",
-				Google: "google",
-				Azure:  "azure",
-				LoadAWS: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
-					return nil, func() {}, nil
-				},
-				LoadGoogle: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
-					return nil, func() {}, nil
-				},
-				LoadAzurerm: func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
-					return nil, func() {}, nil
-				},
+			Cache: filepath.Join(temp, "plugins"),
+			// Block real subprocess launches by default; component tests
+			// override these injectors with mock plugins.
+			LoadProviderPlugins: func(context.Context) ([]*plugins.ProviderPlugin, error) {
+				return nil, nil
 			},
-			Parser: parser.Config{
-				Plugin: "parser", // set this so it doesn't attempt to download the parser plugin
-				Load: func(hclog.Level) (api.ParserServiceClient, func(), error) {
-					return new(parserMock.MockParserServiceClient), func() {}, nil
-				},
-			},
-			Cache: filepath.Join(temp, "plugins"), // hopefully shouldn't use the cache
 		},
 		Cache: cache.Config{
 			Cache: filepath.Join(temp, "cache"),

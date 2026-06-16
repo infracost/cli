@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins"
 	repoconfig "github.com/infracost/config"
@@ -119,7 +118,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		RawOptionsFormat: rawOptionsFormat,
 	})
 	if err != nil {
-		opts.Plugins.ResetParserPlugins()
+		opts.Plugins.ResetPlugins()
 		return nil, fmt.Errorf("parser plugin error: %w (run with --debug or set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
 	}
 
@@ -179,14 +178,6 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		},
 	}
 
-	if opts.TokenSource != nil {
-		token, err := opts.TokenSource.Token()
-		if err != nil {
-			return nil, fmt.Errorf("failed to retrieve access token: %w", err)
-		}
-		input.Infracost.ApiKey = token.AccessToken
-	}
-
 	taggableResources := make([]*provider.Resource, 0, len(response.Tree.GetUnsupportedResources()))
 	for _, res := range response.Tree.GetUnsupportedResources() {
 		pr := treeresource.ProtoToProviderResource(res)
@@ -203,26 +194,36 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		taggableResources = append(taggableResources, pr)
 	}
 
-	for _, rp := range requiredProviders {
-		var loader func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error)
-		switch rp {
-		case provider.Provider_PROVIDER_AWS:
-			loader = opts.Plugins.Providers.LoadAWS
-		case provider.Provider_PROVIDER_GOOGLE:
-			loader = opts.Plugins.Providers.LoadGoogle
-		case provider.Provider_PROVIDER_AZURERM:
-			loader = opts.Plugins.Providers.LoadAzurerm
-		default:
+	_ = requiredProviders // No longer used to gate plugin invocation — every loaded provider plugin runs.
+
+	providerPlugins, err := opts.Plugins.ProviderPlugins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider plugins: %w", err)
+	}
+
+	// Refresh the access token once, immediately before the first provider
+	// call — skipped entirely when no provider plugins are loaded so we
+	// don't burn a refresh for a no-op scan.
+	if len(providerPlugins) > 0 && opts.TokenSource != nil {
+		token, err := opts.TokenSource.Token()
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve access token: %w", err)
+		}
+		input.Infracost.ApiKey = token.AccessToken
+	}
+
+	for _, p := range providerPlugins {
+		resp, err := p.Process(ctx, &pluginpb.ProcessRequest{Input: input})
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute provider %s: %w", p.Info.GetName(), err)
+		}
+		output := resp.GetOutput()
+		if output == nil {
 			continue
 		}
-
-		rs, ps, err := opts.Plugins.Providers.ProcessTreeInput(ctx, rp, input, loader, opts.Logging.ToHCLogLevel())
-		if err != nil {
-			return nil, fmt.Errorf("failed to execute provider %s: %w", rp, err)
-		}
-		projectResult.Resources = append(projectResult.Resources, rs...)
-		taggableResources = append(taggableResources, rs...)
-		projectResult.FinopsResults = append(projectResult.FinopsResults, ps...)
+		projectResult.Resources = append(projectResult.Resources, output.Resources...)
+		taggableResources = append(taggableResources, output.Resources...)
+		projectResult.FinopsResults = append(projectResult.FinopsResults, output.FinopsResults...)
 	}
 
 	// Evaluate tag policies against provider output plus parser-flagged unsupported resources.

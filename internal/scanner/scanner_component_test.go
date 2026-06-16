@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/api/dashboard"
 	testingconfig "github.com/infracost/cli/internal/config/testing"
 	"github.com/infracost/cli/pkg/auth"
@@ -174,22 +173,28 @@ func newTestScanner(t *testing.T, opts testScannerOpts) *Scanner {
 		}
 	}
 
-	// Set up provider plugin mocks. ListFinopsPolicies and scans use the same
-	// plugin service shape as the real provider plugins.
-	setupProviderMock := func(
+	// Set up provider plugin mocks. ListFinopsPolicies and Process are
+	// stubbed on each provider mock so the same scanner works for both
+	// ListPolicies and Scan tests.
+	buildProviderPlugin := func(
+		name string,
 		policies []*provider.FinopsPolicy,
 		resources []*provider.Resource,
 		finopsResults []*provider.FinopsPolicyResult,
-	) func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
-		m := mockProviderPlugin{t: t, policies: policies, resources: resources, finopsResult: finopsResults, validator: opts.processValidator}
-		return func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error) {
-			return m, func() {}, nil
+	) *plugins.ProviderPlugin {
+		return &plugins.ProviderPlugin{
+			ProviderServiceClient: mockProviderPlugin{t: t, policies: policies, resources: resources, finopsResult: finopsResults, validator: opts.processValidator},
+			Info:                  &pluginpb.GetPluginInfoResponse{Name: name, Type: pluginpb.PluginType_PROVIDER},
 		}
 	}
 
-	cfg.Plugins.Providers.LoadAWS = setupProviderMock(opts.awsPolicies, opts.awsResources, opts.awsFinops)
-	cfg.Plugins.Providers.LoadGoogle = setupProviderMock(opts.googlePolicies, opts.googleResources, opts.googleFinops)
-	cfg.Plugins.Providers.LoadAzurerm = setupProviderMock(opts.azurePolicies, opts.azureResources, opts.azureFinops)
+	cfg.Plugins.LoadProviderPlugins = func(context.Context) ([]*plugins.ProviderPlugin, error) {
+		return []*plugins.ProviderPlugin{
+			buildProviderPlugin("aws", opts.awsPolicies, opts.awsResources, opts.awsFinops),
+			buildProviderPlugin("google", opts.googlePolicies, opts.googleResources, opts.googleFinops),
+			buildProviderPlugin("azurerm", opts.azurePolicies, opts.azureResources, opts.azureFinops),
+		}, nil
+	}
 
 	if opts.currency != "" {
 		cfg.Currency = opts.currency
@@ -431,7 +436,10 @@ projects:
 			UsageDefaults: emptyUsageDefaults(t),
 		}, dir, "main", tokenSource)
 		require.NoError(t, err)
-		require.Equal(t, []string{"token-1", "token-2"}, providerTokens)
+		// The token source is consulted once per project; each project's
+		// token is then reused across all 3 provider plugins, giving 6
+		// captured tokens but only 2 Token() invocations.
+		require.Equal(t, []string{"token-1", "token-1", "token-1", "token-2", "token-2", "token-2"}, providerTokens)
 		require.Equal(t, 2, tokenSource.calls)
 	})
 
