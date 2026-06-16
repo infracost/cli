@@ -23,12 +23,16 @@ Or download the archive for your platform from the
 ```bash
 # macOS (Apple Silicon)
 tar -xzf infracost-darwin-arm64.tar.gz
-mv infracost /usr/local/bin/infracost
+mkdir -p ~/.local/bin
+mv infracost ~/.local/bin/infracost
 
 # Linux (amd64)
 tar -xzf infracost-linux-amd64.tar.gz
-mv infracost /usr/local/bin/infracost
+mkdir -p ~/.local/bin
+mv infracost ~/.local/bin/infracost
 ```
+
+The install script also prefers `~/.local/bin` when it is already on your `PATH`; otherwise it installs to `/usr/local/bin`.
 
 On Windows, download the `.zip` archive and extract it to a directory on your `PATH`.
 

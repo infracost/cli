@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -66,6 +68,71 @@ func withCLIReleaseBaseURL(t *testing.T, url string) {
 	orig := cliReleaseBaseURL
 	cliReleaseBaseURL = func() string { return url + "/cli" }
 	t.Cleanup(func() { cliReleaseBaseURL = orig })
+}
+
+func TestReplaceBinaryAtPath_FallsBackToCopyOnPermissionError(t *testing.T) {
+	origCopy := copyBinaryWithCommand
+	t.Cleanup(func() {
+		copyBinaryWithCommand = origCopy
+	})
+
+	execPath := filepath.Join(t.TempDir(), "infracost")
+	if err := os.WriteFile(execPath, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	newBinary := []byte("new")
+	permissionErr := func(_ string, _ os.FileMode, _ []byte) error {
+		return &os.PathError{Op: "open", Path: execPath, Err: os.ErrPermission}
+	}
+
+	var copiedFrom, copiedTo string
+	var copiedMode os.FileMode
+	copyBinaryWithCommand = func(srcPath, dstPath string, mode os.FileMode) error {
+		copiedFrom = srcPath
+		copiedTo = dstPath
+		copiedMode = mode
+
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(data, newBinary) {
+			t.Fatalf("expected temp binary %q, got %q", newBinary, data)
+		}
+		return nil
+	}
+
+	if err := replaceBinaryAtPathWith(execPath, newBinary, permissionErr); err != nil {
+		t.Fatalf("replaceBinaryAtPathWith() returned error: %v", err)
+	}
+	if copiedFrom == "" || copiedTo != execPath || copiedMode != 0o755 {
+		t.Fatalf("unexpected copy call: from=%q to=%q mode=%#o", copiedFrom, copiedTo, copiedMode)
+	}
+}
+
+func TestReplaceBinaryAtPath_ReturnsAtomicErrorWhenNotPermission(t *testing.T) {
+	origCopy := copyBinaryWithCommand
+	t.Cleanup(func() {
+		copyBinaryWithCommand = origCopy
+	})
+
+	execPath := filepath.Join(t.TempDir(), "infracost")
+	if err := os.WriteFile(execPath, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidErr := func(_ string, _ os.FileMode, _ []byte) error {
+		return os.ErrInvalid
+	}
+	copyBinaryWithCommand = func(_, _ string, _ os.FileMode) error {
+		t.Fatal("copyBinaryWithCommand should not be called for non-permission errors")
+		return nil
+	}
+
+	if err := replaceBinaryAtPathWith(execPath, []byte("new"), invalidErr); err == nil {
+		t.Fatal("expected error")
+	}
 }
 
 func TestCheckLatestVersion(t *testing.T) {
