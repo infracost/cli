@@ -151,7 +151,7 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 	return finOpsPolicies, outputTagPolicies, nil
 }
 
-func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absoluteDirectory, branchName string, tokenSource oauth2.TokenSource) (*format.Result, error) {
+func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absolutePath, branchName string, tokenSource oauth2.TokenSource) (*format.Result, error) {
 	var result format.Result
 
 	repositoryName := runParameters.RepositoryName
@@ -174,10 +174,36 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 
 	repoConfigOpts = append(repoConfigOpts, repoconfig.WithPluginDir(s.Plugins.Dir))
 
+	stat, err := os.Stat(absolutePath)
+	if err != nil {
+		return nil, err
+	}
+	isFileMode := !stat.IsDir()
+	absoluteDirectory := absolutePath
+	if isFileMode {
+		absoluteDirectory = filepath.Dir(absolutePath)
+	}
+
 	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(ctx, absoluteDirectory, repoConfigOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("repository configuration error: %w", err)
 	}
+
+	if isFileMode {
+		// if we're scanning a single file, filter the repo config to only include the project that matches that file
+		var filtered []*repoconfig.Project
+		for _, candidate := range repoConfig.Projects {
+			candidatePath := filepath.Join(absoluteDirectory, candidate.Path)
+			if absolutePath == candidatePath {
+				filtered = append(filtered, candidate)
+			}
+		}
+		if len(filtered) == 0 {
+			return nil, fmt.Errorf("file at %q is not a recognised scannable type", absolutePath)
+		}
+		repoConfig.Projects = filtered
+	}
+
 	result.Config = repoConfig
 	if s.Currency != "" {
 		result.Config.Currency = s.Currency

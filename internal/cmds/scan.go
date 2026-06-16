@@ -61,19 +61,19 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		target = "."
 	}
 
-	absoluteDirectory, err := filepath.Abs(filepath.Clean(target))
+	absolutePath, err := filepath.Abs(filepath.Clean(target))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path to target: %w", err)
 	}
+	absoluteDirectory := absolutePath
 
-	if info, err := os.Stat(absoluteDirectory); err != nil {
+	if info, err := os.Stat(absolutePath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("target directory does not exist")
 		}
 		return nil, fmt.Errorf("failed to get info for target directory: %w", err)
 	} else if !info.IsDir() {
-		// TODO: should probably generate a minimal config for a single project in this case, but for now just require a directory
-		return nil, fmt.Errorf("target is not a directory")
+		absoluteDirectory = filepath.Dir(absolutePath)
 	}
 
 	repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
@@ -116,7 +116,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		PricingEndpoint: cfg.PricingEndpoint,
 	}
 	startTime := time.Now()
-	result, err := s.Scan(ctx, runParameters, absoluteDirectory, branchName, source)
+	result, err := s.Scan(ctx, runParameters, absolutePath, branchName, source)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan target: %w", err)
 	}
@@ -128,10 +128,10 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 
 	// Load previous result for this directory (stale allowed) for run diff counts.
 	var prevForDir *format.Output
-	if p, err := store.ForPathAllowStale(absoluteDirectory); err != nil {
-		logging.Infof("could not load previous run data for directory: %v", err)
+	if p, err := store.ForPathAllowStale(absolutePath); err != nil {
+		logging.Infof("could not load previous run data for path: %v", err)
 	} else {
-		logging.Infof("found previous run data for directory in cache")
+		logging.Infof("found previous run data for path in cache")
 		prevForDir = p
 	}
 
@@ -143,7 +143,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		output.TrackDiff(ctx, eventsClient, prev)
 	}
 
-	if err := store.Write(absoluteDirectory, &output); err != nil {
+	if err := store.Write(absolutePath, &output); err != nil {
 		logging.Warn("failed to cache results: " + err.Error())
 	}
 
@@ -266,3 +266,4 @@ func renderScanLLM(w io.Writer, r ScanResult) error {
 	_, err := fmt.Fprintln(w)
 	return err
 }
+
