@@ -173,6 +173,14 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 
 	repoConfigOpts = append(repoConfigOpts, repoconfig.WithPluginDir(s.Plugins.PluginDir()))
 
+	// Ensure required plugins are installed before generating the repo
+	// config — autodetection delegates to plugin identifiers, so a missing
+	// binary means its file types (e.g. terraform plan JSON) won't be
+	// recognized.
+	if _, err := s.Plugins.EnsurePlugins(); err != nil {
+		return nil, fmt.Errorf("failed to install plugins: %w", err)
+	}
+
 	stat, err := os.Stat(absolutePath)
 	if err != nil {
 		return nil, err

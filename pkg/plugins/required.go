@@ -27,6 +27,7 @@ var requiredPlugins = []requiredPlugin{
 	{Key: "terragrunt", Name: "infracost-plugin-terragrunt", Type: pluginTypeParser},
 	{Key: "cloudformation", Name: "infracost-plugin-cloudformation", Type: pluginTypeParser},
 	{Key: "ciscostacks", Name: "infracost-plugin-ciscostacks", Type: pluginTypeParser},
+	{Key: "terraform-plan", Name: "infracost-plugin-terraform-plan", Type: pluginTypeParser},
 	{Key: "aws", Name: "infracost-plugin-aws", Type: pluginTypeProvider},
 	{Key: "google", Name: "infracost-plugin-google", Type: pluginTypeProvider},
 	{Key: "azure", Name: "infracost-plugin-azure", Type: pluginTypeProvider},
