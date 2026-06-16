@@ -102,6 +102,13 @@ func run() (exitCode int) {
 		}
 	}()
 
+	// hashicorp/go-plugin spawns each plugin as a child process and does not
+	// kill them on parent exit — without an explicit Close the parser and
+	// provider subprocesses linger after the CLI returns. Deferred after the
+	// recover handler above so LIFO ordering runs Close before the
+	// recover's os.Exit on panic.
+	defer cfg.Plugins.Close()
+
 	cmd := &cobra.Command{
 		Use:     "infracost",
 		Version: version.Version,
