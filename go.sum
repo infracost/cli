@@ -113,6 +113,8 @@ github.com/infracost/config v0.5.0 h1:sB+AJ7dkJKsfdiCpPLIDKYp/ND64cPT1G8z+p+rRF4
 github.com/infracost/config v0.5.0/go.mod h1:XyCBuDQowPYNF6n95+Woz61snyaf7K94DVbNiHcg+1A=
 github.com/infracost/config v0.6.1 h1:+x+8Y4f/SjUUI6cc4j/TEDxT/8aP3YEw2uGpdxWklZI=
 github.com/infracost/config v0.6.1/go.mod h1:aCVTUvqPboOJRMLTkKS27DOJicsvHdR4f8n1qlBqZoo=
+github.com/infracost/config v0.7.0 h1:r3PPKJPAYgj5Gup7mFN1h5CMMjZslBji9x008+VA++E=
+github.com/infracost/config v0.7.0/go.mod h1:aCVTUvqPboOJRMLTkKS27DOJicsvHdR4f8n1qlBqZoo=
 github.com/infracost/go-proto v1.20.0 h1:b0yNFGRF3j97/BzG0cqs3mu3MJqexBBhphZMunHqp/s=
 github.com/infracost/go-proto v1.20.0/go.mod h1:XjXJ7TZE8yUMBhS/+Cj/nFClfNRtYtZUksA+qjSZXq0=
 github.com/infracost/go-proto v1.22.0 h1:lZSEKnJNazJ1rlWzn2PrAEUEsXfXtqPsqh9LQsrWP90=

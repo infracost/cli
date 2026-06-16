@@ -181,6 +181,10 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	absoluteDirectory := absolutePath
 	if isFileMode {
 		absoluteDirectory = filepath.Dir(absolutePath)
+		// no point searching recursively if we know the file w're looking at
+		repoConfigOpts = append(repoConfigOpts, repoconfig.WithMaxSearchDepth(1))
+		repoConfigOpts = append(repoConfigOpts, repoconfig.WithSingleFileMode(true))
+
 	}
 
 	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(ctx, absoluteDirectory, repoConfigOpts...)
