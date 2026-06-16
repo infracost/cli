@@ -76,10 +76,8 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		hasRunParameters = true
 	}
 
-	// When INFRACOST_CLI_USE_ALL_LOCAL_POLICIES is set, bypass the dashboard
-	// policy filter and use all policies available from the local provider plugins.
-	// This is useful for developing and testing new policies before they are
-	// registered in the dashboard.
+	// Bypass the dashboard policy filter so every locally-available policy is
+	// listed — used to develop policies before they're registered upstream.
 	if os.Getenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES") != "" {
 		hasRunParameters = false
 	}

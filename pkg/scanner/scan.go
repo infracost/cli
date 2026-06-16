@@ -146,11 +146,8 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		requiredProviders = []provider.Provider{provider.Provider_PROVIDER_AWS}
 	}
 
-	// A nil FinopsPolicies slice signals "no explicit policy list — let the
-	// provider default to all available policies" (used by the local test
-	// harness via INFRACOST_CLI_USE_ALL_LOCAL_POLICIES). An empty-but-non-nil
-	// slice means "the user has configured zero policies"; leave the config
-	// populated so the provider evaluates none.
+	// nil FinopsPolicies => leave the config nil so the provider evaluates all
+	// policies; an empty (non-nil) slice keeps the config so it evaluates none.
 	var finopsPolicyConfig *provider.FinopsPolicyConfiguration
 	if opts.FinopsPolicies != nil {
 		finopsPolicyConfig = &provider.FinopsPolicyConfiguration{

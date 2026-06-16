@@ -717,9 +717,8 @@ projects:
 
 		dir := writeTestProject(t)
 
-		// Even when explicit FinOps policies are supplied, the env var should
-		// cause the policy list to be dropped and FinopsPolicyConfig to reach
-		// the provider as nil, signalling "evaluate every available policy".
+		// The env var should drop the explicit policy list, leaving the
+		// provider's FinopsPolicyConfig nil so it evaluates every policy.
 		policySettings := &event.FinopsPolicySettings{
 			Slug: "test-finops-policy",
 			Name: "Test FinOps Policy",
