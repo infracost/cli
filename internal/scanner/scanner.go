@@ -76,6 +76,12 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		hasRunParameters = true
 	}
 
+	// Bypass the dashboard policy filter so every locally-available policy is
+	// listed — used to develop policies before they're registered upstream.
+	if os.Getenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES") != "" {
+		hasRunParameters = false
+	}
+
 	providerPlugins, err := s.Plugins.ProviderPlugins(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load provider plugins: %w", err)
@@ -261,13 +267,16 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		tagPolicies = append(tagPolicies, policy)
 	}
 
-	finopsPolicies := make([]*event.FinopsPolicySettings, 0, len(runParameters.FinopsPolicies))
-	for _, p := range runParameters.FinopsPolicies {
-		policy := new(event.FinopsPolicySettings)
-		if err := pj.Unmarshal(p, policy); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal FinOps policy: %w", err)
+	var finopsPolicies []*event.FinopsPolicySettings
+	if os.Getenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES") == "" {
+		finopsPolicies = make([]*event.FinopsPolicySettings, 0, len(runParameters.FinopsPolicies))
+		for _, p := range runParameters.FinopsPolicies {
+			policy := new(event.FinopsPolicySettings)
+			if err := pj.Unmarshal(p, policy); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal FinOps policy: %w", err)
+			}
+			finopsPolicies = append(finopsPolicies, policy)
 		}
-		finopsPolicies = append(finopsPolicies, policy)
 	}
 
 	cacheDir := filepath.Join(os.TempDir(), ".infracost", "cache")

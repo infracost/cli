@@ -146,6 +146,15 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		requiredProviders = []provider.Provider{provider.Provider_PROVIDER_AWS}
 	}
 
+	// nil FinopsPolicies => leave the config nil so the provider evaluates all
+	// policies; an empty (non-nil) slice keeps the config so it evaluates none.
+	var finopsPolicyConfig *provider.FinopsPolicyConfiguration
+	if opts.FinopsPolicies != nil {
+		finopsPolicyConfig = &provider.FinopsPolicyConfiguration{
+			Policies: opts.FinopsPolicies,
+		}
+	}
+
 	input := &provider.TreeInput{
 		Tree:         response.Tree,
 		AbsolutePath: absoluteProjectPath,
@@ -157,9 +166,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		},
 		PreviousResourceAddresses: opts.PreviousResourceAddresses,
 		Usage:                     projectUsage,
-		FinopsPolicyConfig: &provider.FinopsPolicyConfiguration{
-			Policies: opts.FinopsPolicies,
-		},
+		FinopsPolicyConfig:        finopsPolicyConfig,
 		Features: &provider.Features{
 			EnablePriceLookups:         true,
 			EnableRecommendations:      true,
