@@ -199,7 +199,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			}
 		}
 		if len(filtered) == 0 {
-			return nil, fmt.Errorf("file at %q is not a recognised scannable type", absolutePath)
+			return nil, fmt.Errorf("file at %q is not a recognized scannable type", absolutePath)
 		}
 		repoConfig.Projects = filtered
 	}
