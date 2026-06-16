@@ -11,8 +11,7 @@ import (
 )
 
 func TestManagerLoadParserPluginsMissingDir(t *testing.T) {
-	mgr, err := NewManager(filepath.Join(t.TempDir(), "missing"))
-	require.NoError(t, err)
+	mgr := NewManager(ManagerOptions{Dir: filepath.Join(t.TempDir(), "missing"), SkipInstall: true})
 
 	plugins, err := mgr.LoadParserPlugins(context.Background())
 	require.NoError(t, err)
@@ -24,24 +23,17 @@ func TestManagerLoadParserPluginsSkipsSidecars(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "infracost-plugin-terraform.sha256"), []byte("abc"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "infracost-plugin-terraform.version"), []byte("1.0.0"), 0o600))
 
-	mgr, err := NewManager(dir)
-	require.NoError(t, err)
+	mgr := NewManager(ManagerOptions{Dir: dir, SkipInstall: true})
 
 	plugins, err := mgr.LoadParserPlugins(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, plugins)
 }
 
-func TestManagerLoadParserPluginsSkipsKnownProviderPlugins(t *testing.T) {
-	dir := t.TempDir()
-	for _, name := range []string{"infracost-plugin-aws", "infracost-plugin-google", "infracost-plugin-azure"} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("not really a binary"), 0o700))
-	}
+func TestManagerLoadProviderPluginsMissingDir(t *testing.T) {
+	mgr := NewManager(ManagerOptions{Dir: filepath.Join(t.TempDir(), "missing"), SkipInstall: true})
 
-	mgr, err := NewManager(dir)
-	require.NoError(t, err)
-
-	plugins, err := mgr.LoadParserPlugins(context.Background())
+	plugins, err := mgr.LoadProviderPlugins(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, plugins)
 }

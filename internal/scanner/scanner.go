@@ -6,9 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/trace"
@@ -51,7 +49,7 @@ type TaggingPolicy struct {
 	*event.TagPolicy
 }
 
-func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters, providers []provider.Provider) ([]FinOpsPolicy, []TaggingPolicy, error) {
+func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters, providerFilter []string) ([]FinOpsPolicy, []TaggingPolicy, error) {
 	var tagPolicies []*event.TagPolicy
 	var finopsPolicySettings []*event.FinopsPolicySettings
 	var hasRunParameters bool
@@ -78,41 +76,36 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		hasRunParameters = true
 	}
 
-	if _, err := s.Plugins.EnsurePlugins(); err != nil {
-		return nil, nil, fmt.Errorf("failed to ensure plugins: %w", err)
+	providerPlugins, err := s.Plugins.ProviderPlugins(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load provider plugins: %w", err)
 	}
 
-	pluginLoaders := map[provider.Provider]func(hclog.Level) (pluginpb.ProviderServiceClient, func(), error){
-		provider.Provider_PROVIDER_AWS:     s.Plugins.Providers.LoadAWS,
-		provider.Provider_PROVIDER_GOOGLE:  s.Plugins.Providers.LoadGoogle,
-		provider.Provider_PROVIDER_AZURERM: s.Plugins.Providers.LoadAzurerm,
-	}
-
-	if providers == nil {
-		providers = []provider.Provider{
-			provider.Provider_PROVIDER_AWS,
-			provider.Provider_PROVIDER_GOOGLE,
-			provider.Provider_PROVIDER_AZURERM,
-		}
+	wantProvider := make(map[string]struct{}, len(providerFilter))
+	for _, name := range providerFilter {
+		wantProvider[name] = struct{}{}
 	}
 
 	var finOpsPolicies []FinOpsPolicy
-	for _, prov := range providers {
-		pluginLoader, ok := pluginLoaders[prov]
-		if !ok {
-			continue
+	for _, p := range providerPlugins {
+		providerName := p.Info.GetName()
+		if len(wantProvider) > 0 {
+			if _, ok := wantProvider[providerName]; !ok {
+				continue
+			}
 		}
-		providerFinopsPolicies, err := s.Plugins.Providers.ListFinopsPolicies(ctx, prov, pluginLoader)
+
+		resp, err := p.ListFinopsPolicies(ctx, &pluginpb.ListFinopsPoliciesRequest{})
 		if err != nil {
-			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", prov)
+			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", providerName)
 			continue
 		}
-		for _, policy := range providerFinopsPolicies {
+		for _, policy := range resp.GetPolicies() {
 			var settings *event.FinopsPolicySettings
 			if hasRunParameters {
 				var enabled bool
 				for _, s := range finopsPolicySettings {
-					if s.Slug == policy.Slug {
+					if s.Slug == policy.GetSlug() {
 						enabled = true
 						settings = s
 						break
@@ -123,9 +116,15 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 				}
 			}
 			finOpsPolicies = append(finOpsPolicies, FinOpsPolicy{
-				FinopsPolicy: policy,
-				Settings:     settings,
-				Provider:     strings.TrimPrefix(prov.String(), "PROVIDER_"),
+				FinopsPolicy: &provider.FinopsPolicy{
+					Slug:             policy.GetSlug(),
+					Name:             policy.GetName(),
+					Group:            policy.GetGroup(),
+					Description:      policy.GetDescription(),
+					OnlyNewResources: policy.GetOnlyNewResources(),
+				},
+				Settings: settings,
+				Provider: providerName,
 			})
 		}
 	}
@@ -172,7 +171,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		repoConfigOpts = append(repoConfigOpts, repoconfig.WithTemplate(runParameters.ConfigTemplate))
 	}
 
-	repoConfigOpts = append(repoConfigOpts, repoconfig.WithPluginDir(s.Plugins.Dir))
+	repoConfigOpts = append(repoConfigOpts, repoconfig.WithPluginDir(s.Plugins.PluginDir()))
 
 	stat, err := os.Stat(absolutePath)
 	if err != nil {
