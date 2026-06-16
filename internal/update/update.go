@@ -8,10 +8,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -250,20 +252,31 @@ func extractFromZip(data []byte, binaryName string) ([]byte, error) {
 }
 
 var replaceBinary = func(newBinary []byte) error {
-	execPath, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	execPath, err = filepath.EvalSymlinks(execPath)
+	execPath, err := resolvedExecutable()
 	if err != nil {
 		return err
 	}
 
+	return replaceBinaryAtPathWith(execPath, newBinary, replaceBinaryAtomically)
+}
+
+func replaceBinaryAtPathWith(execPath string, newBinary []byte, replace func(string, os.FileMode, []byte) error) error {
 	info, err := os.Stat(execPath)
 	if err != nil {
 		return err
 	}
 
+	mode := info.Mode().Perm()
+	if err := replace(execPath, mode, newBinary); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrPermission) {
+		return err
+	}
+
+	return replaceBinaryWithCommand(execPath, mode, newBinary)
+}
+
+func replaceBinaryAtomically(execPath string, mode os.FileMode, newBinary []byte) error {
 	// Write new binary to a temp file in the same directory (ensures same filesystem for rename).
 	dir := filepath.Dir(execPath)
 	tmp, err := os.CreateTemp(dir, ".infracost-update-*")
@@ -283,7 +296,7 @@ var replaceBinary = func(newBinary []byte) error {
 	}
 
 	// persist current permissions to the new file, so we respect the user's choice of perms
-	if err := os.Chmod(tmpPath, info.Mode().Perm()); err != nil {
+	if err := os.Chmod(tmpPath, mode); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
@@ -292,6 +305,58 @@ var replaceBinary = func(newBinary []byte) error {
 	if err := os.Rename(tmpPath, execPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
+	}
+
+	return nil
+}
+
+func replaceBinaryWithCommand(execPath string, mode os.FileMode, newBinary []byte) error {
+	tmp, err := os.CreateTemp("", ".infracost-update-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if _, err := tmp.Write(newBinary); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return err
+	}
+
+	return copyBinaryWithCommand(tmpPath, execPath, mode)
+}
+
+var copyBinaryWithCommand = func(srcPath, dstPath string, mode os.FileMode) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("permission denied replacing %s; rerun from an elevated shell", dstPath)
+	}
+
+	if _, err := exec.LookPath("sudo"); err != nil {
+		return fmt.Errorf("permission denied replacing %s and sudo was not found; rerun as a user that can write to this path", dstPath)
+	}
+
+	fmt.Fprintf(os.Stderr, "Updating %s requires elevated permissions; you may be prompted for your password.\n", dstPath)
+
+	script := `set -e
+	tmp=$(mktemp "$1/.infracost-update-XXXXXX")
+	trap 'rm -f "$tmp"' EXIT
+	cp "$2" "$tmp"
+	chmod "$3" "$tmp"
+	mv "$tmp" "$4"
+	trap - EXIT`
+	args := []string{"sh", "-c", script, "sh", filepath.Dir(dstPath), srcPath, fmt.Sprintf("%o", mode), dstPath}
+	cmd := exec.Command("sudo", args...) //nolint:gosec // paths are local filesystem paths for the running binary and downloaded update
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("copying updated binary with sudo: %w", err)
 	}
 
 	return nil

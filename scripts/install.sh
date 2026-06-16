@@ -70,11 +70,33 @@ echo
 tar xzf "/tmp/$tar" -C /tmp
 rm "/tmp/$tar"
 
-echo "Moving /tmp/infracost to /usr/local/bin/infracost (you might be asked for your password due to sudo)"
-if [ -x "$(command -v sudo)" ]; then
-  sudo mv "/tmp/infracost" "/usr/local/bin/infracost"
+install_dir="/usr/local/bin"
+local_bin=""
+if [ -n "$HOME" ]; then
+  local_bin="$HOME/.local/bin"
+  case ":$PATH:" in
+    *":$local_bin:"*) install_dir="$local_bin" ;;
+  esac
+fi
+
+if [ ! -d "$install_dir" ]; then
+  if [ "$install_dir" = "$local_bin" ]; then
+    mkdir -p "$install_dir"
+  elif [ -x "$(command -v sudo)" ]; then
+    sudo mkdir -p "$install_dir"
+  else
+    mkdir -p "$install_dir"
+  fi
+fi
+
+echo "Moving /tmp/infracost to $install_dir/infracost"
+if [ -w "$install_dir" ]; then
+  mv "/tmp/infracost" "$install_dir/infracost"
+elif [ -x "$(command -v sudo)" ]; then
+  echo "You might be asked for your password due to sudo."
+  sudo mv "/tmp/infracost" "$install_dir/infracost"
 else
-  mv "/tmp/infracost" "/usr/local/bin/infracost"
+  mv "/tmp/infracost" "$install_dir/infracost"
 fi
 echo
-echo "Completed installing $(infracost --version)"
+echo "Completed installing $($install_dir/infracost --version)"
