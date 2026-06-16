@@ -712,6 +712,43 @@ projects:
 		}
 	})
 
+	t.Run("USE_ALL_LOCAL_POLICIES leaves FinopsPolicyConfig nil so provider evaluates all", func(t *testing.T) {
+		t.Setenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES", "true")
+
+		dir := writeTestProject(t)
+
+		// Even when explicit FinOps policies are supplied, the env var should
+		// cause the policy list to be dropped and FinopsPolicyConfig to reach
+		// the provider as nil, signalling "evaluate every available policy".
+		policySettings := &event.FinopsPolicySettings{
+			Slug: "test-finops-policy",
+			Name: "Test FinOps Policy",
+		}
+		policyJSON, err := protojson.Marshal(policySettings)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: awsTerraformParseResponse("aws_instance"),
+			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
+			processValidator: func(t *testing.T, input *provider.TreeInput) {
+				t.Helper()
+				if input.FinopsPolicyConfig != nil {
+					t.Errorf("expected FinopsPolicyConfig to be nil when USE_ALL_LOCAL_POLICIES is set, got %+v", input.FinopsPolicyConfig)
+				}
+			},
+		})
+
+		_, err = s.Scan(context.Background(), dashboard.RunParameters{
+			UsageDefaults:  emptyUsageDefaults(t),
+			FinopsPolicies: []json.RawMessage{policyJSON},
+		}, dir, "main", auth.AuthenticationToken("test-token"))
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("tag policies evaluated against resources", func(t *testing.T) {
 		dir := writeTestProject(t)
 
