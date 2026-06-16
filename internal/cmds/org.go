@@ -1,0 +1,209 @@
+package cmds
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/charmbracelet/huh"
+	"github.com/infracost/cli/internal/api"
+	"github.com/infracost/cli/internal/api/dashboard"
+	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
+	"github.com/infracost/cli/pkg/auth"
+	"github.com/infracost/cli/pkg/logging"
+	"golang.org/x/oauth2"
+)
+
+// resolveOrg resolves the active organization into cfg.OrgID using the
+// following priority chain:
+//  1. --org flag / INFRACOST_CLI_ORG env var
+//  2. .infracost/org file in the working directory
+//  3. SelectedOrgID saved in the user cache (from `infracost org switch`)
+//
+// If no org context is found and the user belongs to exactly one org, it is
+// used automatically. If they belong to multiple orgs, they are prompted to
+// pick one (TTY only); on non-TTY a warning is written to stderr instead.
+func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) error {
+	uc, err := ensureUserCache(ctx, cfg, source)
+	if err != nil {
+		return err
+	}
+
+	// Nothing to resolve if user has no orgs.
+	if uc == nil || len(uc.Organizations) == 0 {
+		return nil
+	}
+
+	// Priority 1: explicit --org flag or INFRACOST_CLI_ORG env var.
+	if cfg.Org != "" {
+		orgID, _, err := auth.ResolveOrgID(cfg.Org, uc.Organizations)
+		if err != nil {
+			return err
+		}
+		applyActiveOrgByID(cfg, uc.Organizations, orgID)
+		return nil
+	}
+
+	// Priority 2: local .infracost/org file.
+	if wd, wdErr := os.Getwd(); wdErr == nil {
+		if slug, readErr := auth.ReadLocalOrg(wd); readErr == nil && slug != "" {
+			orgID, _, resolveErr := auth.ResolveOrgID(slug, uc.Organizations)
+			if resolveErr == nil {
+				applyActiveOrgByID(cfg, uc.Organizations, orgID)
+				return nil
+			}
+			logging.WithError(resolveErr).Msg("local .infracost/org references unknown org, ignoring")
+		}
+	}
+
+	// Priority 3: SelectedOrgID from user cache.
+	if uc.SelectedOrgID != "" {
+		for _, org := range uc.Organizations {
+			if org.ID == uc.SelectedOrgID {
+				applyActiveOrg(cfg, org)
+				return nil
+			}
+		}
+		logging.Warnf("cached selectedOrgID %s not found in org list, ignoring", uc.SelectedOrgID)
+	}
+
+	// No org context set — if single org, use it silently.
+	if len(uc.Organizations) == 1 {
+		applyActiveOrg(cfg, uc.Organizations[0])
+		return nil
+	}
+
+	// Multiple orgs, no selection — prompt in TTY, error otherwise.
+	if ui.IsInteractive() {
+		slug, pickErr := pickOrg(uc.Organizations, cfg, "", defaultPickOrgTitle)
+		if pickErr == nil {
+			for _, org := range uc.Organizations {
+				if org.Slug == slug {
+					applyActiveOrg(cfg, org)
+					uc.SelectedOrgID = org.ID
+					if saveErr := cfg.Auth.SaveUserCache(uc); saveErr != nil {
+						logging.WithError(saveErr).Msg("failed to save org selection")
+					}
+					return nil
+				}
+			}
+		}
+		if pickErr != nil && !errors.Is(pickErr, huh.ErrUserAborted) {
+			return fmt.Errorf("selecting organization: %w", pickErr)
+		}
+	}
+
+	return errNoOrgSelected(uc.Organizations)
+}
+
+// applyActiveOrg records the resolved active organization on cfg, including
+// the per-org agentsEnabled flag the Agents commands / MCP tools gate on and
+// the slug used for org-scoped dashboard links.
+func applyActiveOrg(cfg *config.Config, org auth.CachedOrganization) {
+	cfg.OrgID = org.ID
+	cfg.OrgSlug = org.Slug
+	cfg.AgentsEnabled = org.AgentsEnabled
+}
+
+// applyActiveOrgByID looks up org id in orgs and applies it via applyActiveOrg.
+// id has already been validated by auth.ResolveOrgID, so a miss is unexpected;
+// we still set OrgID defensively so the caller isn't left without one.
+func applyActiveOrgByID(cfg *config.Config, orgs []auth.CachedOrganization, id string) {
+	for _, org := range orgs {
+		if org.ID == id {
+			applyActiveOrg(cfg, org)
+			return
+		}
+	}
+	cfg.OrgID = id
+}
+
+// errNoOrgSelected returns an actionable error for the multi-org +
+// non-interactive case. Listing the slugs inline lets the caller (or an
+// agent harness) pick a value to pass back via --org without having to
+// run a second command.
+func errNoOrgSelected(orgs []auth.CachedOrganization) error {
+	slugs := make([]string, 0, len(orgs))
+	for _, o := range orgs {
+		slugs = append(slugs, o.Slug)
+	}
+	return fmt.Errorf(
+		"no organization selected — you belong to %d (%s). Pick one with one of:\n"+
+			"  • pass --org <slug>\n"+
+			"  • set INFRACOST_CLI_ORG=<slug>\n"+
+			"  • run 'infracost org switch <slug>' to save it globally\n"+
+			"  • run 'infracost org switch <slug> --repo' to save it for this repo only",
+		len(orgs), strings.Join(slugs, ", "),
+	)
+}
+
+// ensureUserCache loads the user cache, refreshing from the API if stale or missing.
+func ensureUserCache(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) (*auth.UserCache, error) {
+	uc, err := cfg.Auth.LoadUserCache()
+	if err != nil {
+		logging.WithError(err).Msg("failed to load user cache, fetching fresh data")
+		uc = nil
+	}
+
+	if uc == nil || len(uc.Organizations) == 0 || uc.IsStale() {
+		client := cfg.Dashboard.Client(api.Client(ctx, source, ""))
+		fresh, fetchErr := fetchAndCacheUser(ctx, cfg, client)
+		if fetchErr != nil {
+			if uc != nil && len(uc.Organizations) > 0 {
+				logging.WithError(fetchErr).Msg("failed to refresh user cache, using stale data")
+				return uc, nil
+			}
+			return nil, fmt.Errorf("fetching user data: %w", fetchErr)
+		}
+		return fresh, nil
+	}
+
+	return uc, nil
+}
+
+func fetchAndCacheUser(ctx context.Context, cfg *config.Config, client dashboard.Client) (*auth.UserCache, error) {
+	user, err := client.CurrentUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return cacheUser(cfg, user), nil
+}
+
+func cacheUser(cfg *config.Config, user dashboard.CurrentUser) *auth.UserCache {
+	orgs := make([]auth.CachedOrganization, len(user.Organizations))
+	for i, org := range user.Organizations {
+		roles := make([]string, len(org.Roles))
+		for j, r := range org.Roles {
+			roles[j] = r.ID
+		}
+		orgs[i] = auth.CachedOrganization{
+			ID:            org.ID,
+			Name:          org.Name,
+			Slug:          org.Slug,
+			Roles:         roles,
+			AgentsEnabled: org.AgentsEnabled,
+		}
+	}
+
+	uc := &auth.UserCache{
+		ID:            user.ID,
+		Name:          user.Name,
+		Email:         user.Email,
+		Organizations: orgs,
+	}
+
+	// Preserve any existing org selection across cache refreshes.
+	if existing, err := cfg.Auth.LoadUserCache(); err == nil && existing != nil {
+		uc.SelectedOrgID = existing.SelectedOrgID
+	}
+
+	if err := cfg.Auth.SaveUserCache(uc); err != nil {
+		logging.WithError(err).Msg("failed to save user cache")
+	}
+
+	return uc
+}

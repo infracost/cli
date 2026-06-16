@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"time"
 
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cmds"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
+	"github.com/infracost/cli/internal/ui"
+	"github.com/infracost/cli/internal/update"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/stacktrace"
 	"github.com/infracost/cli/version"
@@ -20,13 +23,75 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// runTrackedCommands lists commands that fire their own infracost-run event
+// and should therefore be excluded from the generic infracost-command event.
+var runTrackedCommands = map[string]bool{
+	"scan":    true,
+	"price":   true,
+	"inspect": true,
+}
+
+var localCommandPaths = map[string]bool{
+	"infracost plugins":      true,
+	"infracost plugins list": true,
+}
+
+// telemetryFlagAllowlist names the flags whose VALUES (not just whether
+// they were set) we record on infracost-command / infracost-run events.
+// Includes the discriminating flags users explicitly pick (policy,
+// budget, etc.) plus the new query flags so we can see which filter
+// shapes are popular in practice. Path-shaped flags (--file) and
+// resource-address-shaped flags (--resource) are deliberately omitted —
+// they may carry customer-identifying paths or names.
+func isLocalCommandPath() bool {
+	path, ok := events.GetMetadata[string]("commandPath")
+	return ok && localCommandPaths[path]
+}
+
+var telemetryFlagAllowlist = map[string]bool{
+	"filter":         true,
+	"policy":         true,
+	"budget":         true,
+	"guardrail":      true,
+	"top":            true,
+	"top-savings":    true,
+	"provider":       true,
+	"project":        true,
+	"group-by":       true,
+	"missing-tag":    true,
+	"invalid-tag":    true,
+	"min-cost":       true,
+	"max-cost":       true,
+	"summary":        true,
+	"failing":        true,
+	"costs-only":     true,
+	"total-savings":  true,
+	"addresses-only": true,
+	"fields":         true,
+}
+
 func main() {
 	os.Exit(run())
 }
 
 func run() (exitCode int) {
+	startTime := time.Now()
 	var diags *diagnostic.Diagnostics
 	cfg := new(config.Config)
+
+	// Kick off the latest-version check in parallel so it overlaps with the
+	// user's command. Buffered so the goroutine can send even if we never
+	// read (e.g. on panic).
+	updateMessageChan := make(chan *update.Info, 1)
+	go func() {
+		info, err := update.CheckForUpdate(context.Background())
+		if err != nil {
+			updateMessageChan <- nil
+			return
+		}
+		updateMessageChan <- info
+	}()
+
 	defer func() {
 		if r := recover(); r != nil {
 			client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
@@ -37,14 +102,30 @@ func run() (exitCode int) {
 		}
 	}()
 
+	// hashicorp/go-plugin spawns each plugin as a child process and does not
+	// kill them on parent exit — without an explicit Close the parser and
+	// provider subprocesses linger after the CLI returns. Deferred after the
+	// recover handler above so LIFO ordering runs Close before the
+	// recover's os.Exit on panic.
+	defer cfg.Plugins.Close()
+
 	cmd := &cobra.Command{
-		Use:           "infracost",
-		Version:       version.Version,
-		Short:         "Cloud cost estimates for IaC in your CLI",
+		Use:     "infracost",
+		Version: version.Version,
+		Short:   "Shift FinOps Left: Prevent cloud waste and budget overruns before every deploy",
+		Example: `  # First-time setup (auth, agents, IDE, CI)
+  $ infracost setup
+
+  # Scan the current directory for costs and policy violations
+  $ infracost scan
+
+  # View a summary of the latest scan results
+  $ infracost inspect --summary`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			events.RegisterMetadata("command", cmd.Name())
+			events.RegisterMetadata("commandPath", cmd.CommandPath())
 			events.RegisterMetadata("flags", func() []string {
 				var flags []string
 				cmd.Flags().Visit(func(flag *pflag.Flag) {
@@ -52,21 +133,79 @@ func run() (exitCode int) {
 				})
 				return flags
 			}())
+			// Capture values for high-signal, low-PII flags so we can
+			// answer "what filters / drill-downs do users actually run?"
+			// from telemetry. Path-shaped flags (--file, --resource) and
+			// values that may identify customer infrastructure are
+			// deliberately omitted. Slice-shaped flags (--fields,
+			// --group-by) are captured as actual lists rather than the
+			// "[a,b,c]" Stringer output, so analytics queries can index
+			// element-wise without parsing the bracketed form.
+			events.RegisterMetadata("flagValues", func() map[string]any {
+				out := map[string]any{}
+				cmd.Flags().Visit(func(flag *pflag.Flag) {
+					if !telemetryFlagAllowlist[flag.Name] {
+						return
+					}
+					if sv, ok := flag.Value.(pflag.SliceValue); ok {
+						out[flag.Name] = sv.GetSlice()
+						return
+					}
+					out[flag.Name] = flag.Value.String()
+				})
+				return out
+			}())
 
 			process.Process(cfg) // set defaults and validate values etc
+
+			if cfg.NoColor {
+				ui.DisableColor()
+			}
 		},
 	}
 
-	cmd.AddCommand(cmds.Scan(cfg))
-	cmd.AddCommand(cmds.Policies(cfg))
-	cmd.AddCommand(cmds.Claude(cfg))
-	cmd.AddCommand(cmds.IDE(cfg))
-	cmd.AddCommand(cmds.Inspect(cfg))
-	cmd.AddCommand(cmds.Login(cfg))
-	cmd.AddCommand(cmds.Logout(cfg))
-	cmd.AddCommand(cmds.Price(cfg))
-	cmd.AddCommand(cmds.Update(cfg))
+	cmd.AddGroup(
+		&cobra.Group{ID: "setup", Title: "Setup & integrations:"},
+		&cobra.Group{ID: "analyze", Title: "Analyze infrastructure:"},
+		&cobra.Group{ID: "workspace", Title: "Organization settings:"},
+		&cobra.Group{ID: "maintain", Title: "CLI maintenance:"},
+	)
+
+	addCmd := func(c *cobra.Command, groupID string) {
+		c.GroupID = groupID
+		cmd.AddCommand(c)
+	}
+
+	addCmd(cmds.Setup(cfg), "setup")
+	addCmd(cmds.Auth(cfg), "setup")
+	addCmd(cmds.Org(cfg), "setup")
+	addCmd(cmds.Agent(cfg), "setup")
+	addCmd(cmds.IDE(cfg), "setup")
+	addCmd(cmds.CI(cfg), "setup")
+	addCmd(cmds.PluginsCmd(cfg), "setup")
+
+	addCmd(cmds.ScanCmd(cfg), "analyze")
+	addCmd(cmds.Inspect(cfg), "analyze")
+	addCmd(cmds.PriceCmd(cfg), "analyze")
+
+	addCmd(cmds.PoliciesCmd(cfg), "workspace")
+	addCmd(cmds.BudgetsCmd(cfg), "workspace")
+	addCmd(cmds.GuardrailsCmd(cfg), "workspace")
+	addCmd(cmds.FindingsCmd(cfg), "workspace")
+	addCmd(cmds.TasksCmd(cfg), "workspace")
+	addCmd(cmds.ActionsCmd(cfg), "workspace")
+
+	addCmd(cmds.DoctorCmd(cfg), "maintain")
+	addCmd(cmds.MCPCmd(cfg), "maintain")
+	addCmd(cmds.Update(cfg), "maintain")
+
 	cmd.AddCommand(cmds.Version(cfg))
+
+	for _, c := range cmds.Deprecated(cfg) {
+		cmd.AddCommand(c)
+	}
+
+	cmds.ApplyHelpStyles(cmd)
 
 	diags.Merge(process.PreProcess(cfg, cmd.PersistentFlags()))
 	if diags.Critical().Len() > 0 {
@@ -78,15 +217,53 @@ func run() (exitCode int) {
 		return 1
 	}
 
-	if err := cmd.Execute(); err != nil {
-		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_UNSPECIFIED, err))
+	err := cmd.Execute()
+	if err != nil {
+		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_FAILED_OPERATION, err))
 	}
+
+	// Fire a lightweight infracost-command event for commands that don't
+	// already emit their own infracost-run event.
+	if command, ok := events.GetMetadata[string]("command"); ok && !runTrackedCommands[command] && !isLocalCommandPath() {
+		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+		extra := []interface{}{
+			"success", err == nil,
+			"durationSeconds", time.Since(startTime).Seconds(),
+		}
+		if err != nil {
+			msg := err.Error()
+			if len(msg) > 200 {
+				msg = msg[:200]
+			}
+			extra = append(extra, "errorMessage", msg)
+		}
+		client.Push(context.Background(), "infracost-command", extra...)
+	}
+
 	format.Diagnostics(diags)
+
+	// Print update notice last so it doesn't get lost above the command's
+	// own output. Skip for `infracost update` itself — that command already
+	// reports the version it's moving to.
+	if command, ok := events.GetMetadata[string]("command"); !ok || command != "update" {
+		if info := <-updateMessageChan; info != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "\n%s A new version of Infracost is available: %s → %s\n  %s\n",
+				ui.Caution("Update:"),
+				ui.Bold(version.Version),
+				ui.Bold(info.LatestVersion),
+				info.Cmd,
+			)
+		}
+	}
+
 	if diags.Critical().Len() > 0 {
 		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
 		for _, diag := range diags.Critical().Unwrap() {
 			client.Push(context.Background(), "infracost-error", "error", diag.String())
 		}
+		return 1
+	}
+	if err != nil {
 		return 1
 	}
 

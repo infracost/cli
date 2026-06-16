@@ -36,6 +36,29 @@ func RegisterMetadata(key string, value interface{}) {
 	metadata[key] = value
 }
 
+// Snapshot returns a shallow copy of the current metadata. Used by
+// long-running processes (the MCP stdio server) to capture a baseline
+// they can roll back to between per-request mutations.
+func Snapshot() map[string]interface{} {
+	out := make(map[string]interface{}, len(metadata))
+	for k, v := range metadata {
+		out[k] = v
+	}
+	return out
+}
+
+// Restore replaces the metadata map with a copy of the given snapshot.
+// Pair with Snapshot to scope per-request metadata in a long-running
+// process so values registered while serving one request (orgId,
+// repoId, etc.) don't leak into the next.
+func Restore(snapshot map[string]interface{}) {
+	next := make(map[string]interface{}, len(snapshot))
+	for k, v := range snapshot {
+		next[k] = v
+	}
+	metadata = next
+}
+
 // GetMetadata retrieves the value for the specified metadata, and false if it doesn't
 // exist or the type is wrong.
 func GetMetadata[V any](key string) (V, bool) {

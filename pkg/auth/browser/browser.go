@@ -1,12 +1,13 @@
 package browser
 
 import (
-	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 // Open opens the specified URL in the user's default browser.
@@ -48,20 +49,35 @@ func WaitAndOpen(ctx context.Context, url string, automatic bool) {
 	fmt.Printf("\nPress Enter to open the browser automatically...\n")
 
 	go func() {
-		input := make(chan struct{})
-		go func() {
-			_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
-			close(input)
-		}()
+		// Poll stdin with a short deadline so this goroutine can exit when ctx
+		// is cancelled (e.g. the OAuth callback fires before Enter is pressed).
+		// A blocked stdin read cannot be interrupted, and the orphan would
+		// race subsequent TUI prompts for input bytes.
+		defer func() { _ = os.Stdin.SetReadDeadline(time.Time{}) }()
 
-		select {
-		case <-input:
-			err := Open(url)
-			if err != nil {
-				fmt.Printf("Failed to open browser: %v\n", err)
-				fmt.Println("Please open the above URL manually.")
+		buf := make([]byte, 1)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
 			}
-		case <-ctx.Done():
+
+			_ = os.Stdin.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				if errors.Is(err, os.ErrDeadlineExceeded) {
+					continue
+				}
+				return
+			}
+			if n > 0 && buf[0] == '\n' {
+				if err := Open(url); err != nil {
+					fmt.Printf("Failed to open browser: %v\n", err)
+					fmt.Println("Please open the above URL manually.")
+				}
+				return
+			}
 		}
 	}()
 }

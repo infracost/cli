@@ -13,6 +13,33 @@ import (
 func testData() *format.Output {
 	return &format.Output{
 		Currency: "USD",
+		GuardrailResults: []format.GuardrailOutput{
+			{
+				GuardrailID:      "g-1",
+				GuardrailName:    "Cost increase > $100",
+				Triggered:        true,
+				TotalMonthlyCost: rat.New(500),
+			},
+		},
+		BudgetResults: []format.BudgetOutput{
+			{
+				BudgetID:    "b-1",
+				BudgetName:  "Production budget",
+				Tags:        []format.BudgetTagOutput{{Key: "env", Value: "production"}},
+				Amount:      rat.New(1000),
+				CurrentCost: rat.New(500),
+				OverBudget:  false,
+			},
+			{
+				BudgetID:             "b-2",
+				BudgetName:           "Frontend Q2",
+				Tags:                 []format.BudgetTagOutput{{Key: "team", Value: "frontend"}},
+				Amount:               rat.New(300),
+				CurrentCost:          rat.New(400),
+				OverBudget:           true,
+				CustomOverrunMessage: "Notify #frontend-costs",
+			},
+		},
 		Projects: []format.ProjectOutput{
 			{
 				ProjectName: "web-app",
@@ -21,6 +48,7 @@ func testData() *format.Output {
 					{
 						Name: "aws_instance.web",
 						Type: "aws_instance",
+						Tags: map[string]string{"env": "production"},
 						CostComponents: []format.CostComponentOutput{
 							{Name: "Instance usage", TotalMonthlyCost: rat.New(20)},
 						},
@@ -33,11 +61,21 @@ func testData() *format.Output {
 					{
 						Name:   "aws_s3_bucket.logs",
 						Type:   "aws_s3_bucket",
+						Tags:   map[string]string{"env": "production"},
 						IsFree: true,
+					},
+					{
+						Name: "aws_ebs_volume.data",
+						Type: "aws_ebs_volume",
+						Tags: map[string]string{"env": "production"},
+						CostComponents: []format.CostComponentOutput{
+							{Name: "Storage", TotalMonthlyCost: rat.New(10)},
+						},
 					},
 					{
 						Name: "google_compute_instance.api",
 						Type: "google_compute_instance",
+						Tags: map[string]string{"env": "production", "team": "frontend"},
 						CostComponents: []format.CostComponentOutput{
 							{Name: "Instance usage", TotalMonthlyCost: rat.New(30)},
 						},
@@ -67,6 +105,11 @@ func testData() *format.Output {
 					{
 						PolicyName: "Required Tags",
 						Message:    "All resources must have required tags",
+						TagSchema: []format.TagSchemaEntry{
+							{Key: "environment", Mandatory: true},
+							{Key: "team", Mandatory: true},
+							{Key: "owner", ValidRegex: "^team-.*"},
+						},
 						FailingResources: []format.FailingTaggingResourceOutput{
 							{
 								Address:              "aws_instance.web",
@@ -76,9 +119,8 @@ func testData() *format.Output {
 								MissingMandatoryTags: []string{"environment", "team"},
 								InvalidTags: []format.InvalidTagOutput{
 									{
-										Key:        "owner",
-										Value:      "foo",
-										ValidRegex: "^team-.*",
+										Key:   "owner",
+										Value: "foo",
 									},
 								},
 							},
@@ -86,7 +128,9 @@ func testData() *format.Output {
 					},
 				},
 				Diagnostics: []format.DiagnosticOutput{
-					{Message: "something critical", Severity: "critical"},
+					{Prefix: "HCL parse error", Message: "failed to parse expression", Severity: "critical", Location: "main.tf:42"},
+					{Prefix: "Warning", Message: "skipping unsupported provider: foo", Severity: "warning"},
+					{Prefix: "Info", Message: "evaluated synthesized value for missing reference", Severity: "info", Location: "variables.tf:7"},
 				},
 			},
 			{
@@ -111,7 +155,7 @@ func TestFilterByProvider(t *testing.T) {
 	filtered := Filter(data, Options{Provider: "aws"})
 
 	assert.Len(t, filtered.Projects, 2)
-	assert.Len(t, filtered.Projects[0].Resources, 2, "should include aws_instance and aws_s3_bucket")
+	assert.Len(t, filtered.Projects[0].Resources, 3, "should include aws_instance, aws_s3_bucket, and aws_ebs_volume")
 	assert.Len(t, filtered.Projects[1].Resources, 1, "should include aws_lambda_function")
 }
 
@@ -138,30 +182,100 @@ func TestSummary(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
 
-	err := WriteSummary(&buf, data, false)
+	err := WriteSummary(&buf, data, Options{})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Projects: 2")
-	assert.Contains(t, output, "1 with errors")
-	assert.Contains(t, output, "web-app")
-	assert.Contains(t, output, "api-service")
-	assert.Contains(t, output, "Resources: 4")
-	assert.Contains(t, output, "3 costed, 1 free")
-	assert.Contains(t, output, "$55.00")
-	assert.Contains(t, output, "FinOps policies: 1")
-	assert.Contains(t, output, "1 failing")
-	assert.Contains(t, output, "1 critical")
+	assertGolden(t, buf.String())
 }
 
 func TestSummaryJSON(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
 
-	err := WriteSummary(&buf, data, true)
+	err := WriteSummary(&buf, data, Options{JSON: true})
 	require.NoError(t, err)
 
-	assert.Contains(t, buf.String(), `"projects": 2`)
+	assertGolden(t, buf.String())
+}
+
+func TestDiagnostics(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteDiagnostics(&buf, data, Options{})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestDiagnosticsJSON(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteDiagnostics(&buf, data, Options{JSON: true})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestDiagnosticsEmpty(t *testing.T) {
+	data := testData()
+	for i := range data.Projects {
+		data.Projects[i].Diagnostics = nil
+	}
+	var buf bytes.Buffer
+
+	err := WriteDiagnostics(&buf, data, Options{})
+	require.NoError(t, err)
+
+	assert.Contains(t, buf.String(), "No diagnostics")
+}
+
+func TestSummaryDiagnosticsCriticalOnly(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	WriteSummaryDiagnostics(&buf, data, false)
+
+	out := buf.String()
+	assert.Contains(t, out, "HCL parse error")
+	assert.NotContains(t, out, "skipping unsupported provider", "warnings should be hidden without --include-warnings")
+}
+
+func TestSummaryDiagnosticsWithWarnings(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	WriteSummaryDiagnostics(&buf, data, true)
+
+	out := buf.String()
+	assert.Contains(t, out, "HCL parse error")
+	assert.Contains(t, out, "skipping unsupported provider")
+}
+
+func TestSummaryDiagnosticsNoneIsSilent(t *testing.T) {
+	data := testData()
+	for i := range data.Projects {
+		data.Projects[i].Diagnostics = nil
+	}
+	var buf bytes.Buffer
+
+	WriteSummaryDiagnostics(&buf, data, true)
+
+	assert.Empty(t, buf.String(), "with no diagnostics the block should be empty (no header noise)")
+}
+
+func TestSummaryGBP(t *testing.T) {
+	data := testData()
+	data.Currency = "GBP"
+	var buf bytes.Buffer
+
+	err := WriteSummary(&buf, data, Options{})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.NotContains(t, out, "$", "summary should not display $ when currency is GBP")
+	assert.Contains(t, out, "£", "summary should display £ when currency is GBP")
 }
 
 func TestGroupByType(t *testing.T) {
@@ -171,13 +285,7 @@ func TestGroupByType(t *testing.T) {
 	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"type"}})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Type")
-	assert.Contains(t, output, "Count")
-	assert.Contains(t, output, "Monthly Cost")
-	assert.Contains(t, output, "google_compute_instance")
-	assert.Contains(t, output, "aws_instance")
-	assert.Contains(t, output, "aws_lambda_function")
+	assertGolden(t, buf.String())
 }
 
 func TestGroupByProjectType(t *testing.T) {
@@ -187,12 +295,7 @@ func TestGroupByProjectType(t *testing.T) {
 	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"project", "type"}})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Project")
-	assert.Contains(t, output, "Type")
-	assert.Contains(t, output, "web-app")
-	assert.Contains(t, output, "api-service")
-	assert.Contains(t, output, "google_compute_instance")
+	assertGolden(t, buf.String())
 }
 
 func TestGroupByProvider(t *testing.T) {
@@ -202,9 +305,37 @@ func TestGroupByProvider(t *testing.T) {
 	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"provider"}})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "aws")
-	assert.Contains(t, output, "google")
+	assertGolden(t, buf.String())
+}
+
+func TestGroupByResource(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"resource"}})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestGroupByFile(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"file"}})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestGroupByProject(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"project"}})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
 }
 
 func TestGroupByPolicy(t *testing.T) {
@@ -214,11 +345,7 @@ func TestGroupByPolicy(t *testing.T) {
 	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"policy"}})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Use GP3")
-	assert.Contains(t, output, "Message")
-	assert.Contains(t, output, "Consider using GP3 volumes")
-	assert.Contains(t, output, "All resources must have required tags")
+	assertGolden(t, buf.String())
 }
 
 func TestGroupByTop(t *testing.T) {
@@ -228,10 +355,7 @@ func TestGroupByTop(t *testing.T) {
 	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"type"}, Top: 2})
 	require.NoError(t, err)
 
-	// Should have header + separator + 2 rows
-	output := buf.String()
-	assert.Contains(t, output, "google_compute_instance")
-	assert.Contains(t, output, "aws_instance")
+	assertGolden(t, buf.String())
 }
 
 func TestMultiGroupByPolicyType(t *testing.T) {
@@ -241,21 +365,7 @@ func TestMultiGroupByPolicyType(t *testing.T) {
 	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"policy", "type"}})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Policy")
-	assert.Contains(t, output, "Type")
-	assert.Contains(t, output, "Kind")
-	assert.Contains(t, output, "Resource")
-	assert.Contains(t, output, "File")
-	assert.Contains(t, output, "Use GP3")
-	assert.Contains(t, output, "finops")
-	assert.Contains(t, output, "aws_ebs_volume")
-	assert.Contains(t, output, "aws_ebs_volume.data")
-	assert.Contains(t, output, "Required Tags")
-	assert.Contains(t, output, "tagging")
-	assert.Contains(t, output, "aws_instance")
-	assert.Contains(t, output, "aws_instance.web")
-	assert.Contains(t, output, "modules/compute/main.tf:42")
+	assertGolden(t, buf.String())
 }
 
 func TestMultiGroupByProviderType(t *testing.T) {
@@ -265,12 +375,7 @@ func TestMultiGroupByProviderType(t *testing.T) {
 	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"provider", "type"}})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Provider")
-	assert.Contains(t, output, "Type")
-	assert.Contains(t, output, "Monthly Cost")
-	assert.Contains(t, output, "aws")
-	assert.Contains(t, output, "google")
+	assertGolden(t, buf.String())
 }
 
 func TestPolicyDetailFinops(t *testing.T) {
@@ -280,12 +385,7 @@ func TestPolicyDetailFinops(t *testing.T) {
 	err := WritePolicyDetail(&buf, data, Options{Policy: "Use GP3"})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Policy: Use GP3")
-	assert.Contains(t, output, "Consider using GP3 volumes")
-	assert.Contains(t, output, "aws_ebs_volume.data")
-	assert.Contains(t, output, "File")
-	assert.Contains(t, output, "1 issue")
+	assertGolden(t, buf.String())
 }
 
 func TestPolicyDetailBySlug(t *testing.T) {
@@ -295,8 +395,7 @@ func TestPolicyDetailBySlug(t *testing.T) {
 	err := WritePolicyDetail(&buf, data, Options{Policy: "use-gp3"})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Policy: Use GP3")
+	assertGolden(t, buf.String())
 }
 
 func TestPolicyDetailTagging(t *testing.T) {
@@ -306,12 +405,7 @@ func TestPolicyDetailTagging(t *testing.T) {
 	err := WritePolicyDetail(&buf, data, Options{Policy: "Required Tags"})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Policy: Required Tags")
-	assert.Contains(t, output, "aws_instance.web")
-	assert.Contains(t, output, "File")
-	assert.Contains(t, output, "modules/compute/main.tf:42")
-	assert.Contains(t, output, "3 issues")
+	assertGolden(t, buf.String())
 }
 
 func TestPolicyResourceDetailFinops(t *testing.T) {
@@ -321,12 +415,7 @@ func TestPolicyResourceDetailFinops(t *testing.T) {
 	err := WritePolicyDetail(&buf, data, Options{Policy: "Use GP3", Resource: "aws_ebs_volume.data"})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Policy: Use GP3")
-	assert.Contains(t, output, "Resource: aws_ebs_volume.data")
-	assert.Contains(t, output, "Issue: Volume type is gp2")
-	assert.Contains(t, output, "Savings: $5.00/mo")
-	assert.Contains(t, output, "Attribute: type")
+	assertGolden(t, buf.String())
 }
 
 func TestPolicyResourceDetailTagging(t *testing.T) {
@@ -336,12 +425,7 @@ func TestPolicyResourceDetailTagging(t *testing.T) {
 	err := WritePolicyDetail(&buf, data, Options{Policy: "Required Tags", Resource: "aws_instance.web"})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Policy: Required Tags")
-	assert.Contains(t, output, "Resource: aws_instance.web")
-	assert.Contains(t, output, "File: modules/compute/main.tf:42")
-	assert.Contains(t, output, "Missing mandatory tags: environment, team")
-	assert.Contains(t, output, `Invalid tag "owner"`)
+	assertGolden(t, buf.String())
 }
 
 func TestPolicyNotFound(t *testing.T) {
@@ -414,6 +498,92 @@ func TestResourceTypeFromAddress(t *testing.T) {
 	}
 }
 
+func TestGuardrailDetail(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGuardrailDetail(&buf, data, Options{Guardrail: "Cost increase > $100"})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestGuardrailDetailByID(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGuardrailDetail(&buf, data, Options{Guardrail: "g-1"})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestGuardrailNotFound(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGuardrailDetail(&buf, data, Options{Guardrail: "nonexistent"})
+	assert.EqualError(t, err, `guardrail "nonexistent" not found`)
+}
+
+func TestBudgetDetailUnder(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteBudgetDetail(&buf, data, Options{Budget: "Production budget"})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestBudgetDetailOver(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteBudgetDetail(&buf, data, Options{Budget: "Frontend Q2"})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestBudgetDetailByID(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteBudgetDetail(&buf, data, Options{Budget: "b-1"})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestBudgetNotFound(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteBudgetDetail(&buf, data, Options{Budget: "nonexistent"})
+	assert.EqualError(t, err, `budget "nonexistent" not found`)
+}
+
+func TestGroupByBudget(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"budget"}})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+func TestGroupByGuardrail(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := WriteGroupBy(&buf, data, Options{GroupBy: []string{"guardrail"}})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
 func TestRunDefaultsToSummary(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
@@ -421,7 +591,7 @@ func TestRunDefaultsToSummary(t *testing.T) {
 	err := Run(&buf, data, Options{})
 	require.NoError(t, err)
 
-	assert.Contains(t, buf.String(), "Projects:")
+	assertGolden(t, buf.String())
 }
 
 func TestResourceWithoutPolicyShowsPolicyFailures(t *testing.T) {
@@ -431,11 +601,7 @@ func TestResourceWithoutPolicyShowsPolicyFailures(t *testing.T) {
 	err := Run(&buf, data, Options{Resource: "aws_instance.web"})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Required Tags")
-	assert.Contains(t, output, "aws_instance.web")
-	assert.Contains(t, output, "Policy")
-	assert.NotContains(t, output, "Projects:", "should not fall back to summary")
+	assertGolden(t, buf.String())
 }
 
 func TestResourceWithoutPolicyFinops(t *testing.T) {
@@ -445,9 +611,7 @@ func TestResourceWithoutPolicyFinops(t *testing.T) {
 	err := Run(&buf, data, Options{Resource: "aws_ebs_volume.data"})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Use GP3")
-	assert.Contains(t, output, "aws_ebs_volume.data")
+	assertGolden(t, buf.String())
 }
 
 func TestRunPolicyFlagBypassesGroupBy(t *testing.T) {
@@ -457,6 +621,162 @@ func TestRunPolicyFlagBypassesGroupBy(t *testing.T) {
 	err := Run(&buf, data, Options{Policy: "Use GP3"})
 	require.NoError(t, err)
 
-	output := buf.String()
-	assert.Contains(t, output, "Policy: Use GP3")
+	assertGolden(t, buf.String())
+}
+
+func TestRunFailingPanorama(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+
+	err := Run(&buf, data, Options{Failing: true})
+	require.NoError(t, err)
+
+	assertGolden(t, buf.String())
+}
+
+// --- new flag tests (added with the inspect-flag PR) ---
+
+func TestTotalSavings(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TotalSavings: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTotalSavingsJSON(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TotalSavings: true, JSON: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTopSavings(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TopSavings: 5})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTopSavingsAddressesOnly(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TopSavings: 5, AddressesOnly: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTopSavingsFieldsProjection(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TopSavings: 5, Fields: []string{"address", "monthly_savings"}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestTopSavingsUnknownFieldErrors(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{TopSavings: 5, Fields: []string{"wrongname"}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown field "wrongname"`)
+}
+
+func TestMissingTag(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{MissingTag: "team"})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestMissingTagWithFields(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{MissingTag: "team", Fields: []string{"address", "type"}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestMinCost(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{MinCost: 15})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestFilterPolicyAndProvider(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Filter: "provider=aws,tag.team=missing", AddressesOnly: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestSummaryFieldsScalar(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{"failing_policies"}})
+	require.NoError(t, err)
+	// Single scalar projection: bare value, no label, no chrome.
+	assertGolden(t, buf.String())
+}
+
+func TestSummaryFieldsMulti(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{"failing_policies", "failing_tagging_policies", "resources"}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestSummaryFieldsDistinctFailingResources(t *testing.T) {
+	// New summary fields exposing distinct address counts for FinOps and
+	// tagging failures. These let consumers answer "how many resources fail
+	// any tagging policy?" with one --summary --fields call instead of
+	// post-processing the per-policy lists.
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{
+		"distinct_failing_finops_resources",
+		"distinct_failing_tagging_resources",
+	}})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestSummaryFieldsUnknownErrors(t *testing.T) {
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Summary: true, Fields: []string{"wrongname"}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `unknown field "wrongname"`)
+}
+
+func TestGroupByPolicyFieldsDedup(t *testing.T) {
+	// `--group-by policy --fields policy` must yield ONE row per distinct
+	// failing policy, not one row per (policy × failing-resource) pairing
+	// — that's the property that lets users skip `| sort -u`.
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{
+		Failing: true,
+		GroupBy: []string{"policy"},
+		Fields:  []string{"policy"},
+	})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
+}
+
+func TestPolicyDetailAddressesOnly(t *testing.T) {
+	// --policy <name> --addresses-only short-circuits to a flat newline-
+	// separated list of failing addresses.
+	data := testData()
+	var buf bytes.Buffer
+	err := Run(&buf, data, Options{Policy: "Use GP3", AddressesOnly: true})
+	require.NoError(t, err)
+	assertGolden(t, buf.String())
 }

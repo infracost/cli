@@ -71,6 +71,7 @@ jobs:
     needs: [version, draft-release]
     permissions:
       contents: write
+      id-token: write
     strategy:
       matrix:
         include:
@@ -98,20 +99,62 @@ jobs:
           if [ "$GOOS" = "windows" ]; then
             SUFFIX=".exe"
           fi
-          go build -ldflags "-X github.com/infracost/cli/version.Version=${VERSION}" -o "bin/infracost-preview${SUFFIX}" main.go
+          go build -ldflags "-X github.com/infracost/cli/version.Version=${VERSION}" -o "bin/infracost${SUFFIX}" main.go
+
+      - name: Import signing certificate
+        if: matrix.goos == 'darwin'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PWD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PWD" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PWD" build.keychain
+          rm certificate.p12
+
+      - name: Sign binary
+        if: matrix.goos == 'darwin'
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+        run: |
+          codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" bin/infracost
+          codesign --verify --strict --verbose=2 bin/infracost
+
+      - name: Notarize binary
+        if: matrix.goos == 'darwin'
+        env:
+          MACOS_NOTARIZATION_API_KEY: ${{ secrets.MACOS_NOTARIZATION_API_KEY }}
+          MACOS_NOTARIZATION_API_KEY_ID: ${{ vars.MACOS_NOTARIZATION_API_KEY_ID }}
+          MACOS_NOTARIZATION_API_ISSUER_ID: ${{ vars.MACOS_NOTARIZATION_API_ISSUER_ID }}
+        run: |
+          echo "$MACOS_NOTARIZATION_API_KEY" | base64 --decode > notary-key.p8
+          ditto -c -k --keepParent bin/infracost notarize.zip
+          xcrun notarytool submit notarize.zip \
+            --key notary-key.p8 \
+            --key-id "$MACOS_NOTARIZATION_API_KEY_ID" \
+            --issuer "$MACOS_NOTARIZATION_API_ISSUER_ID" \
+            --wait \
+            --timeout 30m
+          rm notary-key.p8 notarize.zip
 
       - name: Package
         env:
-          VERSION: ${{ needs.version.outputs.version }}
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          ARCHIVE="infracost-preview_${VERSION}_${GOOS}_${GOARCH}"
+          ARCHIVE="infracost-${GOOS}-${GOARCH}"
           mkdir -p dist
           if [ "$GOOS" = "windows" ]; then
-            (cd bin && zip -r "../dist/${ARCHIVE}.zip" "infracost-preview.exe")
+            (cd bin && zip -r "../dist/${ARCHIVE}.zip" "infracost.exe")
+            (cd dist && shasum -a 256 "${ARCHIVE}.zip" > "${ARCHIVE}.zip.sha256")
           else
-            tar -czf "dist/${ARCHIVE}.tar.gz" -C bin infracost-preview
+            tar -czf "dist/${ARCHIVE}.tar.gz" -C bin infracost
+            (cd dist && shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256")
           fi
 
       - name: Upload
@@ -122,6 +165,54 @@ jobs:
           gh release upload "$VERSION" ./dist/* \
             --repo "${{ github.repository }}" \
             --clobber
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSET_PUBLICATION_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Upload to S3
+        env:
+          BUCKET: ${{ secrets.AWS_ASSET_BUCKET }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: v${{ needs.version.outputs.version }}
+          VERSION_NO_V: ${{ needs.version.outputs.version }}
+        run: |
+          if [ "$GOOS" = "windows" ]; then
+            EXT="zip"
+            SRC="dist/infracost-${GOOS}-${GOARCH}.zip"
+          else
+            EXT="tar.gz"
+            SRC="dist/infracost-${GOOS}-${GOARCH}.tar.gz"
+          fi
+          printf "%s\n" "$VERSION_NO_V" > version.txt
+          aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}"
+          aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}"
+          aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}.sha256"
+          aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}.sha256"
+          aws s3 cp version.txt "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/version"
+
+  invalidate-cloudfront:
+    runs-on: ubuntu-24.04
+    needs: [version, build-and-release]
+    permissions:
+      id-token: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSET_PUBLICATION_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Invalidate CloudFront cache
+        env:
+          DISTRIBUTION_ID: ${{ secrets.AWS_ASSET_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION_ID" \
+            --paths "/cli/*"
 
   publish-release:
     runs-on: ubuntu-24.04
@@ -137,3 +228,47 @@ jobs:
           gh release edit "$VERSION" \
             --repo "${{ github.repository }}" \
             --draft=false
+
+  trigger-chocolatey:
+    if: ${{ !contains(needs.version.outputs.version, '-alpha') && !contains(needs.version.outputs.version, '-beta') }}
+    name: Trigger Chocolatey publish
+    runs-on: ubuntu-24.04
+    needs: [version, publish-release]
+    steps:
+      - uses: infracost/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.INFRACOST_CI_APP_ID }}
+          private-key: ${{ secrets.INFRACOST_CI_APP_PRIVATE_KEY }}
+          owner: infracost
+          repositories: chocolatey-packages
+          permission-contents: write
+
+      - name: Dispatch chocolatey build
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api repos/infracost/chocolatey-packages/dispatches \
+            -f event_type=infracost2_choco
+
+  update-infracost-docs:
+    if: ${{ !contains(needs.version.outputs.version, '-alpha') && !contains(needs.version.outputs.version, '-beta') }}
+    name: Update Infracost Docs to reference latest CLI version
+    runs-on: ubuntu-24.04
+    needs: [version, publish-release]
+    steps:
+      - uses: infracost/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.INFRACOST_CI_APP_ID }}
+          private-key: ${{ secrets.INFRACOST_CI_APP_PRIVATE_KEY }}
+          owner: infracost
+          repositories: docs
+          permission-contents: write
+
+      - name: Dispatch docs releases.json bump
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api repos/infracost/docs/dispatches \
+            -f event_type=bump_cli_version

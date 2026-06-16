@@ -136,20 +136,27 @@ func preprocess(v reflect.Value, flags *pflag.FlagSet) *diagnostic.Diagnostics {
 				panic(fmt.Sprintf("flagvalue %q references flag that has not been registered", flagTargetName))
 			}
 
-			sf, ok := existing.Value.(SharedFlag)
-			if !ok {
-				panic(fmt.Sprintf("flagvalue %q references flag that does not implement SharedFlag", flagTargetName))
+			switch fieldValue.Kind() {
+			case reflect.String:
+				sf, ok := existing.Value.(SharedFlag)
+				if !ok {
+					panic(fmt.Sprintf("flagvalue %q references flag that does not implement SharedFlag", flagTargetName))
+				}
+				target := fieldValue.Addr().Interface().(*string)
+				if existing.DefValue != "" {
+					*target = existing.DefValue
+				}
+				sf.AddTarget(target)
+			case reflect.Bool:
+				sf, ok := existing.Value.(SharedBoolFlag)
+				if !ok {
+					panic(fmt.Sprintf("flagvalue %q references flag that does not implement SharedBoolFlag", flagTargetName))
+				}
+				target := fieldValue.Addr().Interface().(*bool)
+				sf.AddBoolTarget(target)
+			default:
+				panic(fmt.Sprintf("flagvalue %q can only be used on string or bool fields", flagTargetName))
 			}
-
-			if fieldValue.Kind() != reflect.String {
-				panic(fmt.Sprintf("flagvalue %q can only be used on string fields", flagTargetName))
-			}
-
-			target := fieldValue.Addr().Interface().(*string)
-			if existing.DefValue != "" {
-				*target = existing.DefValue
-			}
-			sf.AddTarget(target)
 		}
 
 	}
@@ -222,6 +229,15 @@ func registerFlag(v reflect.Value, flags *pflag.FlagSet, name string, usage stri
 	if isPflagValue {
 		pv := v.Interface().(pflag.Value)
 		flags.Var(pv, name, usage)
+
+		// pflag's BoolVar auto-sets NoOptDefVal so `--flag` alone parses as
+		// `--flag=true` and the next arg stays positional. flags.Var doesn't
+		// do that even when the value implements IsBoolFlag, so set it
+		// manually for our SharedBoolFlag types — otherwise `--json /path`
+		// tries to parse "/path" as the bool value.
+		if bf, ok := pv.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+			flags.Lookup(name).NoOptDefVal = "true"
+		}
 	} else {
 		switch v.Type().Elem().Kind() {
 		case reflect.String:

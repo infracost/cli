@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPreProcess_DefaultValues(t *testing.T) {
@@ -128,9 +129,7 @@ func TestPreProcess_FlagHidden(t *testing.T) {
 	PreProcess(&c, flags)
 
 	f := flags.Lookup("secret")
-	if f == nil {
-		t.Fatal("expected flag 'secret' to be registered")
-	}
+	require.NotNil(t, f, "expected flag 'secret' to be registered")
 	if !f.Hidden {
 		t.Error("expected flag 'secret' to be hidden")
 	}

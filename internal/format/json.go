@@ -3,24 +3,59 @@ package format
 import (
 	"encoding/json"
 	"io"
+	"sort"
+	"strconv"
+	"strings"
 
+	"github.com/infracost/cli/internal/format/toon"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 	"github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/go-proto/pkg/rat"
+	"github.com/infracost/proto/gen/go/infracost/parser"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 )
 
 // Output is the top-level JSON structure produced by the scan command.
 type Output struct {
-	Currency         string             `json:"currency"`
-	Projects         []ProjectOutput    `json:"projects"`
-	GuardrailResults []GuardrailOutput  `json:"guardrail_results,omitempty"`
+	Currency         string            `json:"currency"`
+	// Summary carries pre-computed aggregations so consumers (LLMs in
+	// particular) don't have to sum/count over Projects themselves. It's
+	// populated by ToOutput; manually-constructed Outputs (tests) leave
+	// it nil and the omitempty drops it from the wire format.
+	Summary          *OutputSummary    `json:"summary,omitempty"`
+	Projects         []ProjectOutput   `json:"projects"`
+	GuardrailResults []GuardrailOutput `json:"guardrail_results,omitempty"`
+	BudgetResults    []BudgetOutput    `json:"budget_results,omitempty"`
 
 	// Fields below are not serialized to JSON but carried through for event
 	// metadata.
 	projectTypes           []string
 	estimatedUsageCounts   map[string]int // nil means no usage file was loaded
 	unestimatedUsageCounts map[string]int
+}
+
+// OutputSummary is the pre-computed aggregate block on Output. Every
+// integer count is over the entire scan (across all projects). Saves the
+// model from having to walk Projects[].Resources[] etc. itself, and
+// surfaces the headline numbers structurally so they can be tabularised
+// by the --llm encoder rather than hidden inside arbitrary objects.
+type OutputSummary struct {
+	Projects                        int      `json:"projects"`
+	Resources                       int      `json:"resources"`
+	CostedResources                 int      `json:"costed_resources"`
+	FreeResources                   int      `json:"free_resources"`
+	TotalMonthlyCost                *rat.Rat `json:"total_monthly_cost,omitempty"`
+	TotalPotentialMonthlySavings    *rat.Rat `json:"total_potential_monthly_savings,omitempty"`
+	FinopsPolicies                  int      `json:"finops_policies,omitempty"`
+	FailingFinopsPolicies           int      `json:"failing_finops_policies,omitempty"`
+	DistinctFailingFinopsResources  int      `json:"distinct_failing_finops_resources,omitempty"`
+	TaggingPolicies                 int      `json:"tagging_policies,omitempty"`
+	FailingTaggingPolicies          int      `json:"failing_tagging_policies,omitempty"`
+	DistinctFailingTaggingResources int      `json:"distinct_failing_tagging_resources,omitempty"`
+	Guardrails                      int      `json:"guardrails,omitempty"`
+	TriggeredGuardrails             int      `json:"triggered_guardrails,omitempty"`
+	Budgets                         int      `json:"budgets,omitempty"`
+	OverBudget                      int      `json:"over_budget,omitempty"`
 }
 
 type ProjectOutput struct {
@@ -33,9 +68,10 @@ type ProjectOutput struct {
 }
 
 type ResourceMetadata struct {
-	Filename  string `json:"filename,omitempty"`
-	StartLine int    `json:"start_line,omitempty"`
-	EndLine   int    `json:"end_line,omitempty"`
+	Filename     string `json:"filename,omitempty"`
+	StartLine    int    `json:"start_line,omitempty"`
+	EndLine      int    `json:"end_line,omitempty"`
+	DeepChecksum string `json:"deep_checksum,omitempty"`
 }
 
 type ResourceOutput struct {
@@ -45,6 +81,7 @@ type ResourceOutput struct {
 	IsFree              bool                  `json:"is_free"`
 	CostComponents      []CostComponentOutput `json:"cost_components,omitempty"`
 	Subresources        []ResourceOutput      `json:"subresources,omitempty"`
+	Tags                map[string]string     `json:"tags,omitempty"`
 	SupportsTags        bool                  `json:"supports_tags,omitempty"`
 	SupportsDefaultTags bool                  `json:"supports_default_tags,omitempty"`
 	Metadata            ResourceMetadata      `json:"metadata"`
@@ -63,8 +100,18 @@ type CostComponentOutput struct {
 }
 
 type DiagnosticOutput struct {
+	// Prefix is the human-readable category for this diagnostic (e.g. "HCL
+	// parse error", "Module fetch error"). Falls back to "Error" / "Warning"
+	// / "Info" when the diagnostic type has no friendly prefix mapped in
+	// go-proto, picked from severity so info-level entries don't shout.
+	Prefix   string `json:"prefix"`
 	Message  string `json:"message"`
 	Severity string `json:"severity"`
+	// Location is the source position the diagnostic refers to, formatted as
+	// "filename:line" or "filename:start-end", or the raw URL when the
+	// filename is a remote module reference. Empty when the underlying
+	// diagnostic has no SourceRange attached.
+	Location string `json:"location,omitempty"`
 }
 
 type FinopsOutput struct {
@@ -93,7 +140,22 @@ type TaggingOutput struct {
 	PolicyID         string                         `json:"policy_id"`
 	PolicyName       string                         `json:"policy_name"`
 	Message          string                         `json:"message"`
+	// TagSchema describes the policy's per-key requirements (allowed values,
+	// validation regex, mandatory flag) once per tag key, instead of repeating
+	// them on every failing-resource invalid-tag entry.
+	TagSchema        []TagSchemaEntry               `json:"tag_schema,omitempty"`
 	FailingResources []FailingTaggingResourceOutput `json:"failing_resources"`
+}
+
+// TagSchemaEntry is the canonical, schema-level description of a single tag
+// key the policy cares about. Per-resource InvalidTagOutput entries reference
+// it by Key.
+type TagSchemaEntry struct {
+	Key         string   `json:"key"`
+	ValidRegex  string   `json:"valid_regex,omitempty"`
+	ValidValues []string `json:"valid_values,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	Mandatory   bool     `json:"mandatory,omitempty"`
 }
 
 type FailingTaggingResourceOutput struct {
@@ -106,17 +168,14 @@ type FailingTaggingResourceOutput struct {
 	PropagationProblems  []TagPropagationProblemOutput `json:"propagation_problems"`
 }
 
+// InvalidTagOutput carries only the per-instance facts about a single failing
+// tag. Schema-level metadata (allowed values, validation regex, validation
+// message, mandatory flag) lives on TaggingOutput.TagSchema; look it up by Key.
 type InvalidTagOutput struct {
-	Key                  string   `json:"key"`
-	Value                string   `json:"value"`
-	ValidRegex           string   `json:"valid_regex"`
-	Suggestion           string   `json:"suggestion"`
-	Message              string   `json:"message"`
-	ValidValues          []string `json:"valid_values"`
-	ValidValueCount      int      `json:"valid_value_count"`
-	ValidValuesTruncated bool     `json:"valid_values_truncated"`
-	FromDefaultTags      bool     `json:"from_default_tags"`
-	MissingMandatory     bool     `json:"missing_mandatory"`
+	Key             string `json:"key"`
+	Value           string `json:"value"`
+	Suggestion      string `json:"suggestion,omitempty"`
+	FromDefaultTags bool   `json:"from_default_tags,omitempty"`
 }
 
 type TagPropagationProblemOutput struct {
@@ -132,6 +191,21 @@ type GuardrailOutput struct {
 	GuardrailName    string   `json:"guardrail_name"`
 	Triggered        bool     `json:"triggered"`
 	TotalMonthlyCost *rat.Rat `json:"total_monthly_cost,omitempty"`
+}
+
+type BudgetTagOutput struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type BudgetOutput struct {
+	BudgetID             string            `json:"budget_id"`
+	BudgetName           string            `json:"budget_name"`
+	Tags                 []BudgetTagOutput `json:"tags"`
+	Amount               *rat.Rat          `json:"amount"`
+	CurrentCost          *rat.Rat          `json:"current_cost"`
+	OverBudget           bool              `json:"over_budget"`
+	CustomOverrunMessage string            `json:"custom_overrun_message,omitempty"`
 }
 
 // ToOutput converts a Result into an Output suitable for JSON serialization.
@@ -152,14 +226,117 @@ func ToOutput(result *Result) Output {
 		})
 	}
 
-	return Output{
+	budgetResults := make([]BudgetOutput, 0, len(result.BudgetResults))
+	for _, br := range result.BudgetResults {
+		tags := make([]BudgetTagOutput, 0, len(br.Tags))
+		for _, t := range br.Tags {
+			tags = append(tags, BudgetTagOutput{Key: t.Key, Value: t.Value})
+		}
+		budgetResults = append(budgetResults, BudgetOutput{
+			BudgetID:             br.BudgetID,
+			BudgetName:           br.BudgetName,
+			Tags:                 tags,
+			Amount:               br.Amount,
+			CurrentCost:          br.CurrentCost,
+			OverBudget:           br.CurrentCost.GreaterThan(br.Amount),
+			CustomOverrunMessage: br.CustomOverrunMessage,
+		})
+	}
+
+	out := Output{
 		Currency:               result.Config.Currency,
 		Projects:               projects,
 		GuardrailResults:       guardrailResults,
+		BudgetResults:          budgetResults,
 		projectTypes:           projectTypes,
 		estimatedUsageCounts:   result.EstimatedUsageCounts,
 		unestimatedUsageCounts: result.UnestimatedUsageCounts,
 	}
+	out.Summary = computeSummary(&out)
+	return out
+}
+
+// computeSummary fills the Output.Summary aggregate block. Pure function
+// over Projects/GuardrailResults/BudgetResults so it can be regenerated
+// from any in-memory Output (e.g., post-filter views in inspect that
+// might want fresh numbers — though we don't currently re-run it there).
+func computeSummary(out *Output) *OutputSummary {
+	s := &OutputSummary{
+		Projects:         len(out.Projects),
+		TotalMonthlyCost: rat.Zero,
+	}
+	totalSavings := rat.Zero
+	failingFinopsRes := map[string]struct{}{}
+	failingTaggingRes := map[string]struct{}{}
+	for _, p := range out.Projects {
+		for _, r := range p.Resources {
+			s.Resources++
+			if r.IsFree {
+				s.FreeResources++
+			} else {
+				s.CostedResources++
+			}
+			s.TotalMonthlyCost = s.TotalMonthlyCost.Add(resourceMonthlyCost(&r))
+		}
+		for _, fp := range p.FinopsResults {
+			s.FinopsPolicies++
+			if len(fp.FailingResources) > 0 {
+				s.FailingFinopsPolicies++
+			}
+			for _, fr := range fp.FailingResources {
+				failingFinopsRes[fr.Name] = struct{}{}
+				for _, iss := range fr.Issues {
+					if iss.MonthlySavings != nil {
+						totalSavings = totalSavings.Add(iss.MonthlySavings)
+					}
+				}
+			}
+		}
+		for _, t := range p.TaggingResults {
+			s.TaggingPolicies++
+			if len(t.FailingResources) > 0 {
+				s.FailingTaggingPolicies++
+			}
+			for _, fr := range t.FailingResources {
+				failingTaggingRes[fr.Address] = struct{}{}
+			}
+		}
+	}
+	s.DistinctFailingFinopsResources = len(failingFinopsRes)
+	s.DistinctFailingTaggingResources = len(failingTaggingRes)
+	if !totalSavings.IsZero() {
+		s.TotalPotentialMonthlySavings = totalSavings
+	}
+	for _, g := range out.GuardrailResults {
+		s.Guardrails++
+		if g.Triggered {
+			s.TriggeredGuardrails++
+		}
+	}
+	for _, b := range out.BudgetResults {
+		s.Budgets++
+		if b.OverBudget {
+			s.OverBudget++
+		}
+	}
+	return s
+}
+
+// resourceMonthlyCost sums the TotalMonthlyCost across a resource's cost
+// components and recurses into subresources. Mirrors the inspect
+// package's ResourceCost so summary numbers match what `inspect` would
+// produce; kept here to avoid an import cycle.
+func resourceMonthlyCost(r *ResourceOutput) *rat.Rat {
+	total := rat.Zero
+	for _, c := range r.CostComponents {
+		if c.TotalMonthlyCost != nil {
+			total = total.Add(c.TotalMonthlyCost)
+		}
+	}
+	for _, sub := range r.Subresources {
+		total = total.Add(resourceMonthlyCost(&sub))
+	}
+	return total
 }
 
 func convertProjectResult(pr *ProjectResult) ProjectOutput {
@@ -227,6 +404,13 @@ func (o *Output) ToJSON(w io.Writer) error {
 	return err
 }
 
+// ToTOON writes an Output as TOON (Token-Oriented Object Notation) to w. The
+// representation carries the same data model as ToJSON but uses TOON's compact,
+// indentation-based syntax intended for LLM consumption.
+func (o *Output) ToTOON(w io.Writer) error {
+	return toon.MarshalTo(w, o)
+}
+
 func convertResource(r *provider.Resource) ResourceOutput {
 	subs := make([]ResourceOutput, 0, len(r.ChildResources))
 	for _, sr := range r.ChildResources {
@@ -246,9 +430,18 @@ func convertResource(r *provider.Resource) ResourceOutput {
 	var metadata ResourceMetadata
 	if r.Metadata != nil {
 		metadata = ResourceMetadata{
-			Filename:  r.Metadata.Filename,
-			StartLine: int(r.Metadata.StartLine),
-			EndLine:   int(r.Metadata.EndLine),
+			Filename:     r.Metadata.Filename,
+			StartLine:    int(r.Metadata.StartLine),
+			EndLine:      int(r.Metadata.EndLine),
+			DeepChecksum: r.Metadata.DeepChecksum,
+		}
+	}
+
+	var tags map[string]string
+	if r.Tagging != nil && len(r.Tagging.Tags) > 0 {
+		tags = make(map[string]string, len(r.Tagging.Tags))
+		for _, t := range r.Tagging.Tags {
+			tags[t.Key] = t.Value
 		}
 	}
 
@@ -257,6 +450,7 @@ func convertResource(r *provider.Resource) ResourceOutput {
 		Type:                r.Type,
 		CostComponents:      costs,
 		Subresources:        subs,
+		Tags:                tags,
 		IsSupported:         r.IsSupported,
 		IsFree:              r.IsFree,
 		SupportsTags:        r.Tagging != nil && r.Tagging.SupportsTags,
@@ -342,9 +536,51 @@ func convertDiagnostic(d *diagnostic.Diagnostic) DiagnosticOutput {
 		severity = "warning"
 	}
 	return DiagnosticOutput{
-		Message:  d.String(),
+		Prefix:   diagnosticPrefix(d, severity),
+		Message:  d.Error,
 		Severity: severity,
+		Location: formatSourceRange(d.SourceRange),
 	}
+}
+
+// diagnosticPrefix returns the user-facing category label for a diagnostic.
+// Uses go-proto's MessagePrefix mapping when one exists; otherwise falls back
+// to a severity-derived label ("Error" / "Warning" / "Info") so unclassified
+// diagnostics don't all read as errors regardless of severity.
+func diagnosticPrefix(d *diagnostic.Diagnostic, severity string) string {
+	prefix := diagnostic.MessagePrefix(d.Type)
+	if strings.HasPrefix(prefix, "DIAGNOSTIC_TYPE_") {
+		switch severity {
+		case "critical":
+			return "Error"
+		case "warning":
+			return "Warning"
+		default:
+			return "Info"
+		}
+	}
+	return prefix
+}
+
+// formatSourceRange renders a diagnostic's SourceRange as "filename:line" (or
+// "filename:start-end" when the range spans multiple lines). Remote module
+// URLs are returned as-is — no line range applies. Returns "" when no usable
+// location data is present.
+func formatSourceRange(s *parser.SourceRange) string {
+	if s == nil {
+		return ""
+	}
+	if s.StartLine == 0 && s.EndLine == 0 && s.StartColumn == 0 && s.EndColumn == 0 && s.Filename == "" {
+		return ""
+	}
+	if strings.Contains(s.Filename, "://") {
+		return s.Filename
+	}
+	lineRange := strconv.Itoa(int(s.StartLine))
+	if s.StartLine != s.EndLine {
+		lineRange += "-" + strconv.Itoa(int(s.EndLine))
+	}
+	return s.Filename + ":" + lineRange
 }
 
 func convertTaggingResult(tr event.TaggingPolicyResult) TaggingOutput {
@@ -356,24 +592,87 @@ func convertTaggingResult(tr event.TaggingPolicyResult) TaggingOutput {
 		PolicyID:         tr.TagPolicyID,
 		PolicyName:       tr.Name,
 		Message:          tr.Message,
+		TagSchema:        buildTagSchema(tr.FailingResources),
 		FailingResources: failingResources,
 	}
+}
+
+// buildTagSchema collapses the per-instance schema metadata that upstream
+// repeats on every InvalidTag (ValidValues, ValidRegex, Message, Mandatory)
+// into a single per-key entry. Allowed-value lists are unioned across all
+// occurrences so we converge on the policy's full vocabulary even when
+// upstream produced narrowed/suggestion-mode lists for individual instances.
+// Keys that only appear via MissingMandatoryTags (never present, so no
+// InvalidTag) get a Mandatory:true entry with no other metadata.
+func buildTagSchema(resources []event.TagPolicyResultResource) []TagSchemaEntry {
+	type acc struct {
+		regex     string
+		message   string
+		mandatory bool
+		values    map[string]struct{}
+	}
+	byKey := map[string]*acc{}
+	var order []string
+	get := func(key string) *acc {
+		a, ok := byKey[key]
+		if !ok {
+			a = &acc{values: map[string]struct{}{}}
+			byKey[key] = a
+			order = append(order, key)
+		}
+		return a
+	}
+	for _, r := range resources {
+		for _, t := range r.InvalidTags {
+			a := get(t.Key)
+			if a.regex == "" {
+				a.regex = t.ValidRegex
+			}
+			if a.message == "" {
+				a.message = t.Message
+			}
+			if t.MissingMandatory {
+				a.mandatory = true
+			}
+			for _, v := range t.ValidValues {
+				a.values[v] = struct{}{}
+			}
+		}
+		for _, k := range r.MissingMandatoryTags {
+			a := get(k)
+			a.mandatory = true
+		}
+	}
+	out := make([]TagSchemaEntry, 0, len(order))
+	for _, k := range order {
+		a := byKey[k]
+		entry := TagSchemaEntry{
+			Key:        k,
+			ValidRegex: a.regex,
+			Message:    a.message,
+			Mandatory:  a.mandatory,
+		}
+		if len(a.values) > 0 {
+			vals := make([]string, 0, len(a.values))
+			for v := range a.values {
+				vals = append(vals, v)
+			}
+			sort.Strings(vals)
+			entry.ValidValues = vals
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func convertFailingTaggingResource(r event.TagPolicyResultResource) FailingTaggingResourceOutput {
 	invalidTags := make([]InvalidTagOutput, 0, len(r.InvalidTags))
 	for _, t := range r.InvalidTags {
 		invalidTags = append(invalidTags, InvalidTagOutput{
-			Key:                  t.Key,
-			Value:                t.Value,
-			ValidRegex:           t.ValidRegex,
-			Suggestion:           t.Suggestion,
-			Message:              t.Message,
-			ValidValues:          t.ValidValues,
-			ValidValueCount:      t.ValidValueCount,
-			ValidValuesTruncated: t.ValidValuesTruncated,
-			FromDefaultTags:      t.FromDefaultTags,
-			MissingMandatory:     t.MissingMandatory,
+			Key:             t.Key,
+			Value:           t.Value,
+			Suggestion:      t.Suggestion,
+			FromDefaultTags: t.FromDefaultTags,
 		})
 	}
 

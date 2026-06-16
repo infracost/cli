@@ -1,0 +1,25 @@
+╭─────────────────────────────────────────────────────────────────╮
+│                                                                 │
+│   Budget: Production budget                                     │
+│                                                                 │
+│   Scope:         env=production                                 │
+│   Limit:         $1,000                                         │
+│   Actual spend:  $500                                           │
+│   Status:        ✓ $500 remaining (50.0% left)                  │
+│                                                                 │
+│   Matching resources                                            │
+│                                                                 │
+│   Type                     Count  Monthly Cost                  │
+│   aws_instance                 1           $20                  │
+│   aws_s3_bucket                1            $0                  │
+│   aws_ebs_volume               1           $10                  │
+│   google_compute_instance      1           $30                  │
+│                                                                 │
+│   FinOps violations on matching resources                       │
+│                                                                 │
+│     Use GP3: up to $5/mo (1 resource)                           │
+│                                                                 │
+│   Actual spend is org-wide cloud billing across all resources   │
+│   matching this budget's tags — not just the IaC scan.          │
+│                                                                 │
+╰─────────────────────────────────────────────────────────────────╯

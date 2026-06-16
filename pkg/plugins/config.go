@@ -1,53 +1,47 @@
 package plugins
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
-	"sort"
-	"strings"
+	"context"
+	"sync"
 
 	"github.com/infracost/cli/pkg/config/process"
-	"github.com/infracost/cli/pkg/logging"
-	"github.com/infracost/cli/pkg/plugins/parser"
-	"github.com/infracost/cli/pkg/plugins/providers"
-	providerconv "github.com/infracost/go-proto/pkg/providers"
-	proto "github.com/infracost/proto/gen/go/infracost/provider"
-	"golang.org/x/mod/semver"
 )
 
-var (
-	_ process.Processor = (*Config)(nil)
-)
+var _ process.Processor = (*Config)(nil)
 
-// maxPluginSize is the maximum allowed size for an extracted plugin binary (1 GB).
-const maxPluginSize = 1 << 30
-
+// Config holds the user-facing knobs for plugin loading. The actual lifecycle
+// (install, discovery, connect, close) is owned by Manager.
 type Config struct {
-	Providers providers.Config
-	Parser    parser.Config
+	// BaseURL points to the root URL where plugin archives are hosted.
+	BaseURL string `env:"INFRACOST_CLI_PLUGIN_BASE_URL" default:"https://releases.infracost.io"`
 
-	// ManifestURL points to where the plugin manifest can be retrieved.
-	ManifestURL string `env:"INFRACOST_CLI_PLUGIN_MANIFEST_URL" default:"https://releases.infracost.io/plugins/manifest.json"`
-
-	// Cache is where the plugins should go.
+	// Cache is where managed (required) plugins are downloaded to.
 	Cache string `env:"INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY"`
 
-	// AutoUpdate controls whether plugins are always updated to the latest
-	// version. When false, an existing cached version is used if available.
+	// Dir is a flat plugin directory override for local plugin development.
+	// When set, downloads are skipped and only plugins already present in
+	// the directory are loaded.
+	Dir string `env:"INFRACOST_CLI_PLUGIN_DIR"`
+
+	// AutoUpdate controls whether required plugins are updated to the latest
+	// version. When false, an existing flat-installed binary is used if
+	// available.
 	AutoUpdate bool `env:"INFRACOST_CLI_PLUGIN_AUTO_UPDATE" default:"true"`
 
-	// cached, loaded as needed via loadManifest()
-	manifest *Manifest
+	managerMu  sync.Mutex
+	ensureOnce sync.Once
+	ensureErr  error
+	manager    *Manager
+
+	// LoadParserPluginForProject lets tests inject a parser plugin without
+	// running a real subprocess. When non-nil, ParserPluginForProject calls
+	// this instead of the Manager.
+	LoadParserPluginForProject func(context.Context, string) (*ParserPlugin, error)
+
+	// LoadProviderPlugins lets tests inject mock provider plugins without
+	// running real subprocesses. When non-nil, ProviderPlugins calls this
+	// instead of the Manager.
+	LoadProviderPlugins func(context.Context) ([]*ProviderPlugin, error)
 }
 
 func (c *Config) Process() {
@@ -56,344 +50,77 @@ func (c *Config) Process() {
 	}
 }
 
-func (c *Config) EnsureParser() error {
-	if c.Parser.Plugin != "" {
-		return nil
+// PluginDir returns the directory the manager loads plugins from.
+func (c *Config) PluginDir() string {
+	if c.Dir != "" {
+		return c.Dir
 	}
-
-	path, err := c.Ensure("infracost-parser-plugin", c.Parser.Version)
-	if err != nil {
-		return err
+	if c.Cache == "" {
+		return defaultPluginCachePath()
 	}
-	c.Parser.Plugin = path
-	return nil
+	return c.Cache
 }
 
-func (c *Config) EnsureProvider(provider proto.Provider) error {
-	override, version := c.providerOverride(provider)
-	if override != "" {
-		return nil
-	}
+// EnsurePlugins installs any required plugins (when AutoUpdate is enabled and
+// Dir is not set as a developer override), then returns the Manager.
+func (c *Config) EnsurePlugins() (*Manager, error) {
+	c.managerMu.Lock()
+	defer c.managerMu.Unlock()
 
-	path, err := c.Ensure(fmt.Sprintf("infracost-provider-plugin-%s", providerconv.FromProto(provider)), version)
-	if err != nil {
-		return err
-	}
-
-	switch provider {
-	case proto.Provider_PROVIDER_GOOGLE:
-		c.Providers.Google = path
-	case proto.Provider_PROVIDER_AWS:
-		c.Providers.AWS = path
-	case proto.Provider_PROVIDER_AZURERM:
-		c.Providers.Azure = path
-	default:
-		return fmt.Errorf("unknown provider: %s", providerconv.FromProto(provider))
-	}
-
-	return nil
+	c.ensureOnce.Do(func() {
+		c.manager = NewManager(ManagerOptions{
+			Dir:         c.PluginDir(),
+			Cache:       c.Cache,
+			BaseURL:     c.BaseURL,
+			AutoUpdate:  c.AutoUpdate,
+			SkipInstall: c.Dir != "",
+		})
+		c.ensureErr = c.manager.EnsureInstalled()
+	})
+	return c.manager, c.ensureErr
 }
 
-func (c *Config) providerOverride(provider proto.Provider) (string, string) {
-	switch provider {
-	case proto.Provider_PROVIDER_AWS:
-		return c.Providers.AWS, c.Providers.AWSVersion
-	case proto.Provider_PROVIDER_GOOGLE:
-		return c.Providers.Google, c.Providers.GoogleVersion
-	case proto.Provider_PROVIDER_AZURERM:
-		return c.Providers.Azure, c.Providers.AzureVersion
-	default:
-		return "", ""
+// ParserPluginForProject returns the parser plugin that handles the given
+// project type. Test injectors short-circuit Manager loading.
+func (c *Config) ParserPluginForProject(ctx context.Context, projectTypeOrPluginName string) (*ParserPlugin, error) {
+	if c.LoadParserPluginForProject != nil {
+		return c.LoadParserPluginForProject(ctx, projectTypeOrPluginName)
 	}
-}
-
-// pluginBinaryName returns the binary filename for the given plugin name,
-// appending .exe on Windows where executables require the extension.
-func pluginBinaryName(name string) string {
-	if runtime.GOOS == "windows" {
-		return name + ".exe"
-	}
-	return name
-}
-
-func (c *Config) Ensure(plugin, wantVersion string) (string, error) {
-	logging.Debugf("ensuring plugin %q is available", plugin)
-
-	platform := runtime.GOOS + "_" + runtime.GOARCH
-	binaryName := pluginBinaryName(plugin)
-
-	if len(wantVersion) > 0 {
-		// The user has requested a specific version.
-		want := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
-		if _, err := os.Stat(want); err == nil {
-			return want, nil
-		}
-	}
-
-	// When auto-update is disabled and the user hasn't picked a specific version, use the latest cached version if
-	// available.
-	if len(wantVersion) == 0 && !c.AutoUpdate {
-		matches, _ := filepath.Glob(filepath.Join(c.Cache, plugin, platform, "*", binaryName))
-		if len(matches) > 0 {
-			sort.Slice(matches, func(i, j int) bool {
-				vi := "v" + filepath.Base(filepath.Dir(matches[i]))
-				vj := "v" + filepath.Base(filepath.Dir(matches[j]))
-				return semver.Compare(vi, vj) > 0
-			})
-			logging.Debugf("plugin %q using cached version at %s (auto-update disabled)", plugin, matches[0])
-			return matches[0], nil
-		}
-	}
-
-	manifest, err := c.loadManifest()
-	if err != nil {
-		return "", fmt.Errorf("failed to load plugin manifest: %w", err)
-	}
-
-	p, ok := manifest.Plugins[plugin]
-	if !ok {
-		return "", fmt.Errorf("plugin %q not found in manifest", plugin)
-	}
-
-	if len(wantVersion) == 0 {
-		if p.Latest == "" {
-			return "", fmt.Errorf("plugin %q has no latest version defined", plugin)
-		}
-		wantVersion = p.Latest
-	}
-
-	version, ok := p.Versions[wantVersion]
-	if !ok {
-		return "", fmt.Errorf("plugin %q version %q not found in manifest", plugin, wantVersion)
-	}
-
-	artifact, ok := version.Artifacts[platform]
-	if !ok {
-		return "", fmt.Errorf("plugin %q version %q has no artifact for %s", plugin, wantVersion, platform)
-	}
-
-	binaryPath := filepath.Join(c.Cache, plugin, platform, wantVersion, binaryName)
-
-	if _, err := os.Stat(binaryPath); err == nil {
-		logging.Debugf("plugin %q already cached at %s", plugin, binaryPath)
-		return binaryPath, nil
-	}
-
-	logging.Infof("downloading plugin %q version %s for %s", plugin, wantVersion, platform)
-
-	archivePath, err := downloadAndVerify(artifact.URL, artifact.SHA)
-	if err != nil {
-		return "", fmt.Errorf("failed to download plugin %q: %w", plugin, err)
-	}
-	defer func() { _ = os.Remove(archivePath) }()
-
-	if err := os.MkdirAll(filepath.Dir(binaryPath), 0750); err != nil {
-		return "", fmt.Errorf("failed to create plugin cache directory: %w", err)
-	}
-
-	tmpBinary := binaryPath + ".tmp"
-	defer func() { _ = os.Remove(tmpBinary) }()
-
-	switch {
-	case strings.HasSuffix(artifact.Name, ".tar.gz"):
-		err = unpackTarGz(archivePath, tmpBinary, plugin)
-	case strings.HasSuffix(artifact.Name, ".zip"):
-		err = unpackZip(archivePath, tmpBinary, binaryName)
-	default:
-		err = fmt.Errorf("unsupported archive format for %s", artifact.Name)
-	}
-	if err != nil {
-		return "", fmt.Errorf("failed to unpack plugin %q: %w", plugin, err)
-	}
-
-	if err := os.Chmod(tmpBinary, 0750); err != nil { //nolint:gosec // G302: plugin binary must be executable
-		return "", fmt.Errorf("failed to make plugin binary executable: %w", err)
-	}
-
-	if err := os.Rename(tmpBinary, binaryPath); err != nil {
-		return "", fmt.Errorf("failed to install plugin binary: %w", err)
-	}
-
-	logging.Infof("installed plugin %q to %s", plugin, binaryPath)
-	return binaryPath, nil
-}
-
-func (c *Config) loadManifest() (*Manifest, error) {
-	if c.manifest != nil {
-		return c.manifest, nil
-	}
-
-	response, err := http.Get(c.ManifestURL) //nolint:gosec // G107: URL is from config/env, not user input
+	manager, err := c.EnsurePlugins()
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
+	return manager.LoadParserPluginForProject(ctx, projectTypeOrPluginName)
+}
 
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to fetch plugin manifest: %s", response.Status)
+// ProviderPlugins returns every loaded provider plugin.
+func (c *Config) ProviderPlugins(ctx context.Context) ([]*ProviderPlugin, error) {
+	if c.LoadProviderPlugins != nil {
+		return c.LoadProviderPlugins(ctx)
 	}
-
-	var manifest Manifest
-	if err := json.NewDecoder(response.Body).Decode(&manifest); err != nil {
+	manager, err := c.EnsurePlugins()
+	if err != nil {
 		return nil, err
 	}
-
-	c.manifest = &manifest
-	return c.manifest, nil
+	return manager.LoadProviderPlugins(ctx)
 }
 
-func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
-	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin manifest
-	if err != nil {
-		return "", fmt.Errorf("failed to create HTTP request: %w", err)
-	}
+// ResetPlugins closes the current Manager and clears it so the next call to
+// EnsurePlugins will rebuild from scratch.
+func (c *Config) ResetPlugins() {
+	c.managerMu.Lock()
+	manager := c.manager
+	c.manager = nil
+	c.ensureErr = nil
+	c.ensureOnce = sync.Once{}
+	c.managerMu.Unlock()
 
-	// GitHub requires this header to download release assets as binary.
-	req.Header.Set("Accept", "application/octet-stream")
-
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from plugin manifest
-	if err != nil {
-		return "", fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected HTTP status: %s", resp.Status)
-	}
-
-	tmpFile, err := os.CreateTemp("", "infracost-plugin-*")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-
-	hasher := sha256.New()
-	writer := io.MultiWriter(tmpFile, hasher)
-
-	if _, err := io.Copy(writer, resp.Body); err != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath) //nolint:gosec // G703: path is from os.CreateTemp
-		return "", fmt.Errorf("failed to download: %w", err)
-	}
-
-	if err := tmpFile.Close(); err != nil {
-		_ = os.Remove(tmpPath) //nolint:gosec // G703: path is from os.CreateTemp
-		return "", fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	if expectedSHA != "" {
-		actualSHA := hex.EncodeToString(hasher.Sum(nil))
-		if actualSHA != expectedSHA {
-			_ = os.Remove(tmpPath) //nolint:gosec // G703: path is from os.CreateTemp
-			return "", fmt.Errorf("SHA256 mismatch: expected %s, got %s", expectedSHA, actualSHA)
-		}
-	}
-
-	return tmpPath, nil
-}
-
-func unpackTarGz(archivePath, destPath, expectedName string) error {
-	f, err := os.Open(filepath.Clean(archivePath))
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	gzr, err := gzip.NewReader(f)
-	if err != nil {
-		return fmt.Errorf("failed to create gzip reader: %w", err)
-	}
-	defer func() {
-		_ = gzr.Close()
-	}()
-
-	tr := tar.NewReader(gzr)
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			return fmt.Errorf("expected entry %q not found in archive", expectedName)
-		}
-		if err != nil {
-			return fmt.Errorf("failed to read tar entry: %w", err)
-		}
-
-		if filepath.Base(header.Name) != expectedName {
-			continue
-		}
-
-		out, err := os.OpenFile(filepath.Clean(destPath), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to create output file: %w", err)
-		}
-
-		if _, err := io.Copy(out, io.LimitReader(tr, maxPluginSize)); err != nil {
-			_ = out.Close()
-			return fmt.Errorf("failed to extract file: %w", err)
-		}
-
-		return out.Close()
+	if manager != nil {
+		manager.Close()
 	}
 }
 
-func unpackZip(archivePath, destPath, expectedName string) error {
-	r, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return fmt.Errorf("failed to open zip: %w", err)
-	}
-	defer func() {
-		_ = r.Close()
-	}()
-
-	for _, zf := range r.File {
-		if filepath.Base(zf.Name) != expectedName {
-			continue
-		}
-		return extractZipEntry(zf, destPath)
-	}
-
-	return fmt.Errorf("expected entry %q not found in zip", expectedName)
-}
-
-func extractZipEntry(zf *zip.File, destPath string) error {
-	f, err := zf.Open()
-	if err != nil {
-		return fmt.Errorf("failed to open zip entry %q: %w", zf.Name, err)
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	out, err := os.OpenFile(filepath.Clean(destPath), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to create output file: %w", err)
-	}
-
-	if _, err := io.Copy(out, io.LimitReader(f, maxPluginSize)); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("failed to extract file: %w", err)
-	}
-
-	return out.Close()
-}
-
-func defaultPluginCachePath() string {
-	dir, err := os.UserCacheDir()
-	if err == nil {
-		return filepath.Join(dir, "infracost", "plugins")
-	}
-	logging.WithError(err).Msg("failed to load user cache dir, falling back to home directory")
-
-	dir, err = os.UserHomeDir()
-	if err == nil {
-		return filepath.Join(dir, ".infracost", "plugins")
-	}
-
-	logging.WithError(err).Msg("pluginCachePath: failed to load user home dir, falling back to current directory")
-	return filepath.Join(".infracost", "plugins")
+// Close releases all plugin subprocess resources.
+func (c *Config) Close() {
+	c.ResetPlugins()
 }

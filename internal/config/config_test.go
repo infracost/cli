@@ -25,3 +25,18 @@ func TestConfig_Process(t *testing.T) {
 	require.Equal(t, "prod", cfg.Auth.Environment)
 	require.Equal(t, "prod", cfg.Dashboard.Environment)
 }
+
+func TestConfig_DebugFlag(t *testing.T) {
+	var cfg Config
+
+	flags := pflag.NewFlagSet("", pflag.ContinueOnError)
+	if diags := process.PreProcess(&cfg, flags); diags.Len() != 0 {
+		t.Fatal(diags)
+	}
+	require.NoError(t, flags.Parse([]string{"--debug"}))
+	process.Process(&cfg)
+
+	require.True(t, cfg.Debug.Value)
+	require.True(t, cfg.Logging.Debug)
+	require.Equal(t, "debug", cfg.Logging.WriteLevel)
+}

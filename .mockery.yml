@@ -22,6 +22,9 @@ require-template-schema-exists: true
 template: testify
 template-schema: '{{.Template}}.schema.json'
 packages:
+  github.com/infracost/cli/internal/api/agents:
+    interfaces:
+      Client:
   github.com/infracost/cli/internal/api/dashboard:
     interfaces:
       Client:

@@ -6,46 +6,37 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/api/dashboard"
-	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/trace"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins"
 	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	repoconfig "github.com/infracost/config"
+	goprotoevent "github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"golang.org/x/oauth2"
 )
 
-var (
-	pj = protojson.UnmarshalOptions{
-		DiscardUnknown: true,
-	}
-)
-
-type Scanner struct {
-	plugins         *plugins.Config
-	logging         logging.Config
-	dashboard       dashboard.Config
-	currency        string
-	pricingEndpoint string
+var pj = protojson.UnmarshalOptions{
+	DiscardUnknown: true,
 }
 
-func NewScanner(config *config.Config) *Scanner {
-	return &Scanner{
-		plugins:         &config.Plugins,
-		logging:         config.Logging,
-		dashboard:       config.Dashboard,
-		currency:        config.Currency,
-		pricingEndpoint: config.PricingEndpoint,
-	}
+// Scanner is the per-invocation scanning context. Callers populate the
+// fields directly so the scanner doesn't depend on the full config.Config
+// — useful for callers that want to vary one piece (e.g. swapping the
+// currency for an MCP tool call) without rebuilding a Config.
+type Scanner struct {
+	Plugins         *plugins.Config
+	Logging         logging.Config
+	Dashboard       dashboard.Config
+	Currency        string
+	PricingEndpoint string
 }
 
 type FinOpsPolicy struct {
@@ -58,8 +49,7 @@ type TaggingPolicy struct {
 	*event.TagPolicy
 }
 
-func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters) ([]FinOpsPolicy, []TaggingPolicy, error) {
-
+func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters, providerFilter []string) ([]FinOpsPolicy, []TaggingPolicy, error) {
 	var tagPolicies []*event.TagPolicy
 	var finopsPolicySettings []*event.FinopsPolicySettings
 	var hasRunParameters bool
@@ -94,25 +84,36 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		hasRunParameters = false
 	}
 
-	plugins := map[provider.Provider]func(hclog.Level) (provider.ProviderServiceClient, func(), error){
-		provider.Provider_PROVIDER_AWS:     s.plugins.Providers.LoadAWS,
-		provider.Provider_PROVIDER_GOOGLE:  s.plugins.Providers.LoadGoogle,
-		provider.Provider_PROVIDER_AZURERM: s.plugins.Providers.LoadAzurerm,
+	providerPlugins, err := s.Plugins.ProviderPlugins(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load provider plugins: %w", err)
+	}
+
+	wantProvider := make(map[string]struct{}, len(providerFilter))
+	for _, name := range providerFilter {
+		wantProvider[name] = struct{}{}
 	}
 
 	var finOpsPolicies []FinOpsPolicy
-	for prov, pluginLoader := range plugins {
-		providerFinopsPolicies, err := s.plugins.Providers.ListFinopsPolicies(ctx, pluginLoader)
+	for _, p := range providerPlugins {
+		providerName := p.Info.GetName()
+		if len(wantProvider) > 0 {
+			if _, ok := wantProvider[providerName]; !ok {
+				continue
+			}
+		}
+
+		resp, err := p.ListFinopsPolicies(ctx, &pluginpb.ListFinopsPoliciesRequest{})
 		if err != nil {
-			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", prov)
+			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", providerName)
 			continue
 		}
-		for _, policy := range providerFinopsPolicies {
+		for _, policy := range resp.GetPolicies() {
 			var settings *event.FinopsPolicySettings
 			if hasRunParameters {
 				var enabled bool
 				for _, s := range finopsPolicySettings {
-					if s.Slug == policy.Slug {
+					if s.Slug == policy.GetSlug() {
 						enabled = true
 						settings = s
 						break
@@ -123,9 +124,15 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 				}
 			}
 			finOpsPolicies = append(finOpsPolicies, FinOpsPolicy{
-				FinopsPolicy: policy,
-				Settings:     settings,
-				Provider:     strings.TrimPrefix(prov.String(), "PROVIDER_"),
+				FinopsPolicy: &provider.FinopsPolicy{
+					Slug:             policy.GetSlug(),
+					Name:             policy.GetName(),
+					Group:            policy.GetGroup(),
+					Description:      policy.GetDescription(),
+					OnlyNewResources: policy.GetOnlyNewResources(),
+				},
+				Settings: settings,
+				Provider: providerName,
 			})
 		}
 	}
@@ -151,13 +158,8 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 	return finOpsPolicies, outputTagPolicies, nil
 }
 
-func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absoluteDirectory, branchName string, tokenSource oauth2.TokenSource) (*format.Result, error) {
+func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absolutePath, branchName string, tokenSource oauth2.TokenSource) (*format.Result, error) {
 	var result format.Result
-
-	token, err := tokenSource.Token()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve access token: %w", err)
-	}
 
 	repositoryName := runParameters.RepositoryName
 
@@ -173,14 +175,57 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	if len(branchName) > 0 {
 		repoConfigOpts = append(repoConfigOpts, repoconfig.WithBranch(branchName))
 	}
+	if runParameters.ConfigTemplate != "" {
+		repoConfigOpts = append(repoConfigOpts, repoconfig.WithTemplate(runParameters.ConfigTemplate))
+	}
 
-	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(absoluteDirectory, repoConfigOpts...)
+	repoConfigOpts = append(repoConfigOpts, repoconfig.WithPluginDir(s.Plugins.PluginDir()))
+
+	// Ensure required plugins are installed before generating the repo
+	// config — autodetection delegates to plugin identifiers, so a missing
+	// binary means its file types (e.g. terraform plan JSON) won't be
+	// recognized.
+	if _, err := s.Plugins.EnsurePlugins(); err != nil {
+		return nil, fmt.Errorf("failed to install plugins: %w", err)
+	}
+
+	stat, err := os.Stat(absolutePath)
+	if err != nil {
+		return nil, err
+	}
+	isFileMode := !stat.IsDir()
+	absoluteDirectory := absolutePath
+	if isFileMode {
+		absoluteDirectory = filepath.Dir(absolutePath)
+		// no point searching recursively if we know the file w're looking at
+		repoConfigOpts = append(repoConfigOpts, repoconfig.WithMaxSearchDepth(1))
+		repoConfigOpts = append(repoConfigOpts, repoconfig.WithSingleFileMode(true))
+
+	}
+
+	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(ctx, absoluteDirectory, repoConfigOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("repository configuration error: %w", err)
 	}
+
+	if isFileMode {
+		// if we're scanning a single file, filter the repo config to only include the project that matches that file
+		var filtered []*repoconfig.Project
+		for _, candidate := range repoConfig.Projects {
+			candidatePath := filepath.Join(absoluteDirectory, candidate.Path)
+			if absolutePath == candidatePath {
+				filtered = append(filtered, candidate)
+			}
+		}
+		if len(filtered) == 0 {
+			return nil, fmt.Errorf("file at %q is not a recognized scannable type", absolutePath)
+		}
+		repoConfig.Projects = filtered
+	}
+
 	result.Config = repoConfig
-	if s.currency != "" {
-		result.Config.Currency = s.currency
+	if s.Currency != "" {
+		result.Config.Currency = s.Currency
 	}
 	if result.Config.Currency == "" {
 		result.Config.Currency = "USD"
@@ -237,7 +282,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	}
 
 	cacheDir := filepath.Join(os.TempDir(), ".infracost", "cache")
-	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
@@ -247,11 +292,11 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			CacheDir:          cacheDir,
 			RepoConfig:        repoConfig,
 			Project:           project,
-			AccessToken:       token.AccessToken,
+			TokenSource:       tokenSource,
 			BranchName:        branchName,
 			RepositoryName:    repositoryName,
 			OrgID:             runParameters.OrganizationID,
-			PricingEndpoint:   s.pricingEndpoint,
+			PricingEndpoint:   s.PricingEndpoint,
 			Currency:          result.Config.Currency,
 			TraceID:           trace.ID,
 			ProductionFilters: productionFilters,
@@ -259,8 +304,8 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			TagPolicies:       tagPolicies,
 			UsageDefaults:     usageDefaults,
 			RepoUsage:         repoUsage,
-			Plugins:           s.plugins,
-			Logging:           s.logging,
+			Plugins:           s.Plugins,
+			Logging:           s.Logging,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan project %q: %w", project.Name, err)
@@ -296,6 +341,24 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			})
 		}
 		result.GuardrailResults = pkgscanner.EvaluateGuardrails(guardrails, nil, headProjects)
+	}
+
+	// Unmarshal budgets and evaluate against scan resources.
+	var budgets []*event.Budget
+	for _, raw := range runParameters.Budgets {
+		b := new(event.Budget)
+		if err := pj.Unmarshal(raw, b); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal budget: %w", err)
+		}
+		budgets = append(budgets, b)
+	}
+
+	if len(budgets) > 0 {
+		var costInfos []goprotoevent.ResourceCostInfo
+		for _, p := range result.Projects {
+			costInfos = append(costInfos, pkgscanner.ResourceCostInfos(p.Resources)...)
+		}
+		result.BudgetResults = goprotoevent.Budgets(budgets).Evaluate(costInfos)
 	}
 
 	return &result, nil

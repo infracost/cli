@@ -1,0 +1,5 @@
+🏷️  Required Tags  (1 resource)
+
+   All resources must have required tags
+
+   • aws_instance.web · modules/compute/main.tf:42

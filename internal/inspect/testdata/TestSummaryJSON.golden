@@ -1,0 +1,131 @@
+{
+  "projects": 2,
+  "projects_with_errors": 1,
+  "project_details": [
+    {
+      "name": "web-app",
+      "path": "/web",
+      "resources": 4,
+      "monthly_cost": "60",
+      "finops_policies": 1,
+      "finops_failing_policies": 1,
+      "tagging_policies": 1,
+      "tagging_failing_policies": 1,
+      "has_errors": true
+    },
+    {
+      "name": "api-service",
+      "path": "/api",
+      "resources": 1,
+      "monthly_cost": "5",
+      "finops_policies": 0,
+      "finops_failing_policies": 0,
+      "tagging_policies": 0,
+      "tagging_failing_policies": 0,
+      "has_errors": false
+    }
+  ],
+  "resources": 5,
+  "costed_resources": 4,
+  "free_resources": 1,
+  "monthly_cost": "65",
+  "finops_policies": 1,
+  "failing_policies": 1,
+  "distinct_failing_finops_resources": 1,
+  "tagging_policies": 1,
+  "failing_tagging_policies": 1,
+  "distinct_failing_tagging_resources": 1,
+  "guardrails": 1,
+  "triggered_guardrails": 1,
+  "budgets": 2,
+  "over_budget": 1,
+  "critical_diagnostics": 1,
+  "warning_diagnostics": 1,
+  "currency": "USD",
+  "total_monthly_savings": "5",
+  "failing_policy_list": [
+    {
+      "kind": "finops",
+      "name": "Use GP3",
+      "slug": "use-gp3",
+      "message": "Consider using GP3 volumes",
+      "project": "web-app",
+      "failing_finops": [
+        {
+          "name": "aws_ebs_volume.data",
+          "issues": [
+            {
+              "description": "Volume type is gp2",
+              "monthly_savings": "5",
+              "address": "aws_ebs_volume.data",
+              "attribute": "type"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "tagging",
+      "name": "Required Tags",
+      "message": "All resources must have required tags",
+      "project": "web-app",
+      "tag_schema": [
+        {
+          "key": "environment",
+          "mandatory": true
+        },
+        {
+          "key": "team",
+          "mandatory": true
+        },
+        {
+          "key": "owner",
+          "valid_regex": "^team-.*"
+        }
+      ],
+      "failing_tagging": [
+        {
+          "address": "aws_instance.web",
+          "resource_type": "aws_instance",
+          "invalid_tags": [
+            {
+              "key": "owner",
+              "value": "foo"
+            }
+          ],
+          "path": "modules/compute/main.tf",
+          "line": 42,
+          "missing_mandatory_tags": [
+            "environment",
+            "team"
+          ],
+          "propagation_problems": null
+        }
+      ]
+    }
+  ],
+  "triggered_guardrail_list": [
+    {
+      "guardrail_id": "g-1",
+      "guardrail_name": "Cost increase \u003e $100",
+      "triggered": true,
+      "total_monthly_cost": "500"
+    }
+  ],
+  "over_budget_list": [
+    {
+      "budget_id": "b-2",
+      "budget_name": "Frontend Q2",
+      "tags": [
+        {
+          "key": "team",
+          "value": "frontend"
+        }
+      ],
+      "amount": "300",
+      "current_cost": "400",
+      "over_budget": true,
+      "custom_overrun_message": "Notify #frontend-costs"
+    }
+  ]
+}

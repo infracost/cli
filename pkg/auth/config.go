@@ -8,6 +8,7 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/pkg/config/process"
 	"github.com/infracost/cli/pkg/environment"
 	"github.com/infracost/cli/pkg/logging"
@@ -46,6 +47,12 @@ type Config struct {
 	source oauth2.TokenSource
 }
 
+// SetTokenSource sets the token source directly, bypassing the login flow.
+// This is intended for testing.
+func (c *Config) SetTokenSource(ts oauth2.TokenSource) {
+	c.source = ts
+}
+
 // InternalConfig contains the configuration for authenticating with Auth0. End users should never be setting these
 // directly, so the flags and environment variables are hidden. These are exposed as flags mainly to help with
 // development and testing.
@@ -57,13 +64,16 @@ type InternalConfig struct {
 	AuthEndpoint string `env:"INFRACOST_CLI_OAUTH_ENDPOINT" flag:"oauth-endpoint;hidden" usage:"The auth endpoint to use for authentication"`
 
 	// CallbackPort is the port to listen on for the callback from Auth0.
-	CallbackPort int `env:"INFRACOST_CLI_OAUTH_CALLBACK_PORT" flag:"oauth-callback-port;hidden" usage:"The callback port to use for authentication" default:"8080"`
+	CallbackPort int `env:"INFRACOST_CLI_OAUTH_CALLBACK_PORT" flag:"oauth-callback-port;hidden" usage:"The callback port to use for authentication" default:"26372"`
 
 	// Audience is the expected audience of the token (i.e., the Infracost API URL).
 	Audience string `env:"INFRACOST_CLI_OAUTH_AUDIENCE" flag:"oauth-audience;hidden" usage:"The audience to use for authentication"`
 
 	// TokenCachePath is the path to the token cache file.
 	TokenCachePath string `env:"INFRACOST_CLI_OAUTH_TOKEN_CACHE_PATH" flag:"access-token-cache-path;hidden" usage:"The path to the token cache file"`
+
+	// UserCachePath is the path to the user cache file.
+	UserCachePath string `env:"INFRACOST_CLI_USER_CACHE_PATH" flag:"user-cache-path;hidden" usage:"The path to the user cache file"`
 }
 
 // ExternalConfig contains the configuration settings that end users should know about and can set.
@@ -73,10 +83,10 @@ type ExternalConfig struct {
 	AuthenticationToken AuthenticationToken `env:"INFRACOST_CLI_AUTHENTICATION_TOKEN"`
 
 	// UseDeviceFlow indicates whether to use the device flow for authentication.
-	UseDeviceFlow bool `env:"INFRACOST_CLI_OAUTH_USE_DEVICE_FLOW" flag:"oauth-use-device-flow" usage:"Use device flow for authentication instead of PKCE (useful when you don't have access to localhost)."`
+	UseDeviceFlow bool `env:"INFRACOST_CLI_OAUTH_USE_DEVICE_FLOW" flag:"oauth-use-device-flow" usage:"Use device flow for authentication instead of PKCE (useful when you don't have access to localhost)"`
 
 	// UseAccessTokenCache indicates whether to use the token cache for authentication.
-	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Save access tokens to a file for convenience."`
+	UseAccessTokenCache bool `env:"INFRACOST_CLI_ACCESS_TOKEN_USE_CACHE" flag:"access-token-use-cache" default:"true" usage:"Read and save access tokens from a cache file (disable to force a fresh login)"`
 }
 
 func (c *Config) Process() {
@@ -94,6 +104,10 @@ func (c *Config) Process() {
 
 	if len(c.TokenCachePath) == 0 {
 		c.TokenCachePath = defaultTokenCachePath()
+	}
+
+	if len(c.UserCachePath) == 0 {
+		c.UserCachePath = defaultUserCachePath()
 	}
 }
 
@@ -186,15 +200,24 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 
 	// abort if not in interactive tty
 	if !isInteractive() {
-		return nil, fmt.Errorf("no cached token found and not in interactive environment, cannot log in")
+		caller, _ := events.GetMetadata[string]("caller")
+		switch {
+		case caller != "":
+			return nil, fmt.Errorf("not logged in — run 'infracost auth login' in your terminal first, then retry")
+		default:
+			return nil, fmt.Errorf("not logged in — set INFRACOST_CLI_AUTHENTICATION_TOKEN for non-interactive environments, or run 'infracost auth login' in an interactive terminal first")
+		}
 	}
 
-	login := c.PKCE
 	if c.UseDeviceFlow {
-		login = c.DeviceFlow
+		ts, token, err = c.DeviceFlow(ctx)
+	} else {
+		ts, token, err = c.PKCE(ctx)
+		if isCallbackPortInUse(err) {
+			fmt.Printf("Port %d is already in use, falling back to device authentication.\n", c.CallbackPort)
+			ts, token, err = c.DeviceFlow(ctx)
+		}
 	}
-
-	ts, token, err = login(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +230,7 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 		return nil, err
 	}
 
-	return ts, nil
+	return c.wrapWithCache(ts, token), nil
 }
 
 func (c *Config) validateToken(token *oauth2.Token) (string, error) {

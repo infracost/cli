@@ -1,0 +1,3 @@
+address	type	project	monthly_cost	is_free
+aws_instance.web	aws_instance	web-app	$20	false
+google_compute_instance.api	google_compute_instance	web-app	$30	false

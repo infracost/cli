@@ -1,0 +1,2 @@
+address	policy	policy_slug	project	monthly_savings	description
+aws_ebs_volume.data	Use GP3	use-gp3	web-app	$5	Volume type is gp2

@@ -1,0 +1,10 @@
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│   Policy: Required Tags                                        │
+│   All resources must have required tags                        │
+│                                                                │
+│   web-app · aws_instance.web · modules/compute/main.tf:42      │
+│      Missing: environment, team                                │
+│      Invalid owner = "foo" — does not match regex "^team-.*"   │
+│                                                                │
+╰────────────────────────────────────────────────────────────────╯

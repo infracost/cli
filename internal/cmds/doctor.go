@@ -1,0 +1,681 @@
+package cmds
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/infracost/cli/internal/api"
+	"github.com/infracost/cli/internal/api/dashboard"
+	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/doctor"
+	"github.com/infracost/cli/internal/update"
+	"github.com/infracost/cli/pkg/auth"
+	"github.com/infracost/cli/version"
+	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
+)
+
+// DoctorInput is the parsed input for `doctor`. Same shape for the CLI
+// wrapper and (in PR13) the MCP `doctor` tool.
+type DoctorInput struct {
+	// Verbose includes every check's diagnostic detail (in addition to
+	// failing-check hints) in the rendered output. The --bundle flag
+	// implies Verbose.
+	Verbose bool
+	// Fix attempts auto-remediation for failing checks. CLI-only —
+	// destructive; the MCP tool deliberately doesn't expose this flag
+	// because the agent doesn't have per-fix user-confirmation context.
+	Fix bool
+	// Bundle widens the check set (CheckAgents + CheckIDE forced true,
+	// Verbose forced true) and triggers a follow-up support-bundle
+	// section in the CLI render. The structured / MCP path attaches the
+	// bundle as a typed field on DoctorOutput.
+	Bundle bool
+	// CheckAgents includes AI coding agent integrations in the checks.
+	// Forced true when Bundle is set.
+	CheckAgents bool
+	// CheckIDE includes IDE integrations in the checks. Forced true when
+	// Bundle is set.
+	CheckIDE bool
+	// Scope is the installation scope auto-remediation should target for
+	// fixable checks: "user" (default, global config), "project", or
+	// "local". Ignored when Fix is false.
+	Scope string
+}
+
+// Doctor runs the diagnostic checks and (optionally) auto-remediation,
+// returning the final report. The pure function is UI-free — it doesn't
+// render text or write the support bundle. The cobra wrapper and any
+// future MCP entry point share this implementation; the wrapper is
+// responsible for rendering and for the bundle side effect.
+//
+// Bundle implies Verbose + CheckAgents + CheckIDE so the captured
+// diagnostic surface is the widest possible — Bundle is what users
+// share with support, and a narrowed view would miss exactly the
+// signal we'd want to see.
+func Doctor(ctx context.Context, cfg *config.Config, in DoctorInput) (*doctor.Report, error) {
+	if in.Bundle && in.Fix {
+		return nil, fmt.Errorf("--bundle and --fix cannot be used together")
+	}
+
+	// Bundle widens the check set. Verbose is a render-time flag the
+	// pure function doesn't read; the cobra wrapper and the future MCP
+	// handler each honor Bundle->Verbose at their own rendering layers.
+	if in.Bundle {
+		in.CheckAgents = true
+		in.CheckIDE = true
+	}
+
+	categories := buildCategories(ctx, cfg, in.CheckAgents, in.CheckIDE, in.Scope)
+	report := doctor.RunChecks(ctx, categories)
+
+	if in.Fix && report.HasFixable() {
+		report = doctor.RunFixes(ctx, io.Discard, categories, report)
+	}
+
+	return report, nil
+}
+
+// DoctorBundle is the structured form of the `--bundle` support
+// section. The text rendering writes the same data in a humanized
+// layout; --json / --llm and the MCP doctor tool emit this shape
+// directly.
+type DoctorBundle struct {
+	System      DoctorBundleSystem `json:"system"`
+	Environment []string           `json:"environment"`
+	Cache       DoctorBundleCache  `json:"cache"`
+}
+
+// DoctorBundleSystem captures the host details we ask users to share
+// when debugging. GOOS / GOARCH + Go version + login shell is enough
+// to disambiguate the most common platform-specific failure modes.
+type DoctorBundleSystem struct {
+	OS    string `json:"os"`
+	Arch  string `json:"arch"`
+	Go    string `json:"go"`
+	Shell string `json:"shell,omitempty"`
+}
+
+// DoctorBundleCache records the status of the two on-disk caches the
+// CLI relies on. Values are humanised ("exists, updated 2026-…") so
+// the field is self-describing without a schema lookup.
+type DoctorBundleCache struct {
+	TokenCachePath   string `json:"token_cache_path"`
+	TokenCacheStatus string `json:"token_cache_status"`
+	UserCachePath    string `json:"user_cache_path"`
+	UserCacheStatus  string `json:"user_cache_status"`
+}
+
+// DoctorOutput is the wire shape returned by `doctor --json` /
+// `doctor --llm` and by the MCP `doctor` tool. Bundle is nil when
+// --bundle wasn't requested so the wire payload stays small for the
+// common "just run the checks" case.
+type DoctorOutput struct {
+	Report *doctor.Report `json:"report"`
+	Bundle *DoctorBundle  `json:"bundle,omitempty"`
+}
+
+// DoctorCmd is the cobra builder for `doctor`. Reduced to flag parsing,
+// the pure Doctor call, and the CLI-only side effects: progressively
+// rendering text output for the pre- and post-fix reports, printing
+// the support-bundle section, and returning a non-zero exit when any
+// check failed. With --json / --llm it skips the text pipeline and
+// emits a [DoctorOutput] payload via the shared structured writer.
+func DoctorCmd(cfg *config.Config) *cobra.Command {
+	var in DoctorInput
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Run diagnostic checks on your Infracost installation",
+		Example: `  # Run the standard checks
+  $ infracost doctor
+
+  # Show full diagnostic detail for every check
+  $ infracost doctor --verbose
+
+  # Attempt to fix any failing checks
+  $ infracost doctor --fix
+
+  # Generate a support bundle to share with the Infracost team
+  $ infracost doctor --bundle`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if in.Bundle && in.Fix {
+				return fmt.Errorf("--bundle and --fix cannot be used together")
+			}
+			w := cmd.OutOrStdout()
+
+			// Structured (--json / --llm) takes the same one-shot path the
+			// MCP tool will: run the pure Doctor function, build the
+			// DoctorOutput envelope, dispatch through writeStructured. No
+			// intermediate text rendering — the agent / script doesn't
+			// want progress prose mixed into its payload.
+			if cfg.JSON.Value || cfg.LLM.Value {
+				report, err := Doctor(cmd.Context(), cfg, in)
+				if err != nil {
+					return err
+				}
+				out := DoctorOutput{Report: report}
+				if in.Bundle {
+					b := buildDoctorBundle(cfg)
+					out.Bundle = &b
+				}
+				if err := writeStructured(cfg, w, out, doctorRenderers()); err != nil {
+					return err
+				}
+				if report.Failed() > 0 {
+					return fmt.Errorf("%d health check(s) failed", report.Failed())
+				}
+				return nil
+			}
+
+			// Render the pre-fix report first so the user sees what failed
+			// before any --fix attempts; the pure Doctor function discards
+			// inner progress (io.Discard inside RunFixes there) so this
+			// path needs its own RunChecks + Render pair.
+			verbose := in.Verbose
+			checkAgents := in.CheckAgents
+			checkIDE := in.CheckIDE
+			if in.Bundle {
+				verbose = true
+				checkAgents = true
+				checkIDE = true
+			}
+			categories := buildCategories(cmd.Context(), cfg, checkAgents, checkIDE, in.Scope)
+			report := doctor.RunChecks(cmd.Context(), categories)
+			doctor.Render(w, report, version.Version, verbose, in.Fix)
+
+			if in.Fix && report.HasFixable() {
+				report = doctor.RunFixes(cmd.Context(), w, categories, report)
+				doctor.Render(w, report, version.Version, verbose, in.Fix)
+			}
+
+			if in.Bundle {
+				renderBundle(w, cfg)
+			}
+
+			if report.Failed() > 0 {
+				return fmt.Errorf("%d health check(s) failed", report.Failed())
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&in.Verbose, "verbose", false, "Show full diagnostic detail for every check")
+	cmd.Flags().BoolVar(&in.Fix, "fix", false, "Attempt auto-remediation for failing checks")
+	cmd.Flags().BoolVar(&in.Bundle, "bundle", false, "Generate a support bundle with full diagnostic output")
+	cmd.Flags().BoolVar(&in.CheckAgents, "check-agents", false, "Include AI coding agent integrations in the checks")
+	cmd.Flags().BoolVar(&in.CheckIDE, "check-ide", false, "Include IDE integrations in the checks")
+	cmd.Flags().StringVar(&in.Scope, "scope", "user", "Installation scope for --fix: user (global), project, or local")
+	return cmd
+}
+
+// buildDoctorBundle gathers the host / env / cache facts that make up
+// `doctor --bundle`. Used by both the text rendering (via renderBundle)
+// and the structured / MCP path (DoctorOutput).
+func buildDoctorBundle(cfg *config.Config) DoctorBundle {
+	b := DoctorBundle{
+		System: DoctorBundleSystem{
+			OS:    runtime.GOOS,
+			Arch:  runtime.GOARCH,
+			Go:    runtime.Version(),
+			Shell: os.Getenv("SHELL"),
+		},
+		Environment: []string{},
+		Cache: DoctorBundleCache{
+			TokenCachePath:   cfg.Auth.TokenCachePath,
+			TokenCacheStatus: fileStatus(cfg.Auth.TokenCachePath),
+			UserCachePath:    cfg.Auth.UserCachePath,
+		},
+	}
+	for _, env := range os.Environ() {
+		if strings.HasPrefix(env, "INFRACOST_CLI_") {
+			name, _, _ := strings.Cut(env, "=")
+			b.Environment = append(b.Environment, name)
+		}
+	}
+	userStatus := fileStatus(cfg.Auth.UserCachePath)
+	if uc, err := cfg.Auth.LoadUserCache(); err == nil && uc != nil {
+		if uc.IsStale() {
+			userStatus += ", stale"
+		} else {
+			userStatus += fmt.Sprintf(", updated %s", uc.UpdatedAt.Format(time.RFC3339))
+		}
+	}
+	b.Cache.UserCacheStatus = userStatus
+	return b
+}
+
+// renderBundle writes the support-bundle text section using data
+// gathered by buildDoctorBundle, so the human and structured paths
+// stay byte-equivalent on the facts they report.
+func renderBundle(w io.Writer, cfg *config.Config) {
+	b := buildDoctorBundle(cfg)
+	_, _ = fmt.Fprintln(w, "\n--- Support Bundle ---")
+	_, _ = fmt.Fprintln(w)
+
+	_, _ = fmt.Fprintln(w, "System")
+	_, _ = fmt.Fprintf(w, "  os: %s/%s\n", b.System.OS, b.System.Arch)
+	_, _ = fmt.Fprintf(w, "  go: %s\n", b.System.Go)
+	if b.System.Shell != "" {
+		_, _ = fmt.Fprintf(w, "  shell: %s\n", b.System.Shell)
+	}
+
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Environment")
+	if len(b.Environment) == 0 {
+		_, _ = fmt.Fprintln(w, "  (none)")
+	} else {
+		for _, name := range b.Environment {
+			_, _ = fmt.Fprintf(w, "  %s: set\n", name)
+		}
+	}
+
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Cache")
+	_, _ = fmt.Fprintf(w, "  token cache: %s (%s)\n", b.Cache.TokenCachePath, b.Cache.TokenCacheStatus)
+	_, _ = fmt.Fprintf(w, "  user cache: %s (%s)\n", b.Cache.UserCachePath, b.Cache.UserCacheStatus)
+}
+
+// doctorRenderers wires the structured renderers for DoctorOutput. The
+// human path is unreachable here — DoctorCmd handles --json / --llm via
+// this function and routes plain text through the legacy doctor.Render
+// pipeline directly — but [Renderers] requires a Human entry, so a
+// no-op placeholder keeps the dispatcher happy.
+func doctorRenderers() Renderers[DoctorOutput] {
+	return Renderers[DoctorOutput]{
+		Human: func(_ io.Writer, _ DoctorOutput) error { return nil },
+		JSON:  renderDoctorJSON,
+		LLM:   renderDoctorLLM,
+	}
+}
+
+func renderDoctorJSON(w io.Writer, o DoctorOutput) error {
+	body, err := json.MarshalIndent(o, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to write JSON output: %w", err)
+	}
+	_, err = fmt.Fprintln(w, string(body))
+	return err
+}
+
+func renderDoctorLLM(w io.Writer, o DoctorOutput) error {
+	// Same shape as JSON — doctor is a small one-shot snapshot, no
+	// dedupable tabular section for TOON to reformat usefully.
+	return renderDoctorJSON(w, o)
+}
+
+func fileStatus(path string) string {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "not found"
+		}
+		return fmt.Sprintf("error: %s", err)
+	}
+	return "exists"
+}
+
+func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, checkIDE bool, scope string) []doctor.Category {
+	// Shared state across auth checks.
+	var tokenSource oauth2.TokenSource
+	var apiUser dashboard.CurrentUser
+	var apiElapsed time.Duration
+
+	categories := []doctor.Category{
+		{
+			Name: "Authentication",
+			Checks: []doctor.Check{
+				{
+					Name:     "Credentials found",
+					FailName: "No credentials found",
+					Fix: func(ctx context.Context) error {
+						return RunLogin(ctx, cfg)
+					},
+					Run: func(_ context.Context) doctor.Result {
+						if len(cfg.Auth.AuthenticationToken) > 0 {
+							tokenSource = cfg.Auth.AuthenticationToken
+							return doctor.Result{
+								Status:  doctor.StatusPass,
+								Verbose: []string{"source: INFRACOST_CLI_AUTHENTICATION_TOKEN"},
+							}
+						}
+						ts := cfg.Auth.TokenFromCache(ctx)
+						if ts == nil {
+							return doctor.Result{
+								Status:  doctor.StatusFail,
+								Hint:    "Run `infracost auth login` to authenticate",
+								Verbose: []string{fmt.Sprintf("token cache: %s", cfg.Auth.TokenCachePath)},
+							}
+						}
+						tokenSource = ts
+						return doctor.Result{
+							Status:  doctor.StatusPass,
+							Verbose: []string{fmt.Sprintf("token cache: %s", cfg.Auth.TokenCachePath)},
+						}
+					},
+				},
+				{
+					Name:      "Token valid",
+					DependsOn: []int{0},
+					Fix: func(ctx context.Context) error {
+						return RunLogin(ctx, cfg)
+					},
+					Run: func(_ context.Context) doctor.Result {
+						// TokenFromCache already validates the JWT. If we
+						// reached here the token parsed and is not expired.
+						tok, err := tokenSource.Token()
+						if err != nil {
+							return doctor.Result{
+								Status: doctor.StatusFail,
+								Label:  "Token invalid",
+								Hint:   fmt.Sprintf("Run `infracost auth login` to re-authenticate (%s)", err),
+							}
+						}
+						var verbose []string
+						if !tok.Expiry.IsZero() {
+							verbose = append(verbose, fmt.Sprintf("expires: %s", tok.Expiry.Format(time.RFC3339)))
+						}
+						return doctor.Result{
+							Status:  doctor.StatusPass,
+							Verbose: verbose,
+						}
+					},
+				},
+				{
+					Name:      "Organization accessible",
+					FailName:  "Organization not accessible",
+					DependsOn: []int{0},
+					Run: func(ctx context.Context) doctor.Result {
+						client := cfg.Dashboard.Client(
+							api.Client(ctx, tokenSource, cfg.OrgID),
+						)
+						start := time.Now()
+						user, err := client.CurrentUser(ctx)
+						apiElapsed = time.Since(start)
+						if err != nil {
+							return doctor.Result{
+								Status: doctor.StatusFail,
+								Hint:   fmt.Sprintf("API error: %s", err),
+							}
+						}
+						apiUser = user
+						if len(user.Organizations) == 0 {
+							return doctor.Result{
+								Status:  doctor.StatusFail,
+								Hint:    "No organizations found. Create one at https://dashboard.infracost.io",
+								Verbose: []string{fmt.Sprintf("user: %s (%s)", user.Email, user.ID)},
+							}
+						}
+						orgSlug := user.Organizations[0].Slug
+
+						// Build verbose org list, marking the selected org.
+						cached := cacheUser(cfg, user)
+						selectedSlug, _, _ := currentOrgSlug(cfg, cached.Organizations, cached.SelectedOrgID)
+						verbose := []string{
+							fmt.Sprintf("user: %s (%s)", user.Email, user.ID),
+						}
+						for _, org := range cached.Organizations {
+							line := fmt.Sprintf("org: %s (%s)", org.Slug, org.Name)
+							if org.Slug == selectedSlug {
+								line += "  ← selected"
+							}
+							verbose = append(verbose, line)
+						}
+						return doctor.Result{
+							Status:  doctor.StatusPass,
+							Detail:  fmt.Sprintf(`"%s"`, orgSlug),
+							Verbose: verbose,
+						}
+					},
+				},
+				{
+					Name:      "API reachable",
+					DependsOn: []int{2},
+					Run: func(_ context.Context) doctor.Result {
+						return doctor.Result{
+							Status:  doctor.StatusPass,
+							Detail:  fmt.Sprintf("(%d ms)", apiElapsed.Milliseconds()),
+							Verbose: []string{fmt.Sprintf("endpoint: %s", cfg.Dashboard.Endpoint)},
+						}
+					},
+				},
+			},
+		},
+		{
+			Name: "CLI",
+			Checks: []doctor.Check{
+				{
+					Name: "Version",
+					Fix:  update.Update,
+					Run: func(ctx context.Context) doctor.Result {
+						info, err := update.CheckLatestVersion(ctx)
+						if err != nil {
+							return doctor.Result{
+								Status:  doctor.StatusWarning,
+								Label:   fmt.Sprintf("Version %s", version.Version),
+								Detail:  "(unable to check for updates)",
+								Hint:    err.Error(),
+							}
+						}
+						if info.UpToDate {
+							return doctor.Result{
+								Status: doctor.StatusPass,
+								Label:  fmt.Sprintf("Version %s (latest)", info.Current),
+							}
+						}
+						return doctor.Result{
+							Status: doctor.StatusWarning,
+							Label:  fmt.Sprintf("Version %s (latest is %s)", info.Current, info.Latest),
+							Hint:   "Run `infracost update` to upgrade",
+						}
+					},
+				},
+			},
+		},
+		{
+			Name: "Configuration",
+			Checks: []doctor.Check{
+				{
+					Name: "Config file valid",
+					Run: func(_ context.Context) doctor.Result {
+						// Config was already parsed and processed by
+						// PersistentPreRun. If we reached the health command
+						// it loaded successfully.
+						var verbose []string
+						if cfg.Currency != "" {
+							verbose = append(verbose, fmt.Sprintf("currency: %s", cfg.Currency))
+						}
+						verbose = append(verbose, fmt.Sprintf("pricing endpoint: %s", cfg.PricingEndpoint))
+						return doctor.Result{
+							Status:  doctor.StatusPass,
+							Verbose: verbose,
+						}
+					},
+				},
+				{
+					Name:     "Default org set",
+					FailName: "Default org not set",
+					Fix: func(_ context.Context) error {
+						source, err := cfg.Auth.Token(ctx)
+						if err != nil {
+							return err
+						}
+						return resolveOrg(ctx, cfg, source)
+					},
+					Run: func(_ context.Context) doctor.Result {
+						// Try to resolve org non-interactively.
+						var orgs []auth.CachedOrganization
+						var selectedOrgID string
+
+						// Use the API result if we have it.
+						if len(apiUser.Organizations) > 0 {
+							cached := cacheUser(cfg, apiUser)
+							orgs = cached.Organizations
+							selectedOrgID = cached.SelectedOrgID
+						}
+
+						// Fall back to cached user data.
+						if len(orgs) == 0 {
+							if uc, err := cfg.Auth.LoadUserCache(); err == nil && uc != nil {
+								orgs = uc.Organizations
+								selectedOrgID = uc.SelectedOrgID
+							}
+						}
+
+						if len(orgs) == 0 {
+							return doctor.Result{
+								Status: doctor.StatusWarning,
+								Hint:   "No organization data available",
+							}
+						}
+
+						slug, _, source := currentOrgSlug(cfg, orgs, selectedOrgID)
+						if slug != "" {
+							var verbose []string
+							switch source {
+							case orgSourceFlag:
+								verbose = append(verbose, "source: --org flag / INFRACOST_CLI_ORG")
+							case orgSourceRepo:
+								verbose = append(verbose, "source: .infracost/org")
+							case orgSourceGlobal:
+								verbose = append(verbose, "source: infracost org switch")
+							}
+							return doctor.Result{
+								Status:  doctor.StatusPass,
+								Detail:  fmt.Sprintf("(%s)", slug),
+								Verbose: verbose,
+							}
+						}
+
+						if len(orgs) == 1 {
+							return doctor.Result{
+								Status: doctor.StatusPass,
+								Detail: fmt.Sprintf("(%s)", orgs[0].Slug),
+							}
+						}
+
+						return doctor.Result{
+							Status: doctor.StatusFail,
+							Hint:   "Run `infracost org switch` to select an organization",
+						}
+					},
+				},
+			},
+		},
+	}
+
+	if checkAgents {
+		categories = append(categories, buildAgentChecks(cfg, scope))
+	}
+	if checkIDE {
+		categories = append(categories, buildIDEChecks())
+	}
+
+	return categories
+}
+
+func buildAgentChecks(cfg *config.Config, scope string) doctor.Category {
+	var checks []doctor.Check
+	for _, a := range supportedAgents {
+		if !a.enabled || a.check == nil {
+			continue
+		}
+		a := a // capture loop variable
+		checks = append(checks, doctor.Check{
+			Name: a.name,
+			Fix: func(_ context.Context) error {
+				return setupAgent(cfg, a, scope)
+			},
+			Run: func(_ context.Context) doctor.Result {
+				bin, err := resolveAgentBinary(cfg, a)
+				if err != nil {
+					return doctor.Result{
+						Status: doctor.StatusSkipped,
+						Hint:   "binary not found on PATH",
+					}
+				}
+				installed, err := a.check(bin)
+				if err != nil {
+					return doctor.Result{
+						Status:  doctor.StatusWarning,
+						Hint:    fmt.Sprintf("could not verify skills: %s", err),
+						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+					}
+				}
+				if installed {
+					return doctor.Result{
+						Status:  doctor.StatusPass,
+						Detail:  "(skills installed)",
+						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+					}
+				}
+				return doctor.Result{
+					Status:  doctor.StatusWarning,
+					Detail:  "(skills not installed)",
+					Hint:    fmt.Sprintf("Run `infracost agent setup` to install skills for %s", a.name),
+					Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+				}
+			},
+		})
+	}
+	return doctor.Category{Name: "AI Agents", Checks: checks}
+}
+
+func buildIDEChecks() doctor.Category {
+	var checks []doctor.Check
+	for _, ide := range supportedIDEs {
+		if !ide.enabled || ide.check == nil {
+			continue
+		}
+		ide := ide // capture loop variable
+		checks = append(checks, doctor.Check{
+			Name: ide.name,
+			Fix: func(_ context.Context) error {
+				return installIDE(ide)
+			},
+			Run: func(_ context.Context) doctor.Result {
+				var bin string
+				for _, b := range ide.binaries {
+					if path, err := exec.LookPath(b); err == nil {
+						bin = path
+						break
+					}
+				}
+				if bin == "" {
+					return doctor.Result{
+						Status: doctor.StatusSkipped,
+						Hint:   "binary not found on PATH",
+					}
+				}
+				installed, err := ide.check(bin)
+				if err != nil {
+					return doctor.Result{
+						Status:  doctor.StatusWarning,
+						Hint:    fmt.Sprintf("could not verify extension: %s", err),
+						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+					}
+				}
+				if installed {
+					return doctor.Result{
+						Status:  doctor.StatusPass,
+						Detail:  "(extension installed)",
+						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+					}
+				}
+				return doctor.Result{
+					Status:  doctor.StatusWarning,
+					Detail:  "(extension not installed)",
+					Hint:    "Run `infracost ide setup` to install the extension",
+					Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+				}
+			},
+		})
+	}
+	return doctor.Category{Name: "IDE Integrations", Checks: checks}
+}

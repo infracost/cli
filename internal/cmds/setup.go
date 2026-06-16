@@ -1,0 +1,328 @@
+package cmds
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
+	"github.com/charmbracelet/huh"
+	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/ui"
+	"github.com/infracost/cli/version"
+	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
+)
+
+// requireUserLogin returns an error if the user is authenticated via a service
+// account token rather than an interactive login. Setup commands need a real
+// user identity (for org resolution, etc.) and cannot operate with tokens.
+func requireUserLogin(cfg *config.Config) error {
+	if len(cfg.Auth.AuthenticationToken) > 0 {
+		return fmt.Errorf("setup requires interactive login, it cannot be used with INFRACOST_CLI_AUTHENTICATION_TOKEN — run 'infracost auth login' first, then retry")
+	}
+	return nil
+}
+
+// ensureAuthAndOrg verifies the user has a valid token and that an org
+// is selected. Setup commands call this before running their interactive
+// flows so a multi-org user without a selection gets a single actionable
+// error up front instead of a confusing failure later when the chosen
+// integration tries to make an API call.
+//
+// If no valid token is cached, the user is taken through an interactive
+// login (which itself resolves the org). When already logged in, this
+// is mostly a no-op — the user/org cache is consulted with no API call
+// unless it's stale.
+func ensureAuthAndOrg(ctx context.Context, cfg *config.Config) error {
+	ts := cfg.Auth.TokenFromCache(ctx)
+	if ts != nil {
+		ui.Success("Already logged in")
+	} else {
+		if err := RunLogin(ctx, cfg); err != nil {
+			return err
+		}
+		ts, _ = cfg.Auth.Token(ctx)
+	}
+
+	if err := resolveOrg(ctx, cfg, ts); err != nil {
+		return err
+	}
+	return ensureOrgExists(ctx, cfg, ts)
+}
+
+// ensureOrgExists handles the brand-new-signup case where the user
+// authenticated successfully but doesn't belong to any organization yet.
+// Auth0's register action can leave a user in this state when the
+// dashboard's separateUserAndOrganization signup flag is on (see
+// FIX-189), so the CLI creates the org itself rather than punting the
+// user to the web dashboard.
+func ensureOrgExists(ctx context.Context, cfg *config.Config, source oauth2.TokenSource) error {
+	uc, err := cfg.Auth.LoadUserCache()
+	if err != nil || uc == nil || len(uc.Organizations) > 0 {
+		return nil
+	}
+
+	if !ui.IsInteractive() {
+		return fmt.Errorf("you don't belong to any organizations yet — create one with 'infracost org create \"<name>\"', then re-run this command")
+	}
+
+	fmt.Println()
+	ui.Heading("Create your organization")
+	fmt.Println()
+
+	name, err := promptForOrgName(suggestedOrgName(uc.Email))
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return errors.New("organization creation cancelled")
+		}
+		return err
+	}
+
+	org, err := createOrgAndCache(ctx, cfg, source, name)
+	if err != nil {
+		return err
+	}
+
+	ui.Successf("Created organization %s", ui.Accent(org.Slug))
+	return nil
+}
+
+// suggestedOrgName turns the user's email into a plausible default org
+// name (e.g. "alice@acme.io" → "Acme"). Returns "" if the email doesn't
+// look usable, which leaves the prompt empty and lets the user type
+// whatever they want.
+func suggestedOrgName(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 || at == len(email)-1 {
+		return ""
+	}
+	domain := email[at+1:]
+	if dot := strings.Index(domain, "."); dot > 0 {
+		domain = domain[:dot]
+	}
+	// Skip personal-email providers — defaulting to "Gmail" or "Outlook"
+	// would just confuse people. Better to start with an empty prompt.
+	switch strings.ToLower(domain) {
+	case "gmail", "googlemail", "outlook", "hotmail", "yahoo", "icloud", "proton", "protonmail":
+		return ""
+	}
+	if domain == "" {
+		return ""
+	}
+	return strings.ToUpper(domain[:1]) + domain[1:]
+}
+
+func Setup(cfg *config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup",
+		Short: "Set up Infracost integrations",
+		Long:  "Walk through setting up Infracost for your coding agents, IDE, and CI pipeline",
+		Example: `  # Run the interactive setup walkthrough
+  $ infracost setup`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireUserLogin(cfg); err != nil {
+				return err
+			}
+
+			fmt.Println()
+			fmt.Print(ui.Banner(version.Version))
+			fmt.Println()
+
+			// On Ctrl+C anywhere in the setup flow, print a branded goodbye
+			// and exit cleanly. huh's per-prompt abort handling continues to
+			// work for navigating to "Skip" inside individual menus; this
+			// catches the case where the user wants to bail out entirely.
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-sigCh
+				fmt.Println()
+				fmt.Println()
+				fmt.Println("  " + ui.Gradient("Setup cancelled. Goodbye!"))
+				os.Exit(0)
+			}()
+			defer signal.Stop(sigCh)
+
+			// Step 1: Login (and resolve org for multi-org accounts)
+			ctx := cmd.Context()
+			if err := ensureAuthAndOrg(ctx, cfg); err != nil {
+				return err
+			}
+
+			// Step 2: Agent setup
+			agentName, err := RunAgentSetup(cfg, "user", true)
+			if err != nil {
+				return err
+			}
+			if agentName == "" {
+				renderAgentSkipNotice()
+			}
+
+			// Step 3: IDE setup
+			ideName, err := RunIDESetup(true)
+			if err != nil {
+				return err
+			}
+			if ideName == "" {
+				renderIdeSkipNotice()
+			}
+
+			// Step 4: CI setup. Only offered if the preflight passes (git
+			// repository with a parseable origin remote). When it doesn't,
+			// we skip the prompt entirely and fall straight through to the
+			// skip notice — asking the user a question we'd refuse to act
+			// on is worse UX than just telling them what they need.
+			//
+			// runSetupStep returns nil whether the user confirmed or
+			// declined; track the user's intent through the closure so we
+			// know whether to render a skip notice in the offered case
+			// AND whether to tailor the post-setup CTA toward CI.
+			ciSkipped := true
+			if CISetupAvailable() {
+				if err := runSetupStep("Set up CI integration?", func() error {
+					ciSkipped = false
+					return RunCISetup(ctx, cfg, false, false)
+				}); err != nil {
+					return err
+				}
+				if ciSkipped {
+					renderCiSkipNotice()
+				}
+			} else {
+				renderCiSkipNotice()
+			}
+
+			fmt.Println()
+			fmt.Print(ui.GradientCard(setupCompleteContent(agentName, ideName, !ciSkipped)))
+			return nil
+		},
+	}
+}
+
+// Skip notices stay on screen once rendered — earlier attempts to
+// surgically remove them when the next step completed proved unreliable
+// across terminals (cursor-position queries time out, bubbletea's exit
+// state varies). Leaving them visible is the safer default; the user
+// retains a record of which steps they skipped and how to run each one
+// later.
+
+func renderAgentSkipNotice() {
+	renderSkipNotice("AI coding agents",
+		"To install AI coding agent integration later, run "+ui.Code("infracost agent setup")+".")
+}
+
+func renderIdeSkipNotice() {
+	renderSkipNotice("IDE",
+		"To install IDE integration later, run "+ui.Code("infracost ide setup")+".")
+}
+
+func renderCiSkipNotice() {
+	renderSkipNotice("CI",
+		"To set up CI integration later, cd into a Terraform, CloudFormation, or CDK project in a git repository and run "+ui.Code("infracost ci setup")+".")
+}
+
+func renderSkipNotice(name, content string) {
+	fmt.Println()
+	fmt.Print(ui.InstructionsCard("Set up "+name+" later", content))
+}
+
+// setupCompleteContent assembles the celebration card body: the bold
+// gradient "Setup complete." line, a "What's next?" subhead, and the
+// tailored CTA steps. Returned as a single string so the caller can drop
+// it into ui.GradientCard.
+func setupCompleteContent(agentName, ideName string, ciSetUp bool) string {
+	var b strings.Builder
+	b.WriteString(ui.Bold(ui.Gradient("Setup complete.")))
+	b.WriteString("\n\n")
+	b.WriteString(ui.Bold(ui.Brand("What's next?")))
+	b.WriteByte('\n')
+	b.WriteString(nextStepsContent(agentName, ideName, ciSetUp))
+	return b.String()
+}
+
+// nextStepsContent renders the post-setup CTA as a multi-line string.
+// The recommendation is tailored to whichever integration the user just
+// installed, in priority order: agent > IDE > CI > nothing-installed.
+// Earlier integrations win because they're more directly actionable
+// (chatting in your coding agent or seeing cost estimates inline beats
+// "go open a PR" for getting a first taste of Infracost).
+func nextStepsContent(agentName, ideName string, ciSetUp bool) string {
+	// Inside the gradient card we collapse the cyan info/code highlight
+	// into the heading's brand purple so the box reads as one palette
+	// (gradient border + brand accents) rather than three competing
+	// hues. Per-service brand colors on the product names stay since
+	// they're each option's identity, not a generic highlight.
+	arrow := "  " + ui.Brand("→") + " "
+	var b strings.Builder
+	step := func(format string, args ...any) {
+		b.WriteString(arrow)
+		fmt.Fprintf(&b, format, args...)
+		b.WriteByte('\n')
+	}
+
+	switch {
+	case agentName != "":
+		slug := agentIconSlug(agentName)
+		step("cd into a Terraform, CloudFormation, or CDK project")
+		step("Open %s%s and ask it %s", iconPrefix(slug), ui.Bold(ui.Service(slug, agentName)), ui.Brand(`"How much does this project cost?"`))
+	case ideName != "":
+		slug := ideIconSlug(ideName)
+		step("Open a Terraform, CloudFormation, or CDK project in %s%s", iconPrefix(slug), ui.Bold(ui.Service(slug, ideName)))
+		step("Open the Infracost extension from the toolbar and make sure you're logged in — you'll see cost estimates inline with your code")
+	case ciSetUp:
+		step("Open a pull request that changes your infrastructure — Infracost will comment with the cost diff")
+	default:
+		step("cd into a Terraform, CloudFormation, or CDK project")
+		step("Run %s to see your costs and any policy violations", ui.Brand("infracost scan"))
+	}
+	return b.String()
+}
+
+// iconPrefix returns "<icon> " when the active terminal can render the
+// named brand icon, "" otherwise. Designed to be concatenated directly
+// in front of the service name so the CTA reads naturally on terminals
+// without image support ("Open Claude Code") and gets a subtle brand
+// mark on terminals that do ("Open <logo> Claude Code"). The image
+// escape's display width is recognized by ui.PrintableWidth so the
+// line measures correctly inside a wrapped/bordered card.
+func iconPrefix(slug string) string {
+	if icon := ui.Icon(slug); icon != "" {
+		return icon + " "
+	}
+	return ""
+}
+
+// runSetupStep prompts the user with a yes/no question. If they accept, it
+// runs the provided function. If they decline or abort, it skips silently.
+func runSetupStep(title string, fn func() error) error {
+	if !ui.IsInteractive() {
+		return nil
+	}
+
+	fmt.Println()
+
+	var confirm bool
+	err := huh.NewConfirm().
+		Title(title).
+		Affirmative("Yes").
+		Negative("Skip").
+		Value(&confirm).
+		WithTheme(ui.BrandTheme()).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return nil
+		}
+		return err
+	}
+
+	if !confirm {
+		return nil
+	}
+
+	return fn()
+}

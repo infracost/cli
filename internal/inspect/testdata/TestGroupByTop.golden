@@ -1,0 +1,3 @@
+Type                     Count  Monthly Cost
+google_compute_instance      1           $30
+aws_instance                 1           $20

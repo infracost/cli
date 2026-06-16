@@ -1,0 +1,23 @@
+Failing policies  (2 policies · 2 resources)
+
+⚙️  Use GP3
+   aws_ebs_volume.data
+   Consider using GP3 volumes
+
+🏷️  Required Tags
+   aws_instance.web · modules/compute/main.tf:42
+   All resources must have required tags
+
+
+Triggered guardrails  (1)
+
+🛑  Cost increase > $100
+   $500/mo
+
+
+Over budget  (1)
+
+💸  Frontend Q2
+   Over by $100 ($400 actual / $300 limit)
+   Scope: team=frontend
+   Notify #frontend-costs

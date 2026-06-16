@@ -10,11 +10,12 @@ import (
 
 func Version(_ *config.Config) *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
-		Short: "Show the current version",
-		Args:  cobra.NoArgs,
+		Use:    "version",
+		Short:  "Show the current version",
+		Hidden: true,
+		Args:   cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			fmt.Println(version.Version)
+			fmt.Printf("infracost version %s\n", version.Version)
 			return nil
 		},
 	}

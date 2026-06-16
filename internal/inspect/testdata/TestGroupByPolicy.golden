@@ -1,0 +1,11 @@
+🏷️  Required Tags  (1 resource)
+
+   All resources must have required tags
+
+   • aws_instance.web · modules/compute/main.tf:42
+
+⚙️  Use GP3  (1 resource)
+
+   Consider using GP3 volumes
+
+   • aws_ebs_volume.data

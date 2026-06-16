@@ -1,0 +1,28 @@
+[
+  {
+    "project": "web-app",
+    "diagnostic": {
+      "prefix": "HCL parse error",
+      "message": "failed to parse expression",
+      "severity": "critical",
+      "location": "main.tf:42"
+    }
+  },
+  {
+    "project": "web-app",
+    "diagnostic": {
+      "prefix": "Warning",
+      "message": "skipping unsupported provider: foo",
+      "severity": "warning"
+    }
+  },
+  {
+    "project": "web-app",
+    "diagnostic": {
+      "prefix": "Info",
+      "message": "evaluated synthesized value for missing reference",
+      "severity": "info",
+      "location": "variables.tf:7"
+    }
+  }
+]

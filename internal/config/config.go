@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 
+	"github.com/infracost/cli/internal/api/agents"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cache"
@@ -24,16 +25,44 @@ type Config struct {
 	Environment environment.Environment `flag:"environment;hidden" usage:"The environment to use for authentication" default:"prod"`
 
 	// Currency is the currency to use for prices. Defaults to USD.
-	Currency string `env:"INFRACOST_CLI_CURRENCY" flag:"currency" usage:"The currency to use for prices" default:""`
+	Currency string `env:"INFRACOST_CLI_CURRENCY" default:""`
 
 	// PricingEndpoint is the endpoint to use for prices. Defaults to https://pricing.api.infracost.io.
 	PricingEndpoint string `env:"INFRACOST_CLI_PRICING_ENDPOINT" flag:"pricing-endpoint;hidden" usage:"The pricing endpoint to use for prices" default:"https://pricing.api.infracost.io"`
 
-	// OrgID is the organization ID to use for authentication. Defaults to the value of the INFRACOST_ORG_ID environment variable.
-	OrgID string `env:"INFRACOST_CLI_ORG_ID" flag:"org-id;hidden" usage:"The organization ID to use for authentication"`
+	// Org is the organization slug or ID to use. Resolved to an ID before API calls.
+	Org string `env:"INFRACOST_CLI_ORG" flag:"org" usage:"The organization slug or ID to use"`
+
+	// OrgID is the resolved organization ID, set after resolving --org or from RunParameters.
+	OrgID string
+
+	// OrgSlug is the resolved active organization's slug, set alongside OrgID
+	// when the org is resolved from the user cache. Used for building org-
+	// scoped dashboard links (e.g. the Agents waitlist).
+	OrgSlug string
+
+	// AgentsEnabled mirrors the resolved active org's agentsEnabled flag (the
+	// dashboard's coast-access entitlement). The Agents commands and MCP tools
+	// gate on it; see ensureAgentsEnabled.
+	AgentsEnabled bool
 
 	// ClaudePath is the path to the Claude CLI binary. Defaults to "claude" (looked up on PATH).
 	ClaudePath string `env:"INFRACOST_CLI_CLAUDE_PATH" flag:"claude-path;hidden" usage:"Path to the Claude CLI binary"`
+
+	// NoColor disables all colored output. NO_COLOR env var (any non-empty value)
+	// is honored separately at startup; see internal/ui/colors.go.
+	NoColor bool `flag:"no-color" usage:"Disable colored output"`
+
+	// JSON toggles JSON output for both logs and command results. Shared with
+	// any sub-config that registers `flagvalue:"json"` (e.g. logging).
+	JSON process.BoolFlag `env:"INFRACOST_CLI_LOG_JSON" flag:"json" usage:"Output logs and command results as JSON"`
+
+	// Debug enables debug logging. Shared with logging.
+	Debug process.BoolFlag `flag:"debug" usage:"Enable debug logging"`
+
+	// LLM toggles a compact, token-efficient output format intended for piping
+	// into LLM prompts. Carries the same data as --json in fewer tokens.
+	LLM process.BoolFlag `env:"INFRACOST_CLI_LLM" flag:"llm" usage:"Output command results in a compact, token-efficient format intended for LLM prompts"`
 
 	// Logging contains the configuration for logging.
 	// keep logging above other structs, so it gets processed first and others can log in their process functions.
@@ -41,6 +70,9 @@ type Config struct {
 
 	// Dashboard contains the configuration for the dashboard API.
 	Dashboard dashboard.Config
+
+	// Agents contains the configuration for the Agents API (findings).
+	Agents agents.Config
 
 	// Events contains the configuration for the events API.
 	Events events.Config
