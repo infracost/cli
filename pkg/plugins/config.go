@@ -105,22 +105,13 @@ func (c *Config) ProviderPlugins(ctx context.Context) ([]*ProviderPlugin, error)
 	return manager.LoadProviderPlugins(ctx)
 }
 
-// ResetPlugins closes the current Manager and clears it so the next call to
-// EnsurePlugins will rebuild from scratch.
-func (c *Config) ResetPlugins() {
+// Close releases all plugin subprocess resources.
+func (c *Config) Close() {
 	c.managerMu.Lock()
 	manager := c.manager
-	c.manager = nil
-	c.ensureErr = nil
-	c.ensureOnce = sync.Once{}
 	c.managerMu.Unlock()
 
 	if manager != nil {
 		manager.Close()
 	}
-}
-
-// Close releases all plugin subprocess resources.
-func (c *Config) Close() {
-	c.ResetPlugins()
 }

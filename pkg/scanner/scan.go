@@ -118,7 +118,6 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		RawOptionsFormat: rawOptionsFormat,
 	})
 	if err != nil {
-		opts.Plugins.ResetPlugins()
 		return nil, fmt.Errorf("parser plugin error: %w (run with --debug or set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
 	}
 
