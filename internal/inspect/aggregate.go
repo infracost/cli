@@ -324,10 +324,11 @@ func ResourcesFor(data *format.Output, opts Options) ResourcesResult {
 		if row.Address == "" {
 			return
 		}
-		if _, ok := seen[row.Address]; ok {
+		key := row.Project + "\x00" + row.Address
+		if _, ok := seen[key]; ok {
 			return
 		}
-		seen[row.Address] = struct{}{}
+		seen[key] = struct{}{}
 		rows = append(rows, row)
 	}
 
@@ -346,24 +347,24 @@ func ResourcesFor(data *format.Output, opts Options) ResourcesResult {
 	}{}
 	for _, p := range data.Projects {
 		for _, r := range p.Resources {
-			resByAddress[r.Name] = struct {
+			resByAddress[p.ProjectName+"\x00"+r.Name] = struct {
 				project  format.ProjectOutput
 				resource format.ResourceOutput
 			}{p, r}
 		}
 	}
-	emit := func(addr string) {
+	emit := func(p format.ProjectOutput, addr string) {
 		if addr == "" {
 			return
 		}
-		if hit, ok := resByAddress[addr]; ok {
+		if hit, ok := resByAddress[p.ProjectName+"\x00"+addr]; ok {
 			add(rowFor(hit.project, hit.resource))
 			return
 		}
 		// Tagging failures may include addresses we don't have a
 		// matching resource record for (synthetic entries); fall back
-		// to address-only.
-		add(ResourceRow{Address: addr})
+		// to address-only, scoped to the project so dedup is per-project.
+		add(ResourceRow{Address: addr, Project: p.ProjectName})
 	}
 
 	if opts.MissingTag != "" {
@@ -383,7 +384,7 @@ func ResourcesFor(data *format.Output, opts Options) ResourcesResult {
 				for _, fr := range t.FailingResources {
 					for _, inv := range fr.InvalidTags {
 						if inv.Key == opts.InvalidTag && inv.Value != "" {
-							emit(fr.Address)
+							emit(p, fr.Address)
 							break
 						}
 					}

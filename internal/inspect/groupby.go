@@ -1012,6 +1012,7 @@ func writePolicyHeading(w io.Writer, name, message string) {
 }
 
 func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) error {
+	matched := false
 	for _, p := range data.Projects {
 		for _, f := range p.FinopsResults {
 			if !matchesPolicy(f.PolicyName, f.PolicySlug, opts.Policy) {
@@ -1021,8 +1022,10 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 				if fr.Name != opts.Resource {
 					continue
 				}
+				matched = true
 				var inner bytes.Buffer
 				writePolicyResourceHeader(&inner, f.PolicyName, fr.Name)
+				fmt.Fprintln(&inner, ui.Muted("Project: "+p.ProjectName))
 
 				for _, r := range p.Resources {
 					if r.Name == fr.Name && r.Metadata.Filename != "" {
@@ -1047,10 +1050,14 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 					writeKV(&inner, rows)
 				}
 
-				_, err := fmt.Fprint(w, ui.Box(inner.String()))
-				return err
+				if _, err := fmt.Fprint(w, ui.Box(inner.String())); err != nil {
+					return err
+				}
 			}
 		}
+	}
+	if matched {
+		return nil
 	}
 
 	for _, p := range data.Projects {
@@ -1062,8 +1069,10 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 				if tr.Address != opts.Resource {
 					continue
 				}
+				matched = true
 				var inner bytes.Buffer
 				writePolicyResourceHeader(&inner, t.PolicyName, tr.Address)
+				fmt.Fprintln(&inner, ui.Muted("Project: "+p.ProjectName))
 
 				if tr.Path != "" {
 					fmt.Fprintf(&inner, "%s %s\n", ui.Accent("File:"), formatFileLoc(tr.Path, tr.Line))
@@ -1098,12 +1107,16 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 					}
 				}
 
-				_, err := fmt.Fprint(w, ui.Box(inner.String()))
-				return err
+				if _, err := fmt.Fprint(w, ui.Box(inner.String())); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
+	if matched {
+		return nil
+	}
 	return fmt.Errorf("resource %q not found for policy %q", opts.Resource, opts.Policy)
 }
 
@@ -1246,12 +1259,14 @@ type budgetSaving struct {
 }
 
 func collectBudgetSavings(data *format.Output, budgetTags []format.BudgetTagOutput) []budgetSaving {
-	// Build set of resource names that match the budget tags.
+	// Build set of (project, resource name) pairs that match the budget tags.
+	// Keyed per-project so that two projects sharing a resource address don't
+	// pull each other's finops failures into the savings tally.
 	matchingNames := map[string]bool{}
 	for _, p := range data.Projects {
 		for _, r := range p.Resources {
 			if resourceMatchesBudgetTags(r, budgetTags) {
-				matchingNames[r.Name] = true
+				matchingNames[p.ProjectName+"\x00"+r.Name] = true
 			}
 		}
 	}
@@ -1267,7 +1282,7 @@ func collectBudgetSavings(data *format.Output, budgetTags []format.BudgetTagOutp
 			savings := rat.Zero
 			count := 0
 			for _, fr := range f.FailingResources {
-				if !matchingNames[fr.Name] {
+				if !matchingNames[p.ProjectName+"\x00"+fr.Name] {
 					continue
 				}
 				count++
