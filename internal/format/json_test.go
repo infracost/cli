@@ -168,7 +168,7 @@ func TestComputeSummary(t *testing.T) {
 	// summaryData implementation.
 	assert.Equal(t, 3, s.FinopsPolicies, "3 FinopsResults entries across the two projects")
 	assert.Equal(t, 2, s.FailingFinopsPolicies, "two FinopsResults entries have failing resources")
-	assert.Equal(t, 1, s.DistinctFailingFinopsResources, "the same address fails in both projects → still 1 distinct address")
+	assert.Equal(t, 2, s.DistinctFailingFinopsResources, "the same address fails in both projects → counts once per project")
 
 	// Total potential savings = 5 + 3 + 2 = 10
 	assert.True(t, s.TotalPotentialMonthlySavings.Equals(rat.New(10)),

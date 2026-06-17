@@ -384,7 +384,7 @@ func BuildSummaryView(data *format.Output) SummaryView {
 				s.FailingPolicies++
 				ps.FinopsFailingPolicies++
 				for _, fr := range f.FailingResources {
-					failingFinopsAddrs[fr.Name] = struct{}{}
+					failingFinopsAddrs[p.ProjectName+"\x00"+fr.Name] = struct{}{}
 				}
 			}
 		}
@@ -396,7 +396,7 @@ func BuildSummaryView(data *format.Output) SummaryView {
 				s.FailingTaggingPolicies++
 				ps.TaggingFailingPolicies++
 				for _, tr := range t.FailingResources {
-					failingTaggingAddrs[tr.Address] = struct{}{}
+					failingTaggingAddrs[p.ProjectName+"\x00"+tr.Address] = struct{}{}
 				}
 			}
 		}

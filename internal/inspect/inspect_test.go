@@ -780,3 +780,48 @@ func TestPolicyDetailAddressesOnly(t *testing.T) {
 	require.NoError(t, err)
 	assertGolden(t, buf.String())
 }
+
+func TestDistinctFailingResourcesAcrossProjects(t *testing.T) {
+	// Two projects that share the exact same resource address must each
+	// contribute their own failing entry — the rollup counters key by
+	// (project, address) so identical addresses across stacks don't collapse.
+	data := &format.Output{
+		Currency: "USD",
+		Projects: []format.ProjectOutput{
+			{
+				ProjectName: "aws1",
+				FinopsResults: []format.FinopsOutput{{
+					PolicyName: "Use GP3", PolicySlug: "use-gp3",
+					FailingResources: []format.FinopsFailingResourceOutput{
+						{Name: "aws_s3_bucket.screenshots"},
+					},
+				}},
+				TaggingResults: []format.TaggingOutput{{
+					PolicyName: "Required Tags",
+					FailingResources: []format.FailingTaggingResourceOutput{
+						{Address: "aws_s3_bucket.screenshots", MissingMandatoryTags: []string{"env"}},
+					},
+				}},
+			},
+			{
+				ProjectName: "aws2",
+				FinopsResults: []format.FinopsOutput{{
+					PolicyName: "Use GP3", PolicySlug: "use-gp3",
+					FailingResources: []format.FinopsFailingResourceOutput{
+						{Name: "aws_s3_bucket.screenshots"},
+					},
+				}},
+				TaggingResults: []format.TaggingOutput{{
+					PolicyName: "Required Tags",
+					FailingResources: []format.FailingTaggingResourceOutput{
+						{Address: "aws_s3_bucket.screenshots", MissingMandatoryTags: []string{"env"}},
+					},
+				}},
+			},
+		},
+	}
+
+	s := BuildSummaryView(data)
+	assert.Equal(t, 2, s.DistinctFailingFinopsResources, "address shared across projects must count twice")
+	assert.Equal(t, 2, s.DistinctFailingTaggingResources, "address shared across projects must count twice")
+}

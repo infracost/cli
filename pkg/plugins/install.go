@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/logging"
 )
@@ -450,17 +451,5 @@ func renameWithRetry(src, dst string) error {
 }
 
 func defaultPluginCachePath() string {
-	dir, err := os.UserCacheDir()
-	if err == nil {
-		return filepath.Join(dir, "infracost", "plugins")
-	}
-	logging.WithError(err).Msg("failed to load user cache dir, falling back to home directory")
-
-	dir, err = os.UserHomeDir()
-	if err == nil {
-		return filepath.Join(dir, ".infracost", "plugins")
-	}
-
-	logging.WithError(err).Msg("pluginCachePath: failed to load user home dir, falling back to current directory")
-	return filepath.Join(".infracost", "plugins")
+	return cache.PluginsDir()
 }

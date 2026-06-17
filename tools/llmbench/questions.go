@@ -288,15 +288,15 @@ func resourcesFailingTeamTag(f *format.Output) int {
 	return n
 }
 
-// distinctFailingTaggingResources counts resource addresses appearing in at
-// least one tagging policy's FailingResources, across all projects, with
-// resource addresses deduplicated.
+// distinctFailingTaggingResources counts (project, resource address) pairs
+// appearing in at least one tagging policy's FailingResources. Keyed per
+// project so two projects sharing a resource address each contribute one.
 func distinctFailingTaggingResources(f *format.Output) int {
 	seen := map[string]struct{}{}
 	for _, p := range f.Projects {
 		for _, t := range p.TaggingResults {
 			for _, fr := range t.FailingResources {
-				seen[fr.Address] = struct{}{}
+				seen[p.ProjectName+"\x00"+fr.Address] = struct{}{}
 			}
 		}
 	}
@@ -304,13 +304,14 @@ func distinctFailingTaggingResources(f *format.Output) int {
 }
 
 // distinctFailingFinopsResources is the FinOps-side equivalent of the
-// tagging counter — distinct resource names failing any FinOps policy.
+// tagging counter — distinct (project, resource) pairs failing any FinOps
+// policy.
 func distinctFailingFinopsResources(f *format.Output) int {
 	seen := map[string]struct{}{}
 	for _, p := range f.Projects {
 		for _, fp := range p.FinopsResults {
 			for _, fr := range fp.FailingResources {
-				seen[fr.Name] = struct{}{}
+				seen[p.ProjectName+"\x00"+fr.Name] = struct{}{}
 			}
 		}
 	}
