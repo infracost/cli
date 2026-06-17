@@ -135,36 +135,18 @@ func pruneRoot() {
 	}
 }
 
-// pruneParserLinks tidies abandoned half-fetched modules under each
-// per-process dir in parser/. Layout is parser/<pid>/<CacheKey>/ for the
-// module contents and parser/<pid>/<CacheKey>.link for the sidecar; an
-// empty <CacheKey>/ paired with a sidecar means the fetch never
-// completed and both are stale. Walks one level into parser/ — sidecars
-// live in the <pid>/ dirs, not at the parser/ root.
+// pruneParserLinks tidies abandoned half-fetched modules under parser/.
+// Layout is parser/<CacheKey>/ for the module contents and
+// parser/<CacheKey>.link for the sidecar; an empty <CacheKey>/ paired
+// with a sidecar means the fetch never completed and both are stale.
+// Sidecars live at the top of parser/ — no recursion.
 func pruneParserLinks() {
-	root := ParserDir()
-	procDirs, err := os.ReadDir(root)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			logging.Warnf("failed to read parser cache %q: %s", root, err)
-		}
-		return
-	}
-
-	for _, pd := range procDirs {
-		if !pd.IsDir() {
-			continue
-		}
-		pruneLinksIn(filepath.Join(root, pd.Name()))
-	}
-}
-
-// pruneLinksIn removes `<base>.link` + `<base>/` pairings inside dir
-// where the directory is empty. Best-effort, errors logged.
-func pruneLinksIn(dir string) {
+	dir := ParserDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		logging.Warnf("failed to read parser subdir %q: %s", dir, err)
+		if !errors.Is(err, os.ErrNotExist) {
+			logging.Warnf("failed to read parser cache %q: %s", dir, err)
+		}
 		return
 	}
 
