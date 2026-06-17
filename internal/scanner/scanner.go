@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/infracost/cli/internal/api/dashboard"
+	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/trace"
 	"github.com/infracost/cli/pkg/logging"
@@ -279,9 +280,9 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		}
 	}
 
-	cacheDir := filepath.Join(os.TempDir(), ".infracost", "cache")
+	cacheDir := cache.ParserDir()
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
-		return nil, fmt.Errorf("failed to create cache directory: %w", err)
+		return nil, fmt.Errorf("failed to create parser cache directory: %w", err)
 	}
 
 	for _, project := range repoConfig.Projects {
@@ -361,3 +362,4 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 
 	return &result, nil
 }
+

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/infracost/cli/pkg/logging"
@@ -111,14 +112,36 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		return nil, fmt.Errorf("failed to build parser plugin options: %w", err)
 	}
 
-	response, err := parserPlugin.Parse(ctx, &pluginpb.ParseRequest{
-		Path:             absoluteProjectPath,
-		GenericOptions:   genericOptions,
-		RawOptions:       rawOptions,
-		RawOptionsFormat: rawOptionsFormat,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("parser plugin error: %w (run with --debug or set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
+	// Try the parser-results cache first. The fingerprint folds in
+	// RawOptions + format so e.g. a different workspace or tfvars file
+	// invalidates correctly. Skipping the gRPC + HCL parse + module load
+	// is the entire point of this cache; the typical hot path on a 10k-
+	// project repo where one project changed is N-1 hits + 1 miss.
+	fingerprintExtra := append([]byte(rawOptionsFormat), 0)
+	fingerprintExtra = append(fingerprintExtra, rawOptions...)
+	fingerprint, fpErr := fingerprintProject(absoluteProjectPath, fingerprintExtra)
+	if fpErr != nil {
+		logging.Debugf("parser fingerprint failed for %q: %s", absoluteProjectPath, fpErr)
+	}
+
+	var response *pluginpb.ParseResponse
+	if fpErr == nil {
+		response = loadParsedResponse(absoluteProjectPath, fingerprint)
+	}
+
+	if response == nil {
+		response, err = parserPlugin.Parse(ctx, &pluginpb.ParseRequest{
+			Path:             absoluteProjectPath,
+			GenericOptions:   genericOptions,
+			RawOptions:       rawOptions,
+			RawOptionsFormat: rawOptionsFormat,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("parser plugin error: %w (run with --debug or set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
+		}
+		if fpErr == nil && response != nil {
+			saveParsedResponse(absoluteProjectPath, fingerprint, response)
+		}
 	}
 
 	projectResult := &ProjectResult{
@@ -258,12 +281,21 @@ func finalProjectType(projectType repoconfig.ProjectType, absoluteProjectPath st
 }
 
 func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
+	// Per-process subdir under parser/ so concurrent CLI invocations don't
+	// race on the same module CacheKey. Stale <pid>/ dirs get reaped by
+	// cache.Prune() on its 24h mtime sweep.
+	cacheDir := filepath.Join(opts.CacheDir, strconv.Itoa(os.Getpid()))
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		logging.Warnf("failed to create per-process parser cache dir %q, falling back to %q: %s", cacheDir, opts.CacheDir, err)
+		cacheDir = opts.CacheDir
+	}
+
 	return &options.GenericOptions{
 		ProjectName:        opts.Project.Name,
 		EnvironmentName:    opts.Project.EnvName,
 		RepoDirectory:      opts.RootDir,
 		TemporaryDirectory: os.TempDir(),
-		CacheDirectory:     opts.CacheDir,
+		CacheDirectory:     cacheDir,
 		WorkingDirectory:   opts.RootDir,
 	}
 }

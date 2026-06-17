@@ -13,13 +13,11 @@ import (
 	"sync"
 
 	"github.com/hashicorp/go-plugin"
-	"github.com/infracost/cli/internal/protocache"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins/consts"
 	"github.com/infracost/cli/pkg/plugins/pluginconn"
 	"github.com/infracost/cli/pkg/plugins/pluginerr"
 	pb "github.com/infracost/proto/gen/go/infracost/plugin"
-	providerpb "github.com/infracost/proto/gen/go/infracost/provider"
 	"google.golang.org/grpc"
 )
 
@@ -312,27 +310,6 @@ func (m *Manager) Close() {
 	m.loadOnce = sync.Once{}
 }
 
-// ProcessTreeInput runs every loaded provider plugin against the given input
-// and concatenates the resources and FinOps results.
-func (m *Manager) ProcessTreeInput(ctx context.Context, input *providerpb.TreeInput) ([]*providerpb.Resource, []*providerpb.FinopsPolicyResult, error) {
-	plugins, err := m.LoadProviderPlugins(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var resources []*providerpb.Resource
-	var finops []*providerpb.FinopsPolicyResult
-	for _, p := range plugins {
-		rs, fs, err := p.processWithCache(ctx, input)
-		if err != nil {
-			return nil, nil, fmt.Errorf("provider %q: %w", p.Info.GetName(), err)
-		}
-		resources = append(resources, rs...)
-		finops = append(finops, fs...)
-	}
-	return resources, finops, nil
-}
-
 func isPluginSidecar(name string) bool {
 	return strings.HasSuffix(name, ".sha256") || strings.HasSuffix(name, ".version")
 }
@@ -350,32 +327,6 @@ type ProviderPlugin struct {
 	pb.ProviderServiceClient
 	Info   *pb.GetPluginInfoResponse
 	client *plugin.Client
-}
-
-func (p *ProviderPlugin) processWithCache(ctx context.Context, input *providerpb.TreeInput) ([]*providerpb.Resource, []*providerpb.FinopsPolicyResult, error) {
-	var cache protocache.Cache[*providerpb.Output]
-	key := createTreeCacheKey(p.Info.GetName(), p.Info.GetVersion(), input)
-
-	if loaded, err := cache.Load(key); err == nil {
-		return loaded.Resources, loaded.FinopsResults, nil
-	} else if !errors.Is(err, protocache.ErrCacheMiss) {
-		logging.Warnf("failed to load provider output from cache: %s", err)
-	}
-
-	resp, err := p.Process(ctx, &pb.ProcessRequest{Input: input})
-	if err != nil {
-		return nil, nil, err
-	}
-	output := resp.GetOutput()
-	if output == nil {
-		output = &providerpb.Output{}
-	}
-
-	if err := cache.Save(key, output); err != nil {
-		logging.Warnf("failed to save provider output: %s", err)
-	}
-
-	return output.Resources, output.FinopsResults, nil
 }
 
 type lockedParserServiceClient struct {

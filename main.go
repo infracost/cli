@@ -198,6 +198,7 @@ func run() (exitCode int) {
 	addCmd(cmds.DoctorCmd(cfg), "maintain")
 	addCmd(cmds.MCPCmd(cfg), "maintain")
 	addCmd(cmds.Update(cfg), "maintain")
+	addCmd(cmds.CacheCmd(cfg), "maintain")
 
 	cmd.AddCommand(cmds.Version(cfg))
 

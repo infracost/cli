@@ -1,15 +1,14 @@
 package cache
 
 import (
-	"os"
-	"path/filepath"
 	"time"
-
-	"github.com/infracost/cli/pkg/logging"
 )
 
 type Config struct {
-	// Cache is where the cache files should go.
+	// Cache is where the per-scan result files live (<key>.json plus
+	// manifest.json). Defaults to [ResultsDir]; override with
+	// INFRACOST_CLI_CACHE_DIRECTORY when you want results written
+	// somewhere other than the canonical infracost cache root.
 	Cache string `env:"INFRACOST_CLI_CACHE_DIRECTORY"`
 
 	// TTL is how long cached results remain valid.
@@ -21,25 +20,9 @@ type Config struct {
 
 func (c *Config) Process() {
 	if len(c.Cache) == 0 {
-		c.Cache = defaultCachePath()
+		c.Cache = ResultsDir()
 	}
 	if c.TTL == 0 {
 		c.TTL = time.Hour
 	}
-}
-
-func defaultCachePath() string {
-	dir, err := os.UserCacheDir()
-	if err == nil {
-		return filepath.Join(dir, "infracost", "cache")
-	}
-	logging.WithError(err).Msg("failed to load user cache dir, falling back to home directory")
-
-	dir, err = os.UserHomeDir()
-	if err == nil {
-		return filepath.Join(dir, ".infracost", "cache")
-	}
-
-	logging.WithError(err).Msg("failed to load user home dir, falling back to current directory")
-	return filepath.Join(".infracost", "cache")
 }
