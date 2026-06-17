@@ -7,15 +7,56 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/infracost/cli/pkg/logging"
 )
 
-// pruneMaxAge is the cutoff used by [Prune]. Entries older than this in
-// results/, parser/ and parser-results/ are removed on every sweep.
-const pruneMaxAge = 24 * time.Hour
+// DefaultPruneAge is the cutoff used by [Prune] when called without an
+// explicit age (auto-prune at the top of `infracost scan`, and the
+// `infracost cache prune` command's default).
+const DefaultPruneAge = 24 * time.Hour
+
+// ParseAge accepts any [time.ParseDuration]-compatible string plus a
+// trailing `d` (days) or `w` (weeks) — e.g. "30d", "2w", "12h30m".
+// Returned to the caller as a time.Duration so the rest of the package
+// stays standard.
+func ParseAge(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+	if len(s) > 1 {
+		last := s[len(s)-1]
+		var mult time.Duration
+		switch last {
+		case 'd':
+			mult = 24 * time.Hour
+		case 'w':
+			mult = 7 * 24 * time.Hour
+		}
+		if mult > 0 {
+			n, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+			}
+			if n < 0 {
+				return 0, fmt.Errorf("duration must not be negative: %q", s)
+			}
+			return time.Duration(n) * mult, nil
+		}
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("duration must not be negative: %q", s)
+	}
+	return d, nil
+}
 
 // SubdirInfo is a single row in [Info]'s output — one of the named caches
 // (results / parser / parser-results) and its total on-disk size in
@@ -37,25 +78,26 @@ type SubdirInfo struct {
 //   - root: every file under [Root] except [UpdateCheckFilename] is
 //     removed; directories are left alone (the four canonical caches
 //     plus anything a future version adds).
-//   - results/: <key>.json files older than 24h, then the manifest is
+//   - results/: <key>.json files older than age, then the manifest is
 //     reconciled to mirror what's actually on disk — entries pointing
 //     at files that don't exist get dropped, and orphan files with no
 //     manifest entry get removed too (the disk is authoritative).
 //   - parser/: top-level entries (module CacheKey dirs and their
-//     `.link` sidecars) older than 24h. Then any `.link` sidecar whose
+//     `.link` sidecars) older than age. Then any `.link` sidecar whose
 //     matching module directory exists but is empty has both the
 //     sidecar and the empty dir removed — abandoned half-fetches.
-//   - parser-results/: per-project Parse() responses older than 24h
+//   - parser-results/: per-project Parse() responses older than age
 //     (layout is parser-results/<plugin>/<version>/<key>.pb; empty
 //     version/ and plugin/ dirs left behind are swept too).
 //   - plugins/: subdirectories (legacy pre-flat-layout), plus any
-//     .sha256/.version sidecar whose matching executable is gone.
-func Prune() {
+//     .sha256/.version sidecar whose matching executable is gone — age
+//     does not apply here.
+func Prune(age time.Duration) {
 	pruneRoot()
 	pruneLegacy()
-	pruneResults()
-	pruneByMtime(ParserDir(), false)
-	pruneParserResults()
+	pruneResults(age)
+	pruneByMtime(ParserDir(), false, age)
+	pruneParserResults(age)
 	pruneParserLinks()
 	prunePlugins()
 }
@@ -186,12 +228,12 @@ func pruneParserLinks() {
 	}
 }
 
-// pruneResults trims results/ to only entries newer than [pruneMaxAge]
-// AND present in the manifest. The disk is authoritative: if the
-// manifest references a file that's gone, the entry is dropped; if a
-// <key>.json sits there with no manifest entry it's removed because
-// nothing can read it.
-func pruneResults() {
+// pruneResults trims results/ to only entries newer than age AND
+// present in the manifest. The disk is authoritative: if the manifest
+// references a file that's gone, the entry is dropped; if a <key>.json
+// sits there with no manifest entry it's removed because nothing can
+// read it.
+func pruneResults(age time.Duration) {
 	dir := ResultsDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -201,7 +243,7 @@ func pruneResults() {
 		return
 	}
 
-	cutoff := time.Now().Add(-pruneMaxAge)
+	cutoff := time.Now().Add(-age)
 	keptKeys := make(map[string]struct{})
 	for _, e := range entries {
 		name := e.Name()
@@ -299,9 +341,9 @@ func removeOrphans(dir string, keptKeys map[string]struct{}, entries map[string]
 }
 
 // pruneParserResults trims parser-results/<plugin>/<version>/*.pb files
-// older than [pruneMaxAge], then removes empty version/ and plugin/
-// dirs left behind. Layout is owned by pkg/scanner.parserCacheDir.
-func pruneParserResults() {
+// older than age, then removes empty version/ and plugin/ dirs left
+// behind. Layout is owned by pkg/scanner.parserCacheDir.
+func pruneParserResults(age time.Duration) {
 	root := ParserResultsDir()
 	plugins, err := os.ReadDir(root)
 	if err != nil {
@@ -311,7 +353,7 @@ func pruneParserResults() {
 		return
 	}
 
-	cutoff := time.Now().Add(-pruneMaxAge)
+	cutoff := time.Now().Add(-age)
 	for _, plug := range plugins {
 		if !plug.IsDir() {
 			continue
@@ -372,11 +414,11 @@ func removeIfEmpty(dir string) {
 }
 
 // pruneByMtime removes immediate children of dir whose mtime is older
-// than [pruneMaxAge]. When dirOnly is true only subdirectories are
-// considered (used for parser/, where each child is a CacheKey-keyed
-// module dir); otherwise both files and subdirs are checked. Best
-// effort, errors logged.
-func pruneByMtime(dir string, dirOnly bool) {
+// than age. When dirOnly is true only subdirectories are considered
+// (used for parser/, where each child is a CacheKey-keyed module dir);
+// otherwise both files and subdirs are checked. Best effort, errors
+// logged.
+func pruneByMtime(dir string, dirOnly bool, age time.Duration) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -385,7 +427,7 @@ func pruneByMtime(dir string, dirOnly bool) {
 		return
 	}
 
-	cutoff := time.Now().Add(-pruneMaxAge)
+	cutoff := time.Now().Add(-age)
 	for _, e := range entries {
 		if dirOnly && !e.IsDir() {
 			continue

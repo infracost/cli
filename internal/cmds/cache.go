@@ -49,15 +49,24 @@ func cacheInfoCmd() *cobra.Command {
 }
 
 func cachePruneCmd() *cobra.Command {
-	return &cobra.Command{
+	ageStr := cache.DefaultPruneAge.String()
+	cmd := &cobra.Command{
 		Use:   "prune",
-		Short: "Remove cache entries older than 24h and any stray files",
+		Short: "Remove old cache entries and any stray files",
+		Long: "Removes cache entries older than --age plus any stray files at the cache root.\n" +
+			"Age accepts Go duration syntax (e.g. 24h, 30m, 12h30m) plus shorthand 'd' (days) and 'w' (weeks).",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			cache.Prune()
+			age, err := cache.ParseAge(ageStr)
+			if err != nil {
+				return err
+			}
+			cache.Prune(age)
 			fmt.Println(ui.Positive("✓ Cache pruned."))
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&ageStr, "age", ageStr, "Minimum age of entries to prune (e.g. 24h, 7d, 2w)")
+	return cmd
 }
 
 func cacheClearCmd() *cobra.Command {

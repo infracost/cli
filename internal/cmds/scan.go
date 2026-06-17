@@ -174,7 +174,7 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			startTime := time.Now()
 
-			cache.Prune()
+			cache.Prune(cache.DefaultPruneAge)
 
 			if len(args) > 0 {
 				in.Path = args[0]
