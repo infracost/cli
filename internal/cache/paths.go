@@ -26,16 +26,17 @@ const (
 // fallback chain previously inlined in internal/cache/config.go,
 // internal/update/check.go and pkg/plugins/install.go.
 func Root() string {
-	if dir, err := os.UserCacheDir(); err == nil {
+	dir, err := os.UserCacheDir()
+	if err == nil {
 		return filepath.Join(dir, "infracost")
-	} else {
-		logging.WithError(err).Msg("failed to load user cache dir, falling back to home directory")
 	}
-	if dir, err := os.UserHomeDir(); err == nil {
+	logging.WithError(err).Msg("failed to load user cache dir, falling back to home directory")
+
+	dir, err = os.UserHomeDir()
+	if err == nil {
 		return filepath.Join(dir, ".infracost")
-	} else {
-		logging.WithError(err).Msg("failed to load user home dir, falling back to current directory")
 	}
+	logging.WithError(err).Msg("failed to load user home dir, falling back to current directory")
 	return ".infracost"
 }
 

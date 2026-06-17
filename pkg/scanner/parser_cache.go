@@ -63,9 +63,9 @@ func fingerprintProject(projectDir string, extra []byte) (string, error) {
 		}
 		h.Write([]byte(rel))
 		h.Write([]byte{0})
-		binary.BigEndian.PutUint64(nsBuf[:], uint64(info.ModTime().UnixNano()))
+		binary.BigEndian.PutUint64(nsBuf[:], uint64(info.ModTime().UnixNano())) //nolint:gosec // G115: bit-pattern cast for hashing, sign irrelevant
 		h.Write(nsBuf[:])
-		binary.BigEndian.PutUint64(sizeBuf[:], uint64(info.Size()))
+		binary.BigEndian.PutUint64(sizeBuf[:], uint64(info.Size())) //nolint:gosec // G115: file sizes are non-negative
 		h.Write(sizeBuf[:])
 		return nil
 	})
@@ -107,7 +107,7 @@ func projectCacheFilename(absProjectPath string) string {
 // unreadable / corrupt file) — the caller falls back to re-parsing.
 func loadParsedResponse(pluginName, pluginVersion, absProjectPath, fingerprint string) *pluginpb.ParseResponse {
 	path := filepath.Join(parserCacheDir(pluginName, pluginVersion), projectCacheFilename(absProjectPath))
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: path is derived from the cache root, not user input
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			logging.Debugf("parser cache open failed for %q: %s", path, err)

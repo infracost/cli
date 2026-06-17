@@ -238,7 +238,7 @@ func pruneResults() {
 // the orphan sweep below removes them next pass).
 func reconcileManifest(dir string, keptKeys map[string]struct{}) {
 	manifestPath := filepath.Join(dir, "manifest.json")
-	data, err := os.ReadFile(manifestPath)
+	data, err := os.ReadFile(manifestPath) //nolint:gosec // G304: manifestPath is derived from the cache root, not user input
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			logging.Warnf("failed to read manifest %q: %s", manifestPath, err)
