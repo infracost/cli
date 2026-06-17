@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/pkg/logging"
@@ -16,28 +17,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// parserFingerprintSkipDirs mirrors internal/cache.skipDirs — directories
-// that don't contribute to the parse result and would just slow down the
-// walk (.git is the killer; node_modules is also pathological).
-var parserFingerprintSkipDirs = map[string]bool{
-	".terraform":        true,
-	".terragrunt-cache": true,
-	".git":              true,
-	"node_modules":      true,
-	".idea":             true,
-	".vscode":           true,
-}
-
 // fingerprintHexLen is the byte length of the hex-encoded SHA256
 // fingerprint stored at the head of every parser-results cache file.
 const fingerprintHexLen = 64
 
 // fingerprintProject walks projectDir recursively and produces a hex
 // SHA256 of every file's (relative-path, mtime-ns, size). Skip dirs
-// match the existing internal/cache.skipDirs convention. The extra
-// argument is mixed in first so the fingerprint also changes when
-// parser inputs (RawOptions / RawOptionsFormat) change — otherwise a
-// tfvars file swap that doesn't touch any *.tf would be a cache hit.
+// come from [cache.SkipDirs] so the parser-result cache and the
+// source-freshness check stay in lockstep. The extra argument is mixed
+// in first so the fingerprint also changes when parser inputs
+// (RawOptions / RawOptionsFormat) change — otherwise a tfvars file
+// swap that doesn't touch any *.tf would be a cache hit.
 //
 // mtime-based fingerprinting is deliberately content-blind: a re-save
 // with identical content invalidates the cache, and an upstream module
@@ -58,7 +48,7 @@ func fingerprintProject(projectDir string, extra []byte) (string, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			if path != projectDir && parserFingerprintSkipDirs[d.Name()] {
+			if path != projectDir && cache.SkipDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
@@ -85,11 +75,27 @@ func fingerprintProject(projectDir string, extra []byte) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// parserCacheDir returns the subdirectory of parser-results that holds
+// entries for one (plugin name, plugin version) pair. Sanitizes the
+// plugin name by swapping `/` for `_` so plugin names that look like
+// repo paths (e.g. `infracost/terraform`) don't escape the cache root.
+// Version-keying means an upgraded plugin automatically misses the old
+// cache; the 24h prune cleans the old version dir up.
+func parserCacheDir(pluginName, pluginVersion string) string {
+	safeName := strings.ReplaceAll(pluginName, "/", "_")
+	if safeName == "" {
+		safeName = "_unknown"
+	}
+	safeVersion := pluginVersion
+	if safeVersion == "" {
+		safeVersion = "_unknown"
+	}
+	return filepath.Join(cache.ParserResultsDir(), safeName, safeVersion)
+}
+
 // projectCacheFilename hashes the absolute project path into a stable
-// filename (one file per project). The fingerprint validates freshness
-// inside that file — keying the filename by path means we overwrite the
-// project's entry on every scan instead of accumulating one new file
-// per content change.
+// filename (one file per project within a plugin/version dir). The
+// fingerprint validates freshness inside that file.
 func projectCacheFilename(absProjectPath string) string {
 	h := sha256.Sum256([]byte(absProjectPath))
 	return hex.EncodeToString(h[:]) + ".pb"
@@ -99,8 +105,8 @@ func projectCacheFilename(absProjectPath string) string {
 // absProjectPath whose stored fingerprint matches the supplied one.
 // Returns nil for any failure (cache miss, fingerprint mismatch,
 // unreadable / corrupt file) — the caller falls back to re-parsing.
-func loadParsedResponse(absProjectPath, fingerprint string) *pluginpb.ParseResponse {
-	path := filepath.Join(cache.ParserResultsDir(), projectCacheFilename(absProjectPath))
+func loadParsedResponse(pluginName, pluginVersion, absProjectPath, fingerprint string) *pluginpb.ParseResponse {
+	path := filepath.Join(parserCacheDir(pluginName, pluginVersion), projectCacheFilename(absProjectPath))
 	f, err := os.Open(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -131,11 +137,12 @@ func loadParsedResponse(absProjectPath, fingerprint string) *pluginpb.ParseRespo
 
 // saveParsedResponse writes the Parse response for absProjectPath into
 // the parser-results cache, prefixed with the supplied fingerprint so
-// loadParsedResponse can detect a stale match. Best-effort — write
-// failures are logged and swallowed so a flaky cache write never aborts
-// a scan.
-func saveParsedResponse(absProjectPath, fingerprint string, resp *pluginpb.ParseResponse) {
-	dir := cache.ParserResultsDir()
+// loadParsedResponse can detect a stale match. Uses os.CreateTemp so
+// concurrent saves don't clobber a shared `.tmp` file. Best-effort —
+// write failures are logged and swallowed so a flaky cache write never
+// aborts a scan.
+func saveParsedResponse(pluginName, pluginVersion, absProjectPath, fingerprint string, resp *pluginpb.ParseResponse) {
+	dir := parserCacheDir(pluginName, pluginVersion)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		logging.Warnf("failed to create parser results cache dir %q: %s", dir, err)
 		return
@@ -147,17 +154,30 @@ func saveParsedResponse(absProjectPath, fingerprint string, resp *pluginpb.Parse
 		return
 	}
 
-	path := filepath.Join(dir, projectCacheFilename(absProjectPath))
-	tmp := path + ".tmp"
+	tmp, err := os.CreateTemp(dir, "parser-*.tmp")
+	if err != nil {
+		logging.Warnf("failed to create parser cache tmp file in %q: %s", dir, err)
+		return
+	}
+	tmpPath := tmp.Name()
 	out := make([]byte, 0, fingerprintHexLen+len(data))
 	out = append(out, []byte(fingerprint)...)
 	out = append(out, data...)
-	if err := os.WriteFile(tmp, out, 0o600); err != nil {
-		logging.Warnf("failed to write parser cache %q: %s", tmp, err)
+	if _, err := tmp.Write(out); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		logging.Warnf("failed to write parser cache %q: %s", tmpPath, err)
 		return
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		logging.Warnf("failed to commit parser cache %q: %s", path, err)
-		_ = os.Remove(tmp)
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		logging.Warnf("failed to close parser cache %q: %s", tmpPath, err)
+		return
+	}
+
+	finalPath := filepath.Join(dir, projectCacheFilename(absProjectPath))
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		_ = os.Remove(tmpPath)
+		logging.Warnf("failed to commit parser cache %q: %s", finalPath, err)
 	}
 }

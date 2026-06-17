@@ -41,19 +41,21 @@ type SubdirInfo struct {
 //     reconciled to mirror what's actually on disk — entries pointing
 //     at files that don't exist get dropped, and orphan files with no
 //     manifest entry get removed too (the disk is authoritative).
-//   - parser/: subdirectories older than 24h (each one is a module's
-//     CacheKey-keyed dir, mtime tracks last touch). Then any `.link`
-//     sidecar whose matching module directory exists but is empty has
-//     both the sidecar and the empty dir removed — abandoned half-fetches.
-//   - parser-results/: per-project Parse() responses older than 24h.
+//   - parser/: top-level entries (module CacheKey dirs and their
+//     `.link` sidecars) older than 24h. Then any `.link` sidecar whose
+//     matching module directory exists but is empty has both the
+//     sidecar and the empty dir removed — abandoned half-fetches.
+//   - parser-results/: per-project Parse() responses older than 24h
+//     (layout is parser-results/<plugin>/<version>/<key>.pb; empty
+//     version/ and plugin/ dirs left behind are swept too).
 //   - plugins/: subdirectories (legacy pre-flat-layout), plus any
 //     .sha256/.version sidecar whose matching executable is gone.
 func Prune() {
 	pruneRoot()
 	pruneLegacy()
 	pruneResults()
-	pruneByMtime(ParserDir(), true)
-	pruneByMtime(ParserResultsDir(), false)
+	pruneByMtime(ParserDir(), false)
+	pruneParserResults()
 	pruneParserLinks()
 	prunePlugins()
 }
@@ -312,6 +314,79 @@ func removeOrphans(dir string, keptKeys map[string]struct{}, entries map[string]
 			logging.Warnf("failed to remove orphan results entry %q: %s", path, err)
 		}
 	}
+}
+
+// pruneParserResults trims parser-results/<plugin>/<version>/*.pb files
+// older than [pruneMaxAge], then removes empty version/ and plugin/
+// dirs left behind. Layout is owned by pkg/scanner.parserCacheDir.
+func pruneParserResults() {
+	root := ParserResultsDir()
+	plugins, err := os.ReadDir(root)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			logging.Warnf("failed to read parser-results cache %q: %s", root, err)
+		}
+		return
+	}
+
+	cutoff := time.Now().Add(-pruneMaxAge)
+	for _, plug := range plugins {
+		if !plug.IsDir() {
+			continue
+		}
+		pluginDir := filepath.Join(root, plug.Name())
+		versions, err := os.ReadDir(pluginDir)
+		if err != nil {
+			logging.Warnf("failed to read parser-results plugin dir %q: %s", pluginDir, err)
+			continue
+		}
+		for _, ver := range versions {
+			if !ver.IsDir() {
+				continue
+			}
+			verDir := filepath.Join(pluginDir, ver.Name())
+			pruneOldFilesIn(verDir, cutoff)
+			removeIfEmpty(verDir)
+		}
+		removeIfEmpty(pluginDir)
+	}
+}
+
+// pruneOldFilesIn removes files in dir whose mtime is before cutoff.
+// Doesn't recurse — assumes a flat directory of leaf files.
+func pruneOldFilesIn(dir string, cutoff time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		logging.Warnf("failed to read parser-results version dir %q: %s", dir, err)
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		target := filepath.Join(dir, e.Name())
+		if err := os.Remove(target); err != nil {
+			logging.Warnf("failed to remove stale parser-results entry %q: %s", target, err)
+		}
+	}
+}
+
+// removeIfEmpty deletes dir if it has no remaining entries. Best
+// effort, errors swallowed — non-empty dirs return ENOTEMPTY which is
+// not a failure here.
+func removeIfEmpty(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) > 0 {
+		return
+	}
+	_ = os.Remove(dir)
 }
 
 // pruneByMtime removes immediate children of dir whose mtime is older

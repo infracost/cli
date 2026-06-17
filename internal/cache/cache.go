@@ -13,7 +13,10 @@ import (
 	"github.com/infracost/cli/internal/format"
 )
 
-var skipDirs = map[string]bool{
+// SkipDirs lists directory names that walkers (source-freshness check,
+// parser-cache fingerprinting) should ignore — they don't contribute to
+// parse results and dominate walk time on real repos (.git especially).
+var SkipDirs = map[string]bool{
 	".terraform":        true,
 	".terragrunt-cache": true,
 	".git":              true,
@@ -180,7 +183,7 @@ func newerFile(root string, since time.Time) string {
 			return nil
 		}
 		if d.IsDir() {
-			if skipDirs[d.Name()] {
+			if SkipDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil

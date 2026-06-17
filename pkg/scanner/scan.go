@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/infracost/cli/pkg/logging"
@@ -117,6 +116,9 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	// invalidates correctly. Skipping the gRPC + HCL parse + module load
 	// is the entire point of this cache; the typical hot path on a 10k-
 	// project repo where one project changed is N-1 hits + 1 miss.
+	pluginName := parserPlugin.Info.GetName()
+	pluginVersion := parserPlugin.Info.GetVersion()
+
 	fingerprintExtra := append([]byte(rawOptionsFormat), 0)
 	fingerprintExtra = append(fingerprintExtra, rawOptions...)
 	fingerprint, fpErr := fingerprintProject(absoluteProjectPath, fingerprintExtra)
@@ -126,7 +128,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 
 	var response *pluginpb.ParseResponse
 	if fpErr == nil {
-		response = loadParsedResponse(absoluteProjectPath, fingerprint)
+		response = loadParsedResponse(pluginName, pluginVersion, absoluteProjectPath, fingerprint)
 	}
 
 	if response == nil {
@@ -140,7 +142,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 			return nil, fmt.Errorf("parser plugin error: %w (run with --debug or set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
 		}
 		if fpErr == nil && response != nil {
-			saveParsedResponse(absoluteProjectPath, fingerprint, response)
+			saveParsedResponse(pluginName, pluginVersion, absoluteProjectPath, fingerprint, response)
 		}
 	}
 
@@ -281,21 +283,12 @@ func finalProjectType(projectType repoconfig.ProjectType, absoluteProjectPath st
 }
 
 func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
-	// Per-process subdir under parser/ so concurrent CLI invocations don't
-	// race on the same module CacheKey. Stale <pid>/ dirs get reaped by
-	// cache.Prune() on its 24h mtime sweep.
-	cacheDir := filepath.Join(opts.CacheDir, strconv.Itoa(os.Getpid()))
-	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
-		logging.Warnf("failed to create per-process parser cache dir %q, falling back to %q: %s", cacheDir, opts.CacheDir, err)
-		cacheDir = opts.CacheDir
-	}
-
 	return &options.GenericOptions{
 		ProjectName:        opts.Project.Name,
 		EnvironmentName:    opts.Project.EnvName,
 		RepoDirectory:      opts.RootDir,
 		TemporaryDirectory: os.TempDir(),
-		CacheDirectory:     cacheDir,
+		CacheDirectory:     opts.CacheDir,
 		WorkingDirectory:   opts.RootDir,
 	}
 }
