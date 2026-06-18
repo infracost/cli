@@ -28,11 +28,15 @@ type Config struct {
 }
 
 type ComputePool struct {
-	Name         string            `json:"name"`
-	InstanceType string            `json:"instance_type"`
-	Spot         bool              `json:"spot"`
-	NodeCount    int64             `json:"node_count,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"`
+	Name string `json:"name"`
+	// InstanceTypes are the interchangeable instance families a (usually Spot)
+	// node group may launch. The provider prices all of them and uses the
+	// cheapest, since a capacity/price-optimized autoscaler rarely lands on the
+	// first/newest one.
+	InstanceTypes []string          `json:"instance_types"`
+	Spot          bool              `json:"spot"`
+	NodeCount     int64             `json:"node_count,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
 }
 
 type StorageBackend struct {

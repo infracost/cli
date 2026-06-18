@@ -27,13 +27,16 @@ func FromTerraformTree(protoTree *prototree.Tree) (*Config, error) {
 	for i := range w.AWS.EKS.NodeGroups {
 		ng := &w.AWS.EKS.NodeGroups[i]
 
-		// A node group may list several instance families (Spot diversification);
-		// price against the first as a representative.
-		instanceType := ""
-		if items := ng.InstanceTypes.Items(); len(items) > 0 {
-			instanceType = items[0].Value()
+		// A node group may list several interchangeable instance families
+		// (Spot diversification); carry them all so the provider can price the
+		// cheapest.
+		var instanceTypes []string
+		for _, it := range ng.InstanceTypes.Items() {
+			if v := it.Value(); v != "" {
+				instanceTypes = append(instanceTypes, v)
+			}
 		}
-		if instanceType == "" {
+		if len(instanceTypes) == 0 {
 			continue
 		}
 
@@ -42,10 +45,10 @@ func FromTerraformTree(protoTree *prototree.Tree) (*Config, error) {
 		}
 
 		cfg.ComputePools = append(cfg.ComputePools, ComputePool{
-			Name:         ng.Name.Value(),
-			InstanceType: instanceType,
-			NodeCount:    ng.InstanceCount.Value(),
-			Spot:         ng.PurchaseOption.Value() == eks.PurchaseOptionSpot,
+			Name:          ng.Name.Value(),
+			InstanceTypes: instanceTypes,
+			NodeCount:     ng.InstanceCount.Value(),
+			Spot:          ng.PurchaseOption.Value() == eks.PurchaseOptionSpot,
 		})
 	}
 

@@ -59,8 +59,11 @@ func TestFromTerraformTree_EKSNodeGroups(t *testing.T) {
 	}
 
 	p0 := cfg.ComputePools[0]
-	if p0.Name != "default_workers" || p0.InstanceType != "r7i.large" || !p0.Spot || p0.NodeCount != 3 {
+	if p0.Name != "default_workers" || !p0.Spot || p0.NodeCount != 3 {
 		t.Fatalf("unexpected first pool: %+v", p0)
+	}
+	if len(p0.InstanceTypes) != 3 || p0.InstanceTypes[0] != "r7i.large" || p0.InstanceTypes[2] != "r6i.large" {
+		t.Fatalf("expected all 3 instance families carried, got %v", p0.InstanceTypes)
 	}
 
 	// The derived config must serialize to the JSON the provider consumes.

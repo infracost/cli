@@ -33,7 +33,7 @@ func TestResolveFromDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveFromDir: %v", err)
 	}
-	if cfg == nil || len(cfg.ComputePools) != 1 || cfg.ComputePools[0].InstanceType != "r7i.large" {
+	if cfg == nil || len(cfg.ComputePools) != 1 || len(cfg.ComputePools[0].InstanceTypes) != 1 || cfg.ComputePools[0].InstanceTypes[0] != "r7i.large" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }
