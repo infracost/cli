@@ -9,6 +9,7 @@ import (
 
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/cache"
+	"github.com/infracost/cli/internal/cluster"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/trace"
 	"github.com/infracost/cli/pkg/logging"
@@ -38,6 +39,46 @@ type Scanner struct {
 	Dashboard       dashboard.Config
 	Currency        string
 	PricingEndpoint string
+	// KubernetesClusterFrom is an optional path to the Terraform defining
+	// the cluster K8s manifests deploy onto. When set, the scanner derives
+	// the cluster's node pools and exposes them to the kubernetes provider
+	// plugin so it can price the workloads.
+	KubernetesClusterFrom string
+}
+
+// applyKubernetesCluster derives the cluster topology from the Terraform at
+// KubernetesClusterFrom and exposes it to the kubernetes provider plugin via an
+// environment variable the plugin subprocess inherits. Best-effort: on any
+// failure it logs and continues (K8s workloads are then reported uncosted).
+func (s *Scanner) applyKubernetesCluster(ctx context.Context) {
+	if s.KubernetesClusterFrom == "" {
+		return
+	}
+
+	parser, err := s.Plugins.ParserPluginForProject(ctx, "terraform")
+	if err != nil {
+		logging.WithError(err).Msgf("could not load the terraform parser to resolve --kubernetes-cluster-from %q; K8s workloads will be uncosted", s.KubernetesClusterFrom)
+		return
+	}
+
+	cfg, err := cluster.ResolveFromDir(ctx, s.KubernetesClusterFrom, parser)
+	if err != nil {
+		logging.WithError(err).Msgf("failed to resolve cluster from %q; K8s workloads will be uncosted", s.KubernetesClusterFrom)
+		return
+	}
+	if cfg == nil {
+		logging.Warnf("no Kubernetes cluster (EKS node groups) found in %q; K8s workloads will be uncosted", s.KubernetesClusterFrom)
+		return
+	}
+
+	js, err := cfg.JSON()
+	if err != nil {
+		logging.WithError(err).Msg("failed to encode resolved cluster config")
+		return
+	}
+	if err := os.Setenv(cluster.EnvVar, js); err != nil {
+		logging.WithError(err).Msg("failed to set cluster config for the kubernetes provider")
+	}
 }
 
 type FinOpsPolicy struct {
@@ -187,6 +228,8 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	if _, err := s.Plugins.EnsurePlugins(); err != nil {
 		return nil, fmt.Errorf("failed to install plugins: %w", err)
 	}
+
+	s.applyKubernetesCluster(ctx)
 
 	stat, err := os.Stat(absolutePath)
 	if err != nil {
@@ -362,4 +405,3 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 
 	return &result, nil
 }
-

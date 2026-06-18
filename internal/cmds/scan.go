@@ -36,6 +36,11 @@ type ScanInput struct {
 	// --currency CLI flag); the MCP tool handler takes it from its
 	// input args, falling back to cfg.Currency.
 	Currency string
+	// KubernetesClusterFrom is an optional path to the Terraform that
+	// defines the cluster Kubernetes manifests deploy onto (e.g. an EKS
+	// module). When set, the scanner derives the cluster's node pools from
+	// it and prices K8s workloads against them.
+	KubernetesClusterFrom string
 }
 
 // ScanResult is the typed output of `scan`. Aliased to *format.Output so
@@ -109,11 +114,12 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 	events.RegisterMetadata("branchId", branchName)
 
 	s := &scanner.Scanner{
-		Plugins:         &cfg.Plugins,
-		Logging:         cfg.Logging,
-		Dashboard:       cfg.Dashboard,
-		Currency:        in.Currency,
-		PricingEndpoint: cfg.PricingEndpoint,
+		Plugins:               &cfg.Plugins,
+		Logging:               cfg.Logging,
+		Dashboard:             cfg.Dashboard,
+		Currency:              in.Currency,
+		PricingEndpoint:       cfg.PricingEndpoint,
+		KubernetesClusterFrom: in.KubernetesClusterFrom,
 	}
 	startTime := time.Now()
 	result, err := s.Scan(ctx, runParameters, absolutePath, branchName, source)
@@ -229,6 +235,7 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
+	cmd.Flags().StringVar(&in.KubernetesClusterFrom, "kubernetes-cluster-from", "", "Path to the Terraform that defines the cluster (e.g. an EKS module) that Kubernetes manifests deploy onto, used to price K8s workloads")
 	cmd.Flags().BoolVar(&includeWarnings, "include-warnings", false, "Also show warning-severity diagnostics in the summary")
 
 	return cmd
@@ -268,4 +275,3 @@ func renderScanLLM(w io.Writer, r ScanResult) error {
 	_, err := fmt.Fprintln(w)
 	return err
 }
-
