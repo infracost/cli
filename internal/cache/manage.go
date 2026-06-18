@@ -89,9 +89,9 @@ type SubdirInfo struct {
 //   - parser-results/: per-project Parse() responses older than age
 //     (layout is parser-results/<plugin>/<version>/<key>.pb; empty
 //     version/ and plugin/ dirs left behind are swept too).
-//   - plugins/: subdirectories (legacy pre-flat-layout), plus any
-//     .sha256/.version sidecar whose matching executable is gone — age
-//     does not apply here.
+//   - plugins/: subdirectories (legacy pre-flat-layout) and any
+//     .sha256/.version sidecar files (no longer written) — age does not
+//     apply here.
 func Prune(age time.Duration) {
 	pruneRoot()
 	pruneLegacy()
@@ -450,8 +450,9 @@ func pruneByMtime(dir string, dirOnly bool, age time.Duration) {
 // prunePlugins removes:
 //   - any *directory* under plugins/ (legacy pre-flat layout — current
 //     installs put binaries directly at <plugins>/<name>).
-//   - any sidecar file (.sha256 / .version) whose matching plugin binary
-//     no longer exists.
+//   - any .sha256 / .version sidecar files (no longer written — the CLI
+//     asks each plugin for its version via GetPluginInfo and verifies
+//     checksums only at install time).
 func prunePlugins() {
 	dir := PluginsDir()
 	entries, err := os.ReadDir(dir)
@@ -460,17 +461,6 @@ func prunePlugins() {
 			logging.Warnf("failed to read plugins cache %q: %s", dir, err)
 		}
 		return
-	}
-
-	executables := make(map[string]struct{})
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasSuffix(name, ".sha256") && !strings.HasSuffix(name, ".version") {
-			executables[name] = struct{}{}
-		}
 	}
 
 	for _, e := range entries {
@@ -484,20 +474,11 @@ func prunePlugins() {
 			continue
 		}
 
-		var base string
-		switch {
-		case strings.HasSuffix(name, ".sha256"):
-			base = strings.TrimSuffix(name, ".sha256")
-		case strings.HasSuffix(name, ".version"):
-			base = strings.TrimSuffix(name, ".version")
-		default:
-			continue
-		}
-		if _, ok := executables[base]; ok {
+		if !strings.HasSuffix(name, ".sha256") && !strings.HasSuffix(name, ".version") {
 			continue
 		}
 		if err := os.Remove(target); err != nil {
-			logging.Warnf("failed to remove orphan plugin sidecar %q: %s", target, err)
+			logging.Warnf("failed to remove stale plugin sidecar %q: %s", target, err)
 		}
 	}
 }

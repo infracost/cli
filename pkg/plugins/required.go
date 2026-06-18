@@ -14,23 +14,29 @@ const (
 // Any other plugin dropped into the plugin directory is loaded too, but
 // only the ones in this list are subject to auto-download and auto-update.
 type requiredPlugin struct {
-	Key  string
+	// Key is the short identifier used in env vars and CLI flags.
+	Key string
+	// Name is the binary filename on disk (without the .exe suffix).
 	Name string
-	Type string
+	// DisplayName is the name the plugin reports via GetPluginInfo —
+	// used in user-facing output when the plugin isn't installed yet so
+	// we can't ask it directly.
+	DisplayName string
+	Type        string
 }
 
 // requiredPlugins is the set of plugins the CLI manages automatically.
 // Adding a binary to the plugin directory not in this list still loads
 // it — the CLI just won't try to download or update it.
 var requiredPlugins = []requiredPlugin{
-	{Key: "terraform", Name: "infracost-plugin-terraform", Type: pluginTypeParser},
-	{Key: "terragrunt", Name: "infracost-plugin-terragrunt", Type: pluginTypeParser},
-	{Key: "cloudformation", Name: "infracost-plugin-cloudformation", Type: pluginTypeParser},
-	{Key: "ciscostacks", Name: "infracost-plugin-ciscostacks", Type: pluginTypeParser},
-	{Key: "terraform-plan", Name: "infracost-plugin-terraform-plan", Type: pluginTypeParser},
-	{Key: "aws", Name: "infracost-plugin-aws", Type: pluginTypeProvider},
-	{Key: "google", Name: "infracost-plugin-google", Type: pluginTypeProvider},
-	{Key: "azure", Name: "infracost-plugin-azure", Type: pluginTypeProvider},
+	{Key: "terraform", Name: "infracost-plugin-terraform", DisplayName: "infracost/terraform", Type: pluginTypeParser},
+	{Key: "terragrunt", Name: "infracost-plugin-terragrunt", DisplayName: "infracost/terragrunt", Type: pluginTypeParser},
+	{Key: "cloudformation", Name: "infracost-plugin-cloudformation", DisplayName: "infracost/cloudformation", Type: pluginTypeParser},
+	{Key: "ciscostacks", Name: "infracost-plugin-ciscostacks", DisplayName: "infracost/ciscostacks", Type: pluginTypeParser},
+	{Key: "terraform-plan", Name: "infracost-plugin-terraform-plan", DisplayName: "infracost/terraform-plan", Type: pluginTypeParser},
+	{Key: "aws", Name: "infracost-plugin-aws", DisplayName: "infracost/aws", Type: pluginTypeProvider},
+	{Key: "google", Name: "infracost-plugin-google", DisplayName: "infracost/google", Type: pluginTypeProvider},
+	{Key: "azure", Name: "infracost-plugin-azure", DisplayName: "infracost/azure", Type: pluginTypeProvider},
 }
 
 // requiredPluginVersion returns the user-pinned version for the required

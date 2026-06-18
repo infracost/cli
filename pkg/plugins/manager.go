@@ -75,6 +75,10 @@ type Manager struct {
 	loadErr         error
 
 	useMu sync.RWMutex
+
+	// queryInfo reads an installed plugin's reported version. Defaults to
+	// queryPluginInfo; tests stub this to avoid spawning real binaries.
+	queryInfo func(context.Context, string) (*pb.GetPluginInfoResponse, error)
 }
 
 // NewManager creates a new manager.
@@ -85,7 +89,7 @@ func NewManager(opts ManagerOptions) *Manager {
 	if opts.Cache == "" {
 		opts.Cache = opts.Dir
 	}
-	return &Manager{opts: opts}
+	return &Manager{opts: opts, queryInfo: queryPluginInfo}
 }
 
 // Dir returns the directory the manager loads plugins from.
@@ -174,6 +178,7 @@ func (m *Manager) discoverAndConnect(ctx context.Context) ([]*ParserPlugin, []*P
 
 	var parsers []*ParserPlugin
 	var providers []*ProviderPlugin
+	seenPaths := make(map[string]string)
 	for _, entry := range entries {
 		if entry.IsDir() || isPluginSidecar(entry.Name()) {
 			continue
@@ -184,6 +189,32 @@ func (m *Manager) discoverAndConnect(ctx context.Context) ([]*ParserPlugin, []*P
 			logging.Debugf("skipping plugin candidate %s: %v", path, err)
 			continue
 		}
+
+		var name string
+		switch {
+		case parser != nil:
+			name = parser.Info.GetName()
+		case provider != nil:
+			name = provider.Info.GetName()
+		}
+
+		if existing, ok := seenPaths[name]; ok {
+			if parser != nil {
+				parser.client.Kill()
+			}
+			if provider != nil {
+				provider.client.Kill()
+			}
+			for _, p := range parsers {
+				p.client.Kill()
+			}
+			for _, p := range providers {
+				p.client.Kill()
+			}
+			return nil, nil, fmt.Errorf("found two plugins reporting the same name %q:\n  %s\n  %s\ndelete one of these files and try again", name, existing, path)
+		}
+		seenPaths[name] = path
+
 		if parser != nil {
 			parsers = append(parsers, parser)
 		}
@@ -193,6 +224,65 @@ func (m *Manager) discoverAndConnect(ctx context.Context) ([]*ParserPlugin, []*P
 	}
 
 	return parsers, providers, nil
+}
+
+// queryPluginInfo spawns the plugin binary at path, calls GetPluginInfo, and
+// returns the response. The subprocess is terminated before this function
+// returns. Used by Install to read a plugin's reported version without
+// holding a long-lived connection.
+func queryPluginInfo(ctx context.Context, path string) (*pb.GetPluginInfoResponse, error) {
+	stat, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if stat.IsDir() {
+		return nil, fmt.Errorf("%s is a directory", path)
+	}
+	if runtime.GOOS != "windows" && stat.Mode()&0o111 == 0 {
+		return nil, fmt.Errorf("%w: %s", pluginerr.ErrPluginNotExecutable, path)
+	}
+
+	startTimeout := pluginconn.StartTimeout()
+	client := plugin.NewClient(&plugin.ClientConfig{
+		HandshakeConfig: handshakeConfig,
+		Plugins: map[string]plugin.Plugin{
+			dispenseName: grpcPlugin{},
+		},
+		Cmd:              exec.Command(path),
+		StartTimeout:     startTimeout,
+		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
+		Logger:           pluginconn.ConnectOptions{}.ResolveLogger(),
+		SyncStderr:       logging.Output(),
+		GRPCDialOptions: []grpc.DialOption{
+			grpc.WithDefaultCallOptions(
+				grpc.MaxCallRecvMsgSize(consts.MaxGRPCMessageSize),
+				grpc.MaxCallSendMsgSize(consts.MaxGRPCMessageSize),
+			),
+		},
+	})
+	defer client.Kill()
+
+	rpcClient, err := client.Client()
+	if err != nil {
+		return nil, pluginerr.WindowsHint(pluginerr.ClassifyConnect(err), path, startTimeout)
+	}
+	raw, err := rpcClient.Dispense(dispenseName)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", pluginerr.ErrPluginHandshake, err)
+	}
+	conn, ok := raw.(*grpc.ClientConn)
+	if !ok {
+		return nil, fmt.Errorf("unexpected dispensed type %T", raw)
+	}
+
+	info, err := pb.NewPluginServiceClient(conn).GetPluginInfo(ctx, &pb.GetPluginInfoRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get plugin info: %w", err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("plugin %q returned no info", path)
+	}
+	return info, nil
 }
 
 // connect starts the plugin subprocess at path, reads GetPluginInfo, and
@@ -269,7 +359,8 @@ func (m *Manager) connect(ctx context.Context, path string) (*ParserPlugin, *Pro
 			ParserServiceClient: lockedParserServiceClient{client: parserClient, mu: &m.useMu},
 			Info:                info,
 			ParserConfig:        parserConfig,
-			client:              client,
+			Path:                path,
+			client:               client,
 		}, nil, nil
 
 	case pb.PluginType_PROVIDER:
@@ -277,6 +368,7 @@ func (m *Manager) connect(ctx context.Context, path string) (*ParserPlugin, *Pro
 		return nil, &ProviderPlugin{
 			ProviderServiceClient: lockedProviderServiceClient{client: providerClient, mu: &m.useMu},
 			Info:                  info,
+			Path:                  path,
 			client:                client,
 		}, nil
 
@@ -319,13 +411,19 @@ type ParserPlugin struct {
 	pb.ParserServiceClient
 	Info         *pb.GetPluginInfoResponse
 	ParserConfig *pb.GetParserConfigResponse
-	client       *plugin.Client
+	// Path is the on-disk location of the plugin binary, or empty when
+	// the plugin was constructed in tests without a real binary.
+	Path   string
+	client *plugin.Client
 }
 
 // ProviderPlugin is a connected provider plugin subprocess.
 type ProviderPlugin struct {
 	pb.ProviderServiceClient
-	Info   *pb.GetPluginInfoResponse
+	Info *pb.GetPluginInfoResponse
+	// Path is the on-disk location of the plugin binary, or empty when
+	// the plugin was constructed in tests without a real binary.
+	Path   string
 	client *plugin.Client
 }
 
