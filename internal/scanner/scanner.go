@@ -55,7 +55,16 @@ func (s *Scanner) applyKubernetesCluster(ctx context.Context) {
 		return
 	}
 
-	parser, err := s.Plugins.ParserPluginForProject(ctx, "terraform")
+	// Resolve on a dedicated, short-lived manager. Using the shared manager
+	// here would connect (launch) every plugin — including the kubernetes
+	// provider — before we set the env var below, and a subprocess's
+	// environment is fixed at launch, so the provider would never see the
+	// cluster config. The shared manager is connected later (during the scan),
+	// after the env var is set, so its provider subprocess inherits it.
+	mgr := plugins.NewManager(plugins.ManagerOptions{Dir: s.Plugins.PluginDir(), SkipInstall: true})
+	defer mgr.Close()
+
+	parser, err := mgr.LoadParserPluginForProject(ctx, "terraform")
 	if err != nil {
 		logging.WithError(err).Msgf("could not load the terraform parser to resolve --kubernetes-cluster-from %q; K8s workloads will be uncosted", s.KubernetesClusterFrom)
 		return
@@ -78,7 +87,9 @@ func (s *Scanner) applyKubernetesCluster(ctx context.Context) {
 	}
 	if err := os.Setenv(cluster.EnvVar, js); err != nil {
 		logging.WithError(err).Msg("failed to set cluster config for the kubernetes provider")
+		return
 	}
+	logging.Infof("resolved kubernetes cluster from %q: %d compute pools, region %q", s.KubernetesClusterFrom, len(cfg.ComputePools), cfg.Region)
 }
 
 type FinOpsPolicy struct {
