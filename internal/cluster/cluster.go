@@ -37,6 +37,18 @@ type ComputePool struct {
 	Spot          bool              `json:"spot"`
 	NodeCount     int64             `json:"node_count,omitempty"`
 	Labels        map[string]string `json:"labels,omitempty"`
+	// Taints the node group applies. Mirrors the provider schema so a
+	// supplied/derived spec can drive taint-aware pod->pool matching. Not yet
+	// populated by FromTerraformTree (the parsed tree drops node-group
+	// labels/taints — see docs/kubernetes-plugin.md).
+	Taints []Taint `json:"taints,omitempty"`
+}
+
+// Taint is a node taint (key/value/effect).
+type Taint struct {
+	Key    string `json:"key"`
+	Value  string `json:"value"`
+	Effect string `json:"effect"`
 }
 
 type StorageBackend struct {
