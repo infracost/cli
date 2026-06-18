@@ -136,6 +136,11 @@ func Setup(cfg *config.Config) *cobra.Command {
 			// and exit cleanly. huh's per-prompt abort handling continues to
 			// work for navigating to "Skip" inside individual menus; this
 			// catches the case where the user wants to bail out entirely.
+			//
+			// os.Exit bypasses deferred cleanup, so we explicitly close
+			// plugin subprocesses here — otherwise the hashicorp/go-plugin
+			// children spawned by EnsurePlugins would be orphaned when the
+			// user aborts setup.
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 			go func() {
@@ -143,6 +148,7 @@ func Setup(cfg *config.Config) *cobra.Command {
 				fmt.Println()
 				fmt.Println()
 				fmt.Println("  " + ui.Gradient("Setup cancelled. Goodbye!"))
+				cfg.Plugins.Close()
 				os.Exit(0)
 			}()
 			defer signal.Stop(sigCh)
