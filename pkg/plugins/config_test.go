@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	pb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,24 +77,33 @@ func fileSHA256(t *testing.T, path string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// stubInfoFn returns a queryInfo function that reports the given version
+// regardless of which binary path is queried.
+func stubInfoFn(version string) func(context.Context, string) (*pb.GetPluginInfoResponse, error) {
+	return func(context.Context, string) (*pb.GetPluginInfoResponse, error) {
+		return &pb.GetPluginInfoResponse{Version: version}, nil
+	}
+}
+
 func TestListPlugins(t *testing.T) {
 	dir := t.TempDir()
 	terraformPath := filepath.Join(dir, pluginBinaryName("infracost-plugin-terraform"))
 	require.NoError(t, os.WriteFile(terraformPath, []byte("binary"), 0o700))
-	require.NoError(t, os.WriteFile(terraformPath+".version", []byte("1.2.3\n"), 0o600))
 
 	cfg := &Config{Dir: dir}
 	items := cfg.List()
 	require.GreaterOrEqual(t, len(items), len(requiredPlugins))
 
-	// The terraform entry is the first required entry.
+	// The terraform entry is the first required entry. The fake binary
+	// can't be spawned so version reports as "unknown" and the name
+	// falls back to the required entry's DisplayName.
 	terraform := items[0]
 	assert.Equal(t, "terraform", terraform.Key)
-	assert.Equal(t, "infracost-plugin-terraform", terraform.Name)
+	assert.Equal(t, "infracost/terraform", terraform.Name)
 	assert.Equal(t, pluginTypeParser, terraform.Type)
 	assert.True(t, terraform.Installed)
 	assert.True(t, terraform.Required)
-	assert.Equal(t, "1.2.3", terraform.Version)
+	assert.Equal(t, "unknown", terraform.Version)
 
 	// Other required plugins are not installed.
 	assert.False(t, items[1].Installed)
@@ -107,7 +118,6 @@ func TestListPlugins_IncludesExtraPlugins(t *testing.T) {
 	extraName := "infracost-plugin-custom"
 	extraPath := filepath.Join(dir, pluginBinaryName(extraName))
 	require.NoError(t, os.WriteFile(extraPath, []byte("binary"), 0o700))
-	require.NoError(t, os.WriteFile(extraPath+".version", []byte("9.9.9\n"), 0o600))
 
 	cfg := &Config{Dir: dir}
 	items := cfg.List()
@@ -122,6 +132,24 @@ func TestListPlugins_IncludesExtraPlugins(t *testing.T) {
 	require.NotNil(t, extra, "expected discovered extra plugin in list")
 	assert.False(t, extra.Required)
 	assert.True(t, extra.Installed)
+}
+
+func TestListPlugins_IgnoresLegacySidecars(t *testing.T) {
+	dir := t.TempDir()
+	terraformPath := filepath.Join(dir, pluginBinaryName("infracost-plugin-terraform"))
+	require.NoError(t, os.WriteFile(terraformPath, []byte("binary"), 0o700))
+	// Legacy sidecars left over from a prior CLI version should not appear
+	// as their own list entries.
+	require.NoError(t, os.WriteFile(terraformPath+".sha256", []byte("abc"), 0o600))
+	require.NoError(t, os.WriteFile(terraformPath+".version", []byte("1.0.0"), 0o600))
+
+	cfg := &Config{Dir: dir}
+	items := cfg.List()
+
+	for _, item := range items {
+		assert.NotContains(t, item.Path, ".sha256")
+		assert.NotContains(t, item.Path, ".version")
+	}
 }
 
 func TestUnpackTarGz(t *testing.T) {
@@ -287,9 +315,10 @@ func TestInstall(t *testing.T) {
 		cacheDir := t.TempDir()
 		binaryPath := filepath.Join(cacheDir, binaryName)
 		require.NoError(t, os.WriteFile(binaryPath, pluginContent, 0750))
-		require.NoError(t, os.WriteFile(binaryPath+".version", []byte("1.0.0\n"), 0600))
 
 		m := NewManager(ManagerOptions{Cache: cacheDir, AutoUpdate: true})
+		m.queryInfo = stubInfoFn("1.0.0")
+
 		got, err := m.Install(pluginName, "1.0.0")
 		require.NoError(t, err)
 		assert.Equal(t, binaryPath, got)
@@ -301,6 +330,27 @@ func TestInstall(t *testing.T) {
 		require.NoError(t, os.WriteFile(binaryPath, pluginContent, 0750))
 
 		m := NewManager(ManagerOptions{Cache: cacheDir, AutoUpdate: false})
+		got, err := m.Install(pluginName, "")
+		require.NoError(t, err)
+		assert.Equal(t, binaryPath, got)
+	})
+
+	t.Run("dev version skips auto-update", func(t *testing.T) {
+		cacheDir := t.TempDir()
+		binaryPath := filepath.Join(cacheDir, binaryName)
+		require.NoError(t, os.WriteFile(binaryPath, pluginContent, 0750))
+
+		// Even with AutoUpdate on and a server that would happily resolve
+		// a newer version, a plugin reporting "dev" should be left alone.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			t.Errorf("server should not be contacted for dev build")
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		m := NewManager(ManagerOptions{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true})
+		m.queryInfo = stubInfoFn("dev")
+
 		got, err := m.Install(pluginName, "")
 		require.NoError(t, err)
 		assert.Equal(t, binaryPath, got)
@@ -376,8 +426,12 @@ func TestInstall(t *testing.T) {
 		data, err := os.ReadFile(got)
 		require.NoError(t, err)
 		assert.Equal(t, pluginContent, data)
-		assert.Equal(t, archiveSHA, cachedPluginSHA(got))
-		assert.Equal(t, "0.0.1", cachedPluginVersion(got))
+
+		// No sidecar files should be written.
+		_, err = os.Stat(got + ".sha256")
+		assert.True(t, os.IsNotExist(err), "expected .sha256 sidecar not to be written")
+		_, err = os.Stat(got + ".version")
+		assert.True(t, os.IsNotExist(err), "expected .version sidecar not to be written")
 	})
 
 	t.Run("successful download and install specific version", func(t *testing.T) {
@@ -407,14 +461,12 @@ func TestInstall(t *testing.T) {
 
 		expected := filepath.Join(cacheDir, binaryName)
 		assert.Equal(t, expected, got)
-		assert.Equal(t, "2.0.0", cachedPluginVersion(got))
 	})
 
 	t.Run("latest cached with matching version skips checksum and download", func(t *testing.T) {
 		cacheDir := t.TempDir()
 		binaryPath := filepath.Join(cacheDir, binaryName)
 		require.NoError(t, os.WriteFile(binaryPath, pluginContent, 0750))
-		require.NoError(t, os.WriteFile(binaryPath+".version", []byte("0.0.1\n"), 0600))
 
 		checksumFetches := 0
 		downloads := 0
@@ -437,6 +489,8 @@ func TestInstall(t *testing.T) {
 		defer srv.Close()
 
 		m := NewManager(ManagerOptions{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true})
+		m.queryInfo = stubInfoFn("0.0.1")
+
 		got, err := m.Install(pluginName, "")
 		require.NoError(t, err)
 		assert.Equal(t, binaryPath, got)
@@ -516,7 +570,6 @@ func TestEnsureInstalled(t *testing.T) {
 			data, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, []byte(required.Name), data)
-			assert.Equal(t, archiveSHA[required.Name], cachedPluginSHA(path))
 		}
 	})
 }

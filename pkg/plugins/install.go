@@ -25,6 +25,15 @@ import (
 // maxPluginSize is the maximum allowed size for an extracted plugin binary (1 GB).
 const maxPluginSize = 1 << 30
 
+// devPluginVersion marks a binary as a locally-built dev build. When the
+// installed plugin reports this version we never auto-update — the user
+// dropped a custom build in the cache directory on purpose.
+const devPluginVersion = "dev"
+
+// queryPluginInfoTimeout caps how long we wait for an installed binary to
+// respond to GetPluginInfo when checking its current version during install.
+const queryPluginInfoTimeout = 30 * time.Second
+
 // Install ensures the named plugin is present in the cache directory at the
 // requested version. wantVersion may be empty to mean "latest". Returns the
 // path to the installed binary.
@@ -40,56 +49,52 @@ func (m *Manager) Install(pluginName, wantVersion string) (string, error) {
 		return binaryPath, nil
 	}
 
+	currentVersion := ""
+	if installed {
+		ctx, cancel := context.WithTimeout(context.Background(), queryPluginInfoTimeout)
+		info, err := m.queryInfo(ctx, binaryPath)
+		cancel()
+		if err != nil {
+			logging.Debugf("failed to query installed plugin %q version: %v — will re-download", pluginName, err)
+		} else {
+			currentVersion = info.GetVersion()
+			if currentVersion == devPluginVersion {
+				logging.Debugf("plugin %q is a dev build at %s — skipping auto-update", pluginName, binaryPath)
+				return binaryPath, nil
+			}
+		}
+	}
+
 	downloadVersion := wantVersion
 	if downloadVersion == "" {
 		downloadVersion = "latest"
 	}
 
-	if downloadVersion != "latest" {
-		if installed && cachedPluginVersion(binaryPath) == downloadVersion {
-			logging.Debugf("plugin %q version %s already installed at %s", pluginName, downloadVersion, binaryPath)
-			return binaryPath, nil
+	if installed && currentVersion != "" && downloadVersion != "latest" && currentVersion == downloadVersion {
+		logging.Debugf("plugin %q version %s already installed at %s", pluginName, downloadVersion, binaryPath)
+		return binaryPath, nil
+	}
+
+	resolvedVersion := downloadVersion
+	if downloadVersion == "latest" {
+		v, err := fetchPluginVersion(m.pluginVersionURL(pluginName, runtime.GOOS, runtime.GOARCH, downloadVersion))
+		if err != nil {
+			return "", fmt.Errorf("failed to fetch plugin version: %w", err)
 		}
+		resolvedVersion = v
+	}
+
+	if installed && currentVersion != "" && currentVersion == resolvedVersion {
+		logging.Debugf("plugin %q version %s already installed at %s", pluginName, resolvedVersion, binaryPath)
+		return binaryPath, nil
 	}
 
 	artifactName := pluginArchiveName()
 	artifactURL := m.pluginArtifactURL(pluginName, runtime.GOOS, runtime.GOARCH, downloadVersion, artifactName)
-	resolvedVersion := downloadVersion
-	if downloadVersion == "latest" {
-		var err error
-		resolvedVersion, err = fetchPluginVersion(m.pluginVersionURL(pluginName, runtime.GOOS, runtime.GOARCH, downloadVersion))
-		if err != nil {
-			return "", fmt.Errorf("failed to fetch plugin version: %w", err)
-		}
-	}
 
-	artifactSHA := ""
-	if installed {
-		if cachedPluginVersion(binaryPath) == resolvedVersion {
-			logging.Debugf("plugin %q version %s already installed at %s", pluginName, resolvedVersion, binaryPath)
-			return binaryPath, nil
-		}
-
-		var err error
-		artifactSHA, err = fetchSHA256(artifactURL + ".sha256")
-		if err != nil {
-			return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
-		}
-		if cachedPluginSHA(binaryPath) == artifactSHA {
-			logging.Debugf("plugin %q already installed at %s", pluginName, binaryPath)
-			if err := writePluginVersion(binaryPath, resolvedVersion); err != nil {
-				return "", err
-			}
-			return binaryPath, nil
-		}
-	}
-
-	if artifactSHA == "" {
-		var err error
-		artifactSHA, err = fetchSHA256(artifactURL + ".sha256")
-		if err != nil {
-			return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
-		}
+	artifactSHA, err := fetchSHA256(artifactURL + ".sha256")
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
 	}
 
 	logging.Infof("downloading plugin %q version %s for %s/%s", pluginName, downloadVersion, runtime.GOOS, runtime.GOARCH)
@@ -133,12 +138,6 @@ func (m *Manager) Install(pluginName, wantVersion string) (string, error) {
 			return fmt.Errorf("failed to install plugin binary: %w", err)
 		}
 
-		if err := os.WriteFile(binaryPath+".sha256", []byte(artifactSHA+"\n"), 0o600); err != nil {
-			return fmt.Errorf("failed to write plugin checksum: %w", err)
-		}
-		if err := writePluginVersion(binaryPath, resolvedVersion); err != nil {
-			return err
-		}
 		return nil
 	}); err != nil {
 		return "", err
@@ -195,38 +194,6 @@ func removeExistingPluginPath(binaryPath string) error {
 		if err := os.Remove(binaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("failed to replace existing plugin binary: %w", err)
 		}
-	}
-	return nil
-}
-
-func cachedPluginSHA(binaryPath string) string {
-	data, err := os.ReadFile(binaryPath + ".sha256") //nolint:gosec // G304: sidecar path is derived from the trusted plugin path
-	if err != nil {
-		return ""
-	}
-
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[0]
-}
-
-func cachedPluginVersion(binaryPath string) string {
-	data, err := os.ReadFile(binaryPath + ".version") //nolint:gosec // G304: sidecar path is derived from the trusted plugin path
-	if err != nil {
-		return ""
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[0]
-}
-
-func writePluginVersion(binaryPath, version string) error {
-	if err := os.WriteFile(binaryPath+".version", []byte(version+"\n"), 0o600); err != nil {
-		return fmt.Errorf("failed to write plugin version: %w", err)
 	}
 	return nil
 }

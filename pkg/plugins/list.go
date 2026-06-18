@@ -15,7 +15,7 @@ type ListItem struct {
 	Key string
 
 	// Name is the plugin's display name. For installed plugins this comes
-	// from GetPluginInfo; otherwise from the required set.
+	// from GetPluginInfo; otherwise it falls back to the binary filename.
 	Name string
 
 	// Type is "parser" or "provider" (or empty for required-but-uninstalled
@@ -33,7 +33,8 @@ type ListItem struct {
 	// user has dropped into the plugin directory.
 	Required bool
 
-	// Version is the cached plugin version, or empty if unknown.
+	// Version is the version reported by the plugin via GetPluginInfo, or
+	// "unknown" when the plugin is installed but can't be queried.
 	Version string
 }
 
@@ -42,6 +43,27 @@ type ListItem struct {
 // directory.
 func (c *Config) List() []ListItem {
 	dir := c.PluginDir()
+
+	type info struct {
+		typ     string
+		name    string
+		version string
+	}
+	infoByPath := make(map[string]info)
+
+	mgr := NewManager(ManagerOptions{Dir: dir, SkipInstall: true})
+	defer mgr.Close()
+
+	if parsers, err := mgr.LoadParserPlugins(context.Background()); err == nil {
+		for _, p := range parsers {
+			infoByPath[p.Path] = info{typ: pluginTypeParser, name: p.Info.GetName(), version: p.Info.GetVersion()}
+		}
+	}
+	if providers, err := mgr.LoadProviderPlugins(context.Background()); err == nil {
+		for _, p := range providers {
+			infoByPath[p.Path] = info{typ: pluginTypeProvider, name: p.Info.GetName(), version: p.Info.GetVersion()}
+		}
+	}
 
 	items := make([]ListItem, 0, len(requiredPlugins))
 	seen := make(map[string]struct{}, len(requiredPlugins))
@@ -52,35 +74,31 @@ func (c *Config) List() []ListItem {
 		seen[binary] = struct{}{}
 
 		installed := flatPluginBinaryExists(path)
-		version := cachedPluginVersion(path)
-		if installed && version == "" {
-			version = "unknown"
-		}
-
-		items = append(items, ListItem{
+		item := ListItem{
 			Key:       required.Key,
-			Name:      required.Name,
+			Name:      required.DisplayName,
 			Type:      required.Type,
 			Path:      path,
 			Installed: installed,
 			Required:  true,
-			Version:   version,
-		})
+		}
+		if i, ok := infoByPath[path]; ok {
+			if i.name != "" {
+				item.Name = i.name
+			}
+			item.Version = i.version
+		}
+		if installed && item.Version == "" {
+			item.Version = "unknown"
+		}
+		items = append(items, item)
 	}
 
-	// Add any extra plugins found in the directory. These aren't in the
-	// required set, so we don't know their type until we ask them; defer
-	// type discovery to a Manager call below if we have any extras.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return items
 	}
 
-	type extra struct {
-		path string
-		name string
-	}
-	var extras []extra
 	for _, entry := range entries {
 		if entry.IsDir() || isPluginSidecar(entry.Name()) {
 			continue
@@ -88,59 +106,20 @@ func (c *Config) List() []ListItem {
 		if _, ok := seen[entry.Name()]; ok {
 			continue
 		}
-		extras = append(extras, extra{path: filepath.Join(dir, entry.Name()), name: entry.Name()})
-	}
-
-	if len(extras) == 0 {
-		return items
-	}
-
-	// Connect to extras to read their reported type and name. Any that fail
-	// to connect are still listed with an "unknown" type so users can see
-	// they're present but broken.
-	mgr := NewManager(ManagerOptions{Dir: dir, SkipInstall: true})
-	defer mgr.Close()
-
-	parsers, _ := mgr.LoadParserPlugins(context.Background())
-	providers, _ := mgr.LoadProviderPlugins(context.Background())
-
-	infoByName := make(map[string]struct {
-		typ     string
-		name    string
-		version string
-	}, len(parsers)+len(providers))
-	for _, p := range parsers {
-		key := pluginBinaryName(p.Info.GetName())
-		infoByName[key] = struct {
-			typ     string
-			name    string
-			version string
-		}{typ: pluginTypeParser, name: p.Info.GetName(), version: p.Info.GetVersion()}
-	}
-	for _, p := range providers {
-		key := pluginBinaryName(p.Info.GetName())
-		infoByName[key] = struct {
-			typ     string
-			name    string
-			version string
-		}{typ: pluginTypeProvider, name: p.Info.GetName(), version: p.Info.GetVersion()}
-	}
-
-	for _, e := range extras {
+		path := filepath.Join(dir, entry.Name())
 		item := ListItem{
-			Key:       e.name,
-			Name:      e.name,
-			Path:      e.path,
-			Installed: flatPluginBinaryExists(e.path),
+			Key:       entry.Name(),
+			Name:      entry.Name(),
+			Path:      path,
+			Installed: flatPluginBinaryExists(path),
 			Required:  false,
-			Version:   cachedPluginVersion(e.path),
 		}
-		if info, ok := infoByName[e.name]; ok {
-			item.Type = info.typ
-			item.Name = info.name
-			if v := info.version; v != "" {
-				item.Version = v
+		if i, ok := infoByPath[path]; ok {
+			item.Type = i.typ
+			if i.name != "" {
+				item.Name = i.name
 			}
+			item.Version = i.version
 		}
 		if item.Installed && item.Version == "" {
 			item.Version = "unknown"

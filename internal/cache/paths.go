@@ -52,5 +52,5 @@ func ParserDir() string { return filepath.Join(Root(), parserSubdir) }
 // response keyed by a recursive mtime fingerprint of the project files.
 func ParserResultsDir() string { return filepath.Join(Root(), parserResultsSubdir) }
 
-// PluginsDir is where plugin binaries (+ .sha256/.version sidecars) live.
+// PluginsDir is where plugin binaries live.
 func PluginsDir() string { return filepath.Join(Root(), pluginsSubdir) }
