@@ -466,7 +466,12 @@ func GetRequiredProvidersFromTree(tree *treepb.Tree) []provider.Provider {
 		}
 		p := providerconv.ToProto(raw)
 		if p == provider.Provider_PROVIDER_UNSPECIFIED {
-			logging.Warnf("skipping unsupported provider: %s", raw)
+			// A provider key with no built-in enum (e.g. "kubernetes", "ai") is
+			// normal: those resources are priced by their own provider plugin,
+			// not the typed cloud registry. requiredProviders is no longer used
+			// to gate plugin invocation (every loaded provider runs), so this is
+			// informational, not a warning.
+			logging.Debugf("provider %q has no built-in pricing enum; handled by its plugin if loaded", raw)
 			continue
 		}
 		seen[p] = struct{}{}

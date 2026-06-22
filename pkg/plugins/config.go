@@ -105,6 +105,22 @@ func (c *Config) ProviderPlugins(ctx context.Context) ([]*ProviderPlugin, error)
 	return manager.LoadProviderPlugins(ctx)
 }
 
+// Reset tears down the plugin manager so the next EnsurePlugins re-runs install
+// + discovery and reconnects. Long-lived hosts (the language server) use this to
+// recover from a transient install failure (otherwise cached forever by the
+// sync.Once) or a dropped plugin connection, without a full restart.
+func (c *Config) Reset() {
+	c.managerMu.Lock()
+	defer c.managerMu.Unlock()
+
+	if c.manager != nil {
+		c.manager.Close()
+	}
+	c.manager = nil
+	c.ensureOnce = sync.Once{}
+	c.ensureErr = nil
+}
+
 // Close releases all plugin subprocess resources.
 func (c *Config) Close() {
 	c.managerMu.Lock()
