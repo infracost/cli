@@ -3,18 +3,18 @@
 //
 // Kubernetes manifests carry no cluster info; the cluster's node pools live in
 // separate infrastructure-as-code (e.g. an EKS module in another repo). This
-// package derives a cluster Config from that IaC and hands it to the kubernetes
-// provider via the INFRACOST_KUBERNETES_CLUSTER environment variable (which the
-// plugin subprocess inherits). The same resolver is intended for reuse by
-// Infracost Cloud, which has access to every repo and can join app repos to
-// their cluster repos.
+// package derives a cluster Config from that IaC; the scanner serializes it to
+// JSON and passes it to the kubernetes provider plugin via the generic
+// per-plugin options channel (TreeInput.raw_options). The same resolver is
+// intended for reuse by Infracost Cloud, which has access to every repo and can
+// join app repos to their cluster repos.
 package cluster
 
 import "encoding/json"
 
-// EnvVar is the environment variable the kubernetes provider plugin reads its
-// cluster topology from. Must match the provider's contract.
-const EnvVar = "INFRACOST_KUBERNETES_CLUSTER"
+// KubernetesProviderName is the provider plugin name (GetPluginInfo.Name) whose
+// raw_options the resolved cluster Config is sent to.
+const KubernetesProviderName = "infracost/kubernetes"
 
 // Config is the cluster topology. Its JSON shape is the contract with the
 // kubernetes provider plugin (mirrors providers/pkg/kubernetes.ClusterConfig);

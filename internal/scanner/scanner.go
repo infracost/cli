@@ -46,50 +46,45 @@ type Scanner struct {
 	KubernetesClusterFrom string
 }
 
-// applyKubernetesCluster derives the cluster topology from the Terraform at
-// KubernetesClusterFrom and exposes it to the kubernetes provider plugin via an
-// environment variable the plugin subprocess inherits. Best-effort: on any
-// failure it logs and continues (K8s workloads are then reported uncosted).
-func (s *Scanner) applyKubernetesCluster(ctx context.Context) {
+// resolveKubernetesCluster derives the cluster topology from the Terraform at
+// KubernetesClusterFrom and returns it as JSON for delivery to the kubernetes
+// provider plugin via TreeInput.raw_options. Returns "" (best-effort) on any
+// failure or when no cluster is configured — K8s workloads are then reported
+// uncosted.
+func (s *Scanner) resolveKubernetesCluster(ctx context.Context) string {
 	if s.KubernetesClusterFrom == "" {
-		return
+		return ""
 	}
 
-	// Resolve on a dedicated, short-lived manager. Using the shared manager
-	// here would connect (launch) every plugin — including the kubernetes
-	// provider — before we set the env var below, and a subprocess's
-	// environment is fixed at launch, so the provider would never see the
-	// cluster config. The shared manager is connected later (during the scan),
-	// after the env var is set, so its provider subprocess inherits it.
+	// Resolve on a dedicated, short-lived manager so we only launch the
+	// terraform parser needed to read the cluster IaC, independent of the
+	// shared scan manager.
 	mgr := plugins.NewManager(plugins.ManagerOptions{Dir: s.Plugins.PluginDir(), SkipInstall: true})
 	defer mgr.Close()
 
 	parser, err := mgr.LoadParserPluginForProject(ctx, "terraform")
 	if err != nil {
 		logging.WithError(err).Msgf("could not load the terraform parser to resolve --kubernetes-cluster-from %q; K8s workloads will be uncosted", s.KubernetesClusterFrom)
-		return
+		return ""
 	}
 
 	cfg, err := cluster.ResolveFromDir(ctx, s.KubernetesClusterFrom, parser)
 	if err != nil {
 		logging.WithError(err).Msgf("failed to resolve cluster from %q; K8s workloads will be uncosted", s.KubernetesClusterFrom)
-		return
+		return ""
 	}
 	if cfg == nil {
 		logging.Warnf("no Kubernetes cluster (EKS node groups) found in %q; K8s workloads will be uncosted", s.KubernetesClusterFrom)
-		return
+		return ""
 	}
 
 	js, err := cfg.JSON()
 	if err != nil {
 		logging.WithError(err).Msg("failed to encode resolved cluster config")
-		return
-	}
-	if err := os.Setenv(cluster.EnvVar, js); err != nil {
-		logging.WithError(err).Msg("failed to set cluster config for the kubernetes provider")
-		return
+		return ""
 	}
 	logging.Infof("resolved kubernetes cluster from %q: %d compute pools, region %q", s.KubernetesClusterFrom, len(cfg.ComputePools), cfg.Region)
+	return js
 }
 
 type FinOpsPolicy struct {
@@ -240,7 +235,14 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		return nil, fmt.Errorf("failed to install plugins: %w", err)
 	}
 
-	s.applyKubernetesCluster(ctx)
+	// Resolve any provider-plugin options once, before the per-project loop.
+	// Currently only the kubernetes provider takes options (its cluster spec,
+	// derived from --kubernetes-cluster-from); they travel via the generic
+	// TreeInput.raw_options channel, keyed by provider plugin name.
+	var providerOptions map[string][]byte
+	if clusterJSON := s.resolveKubernetesCluster(ctx); clusterJSON != "" {
+		providerOptions = map[string][]byte{cluster.KubernetesProviderName: []byte(clusterJSON)}
+	}
 
 	stat, err := os.Stat(absolutePath)
 	if err != nil {
@@ -357,6 +359,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			TagPolicies:       tagPolicies,
 			UsageDefaults:     usageDefaults,
 			RepoUsage:         repoUsage,
+			ProviderOptions:   providerOptions,
 			Plugins:           s.Plugins,
 			Logging:           s.Logging,
 		})

@@ -69,6 +69,13 @@ type ScanProjectOptions struct {
 	RepoUsage                 *usage.Usage
 	PreviousResourceAddresses []string
 
+	// ProviderOptions holds pre-built, plugin-specific options keyed by provider
+	// plugin name (GetPluginInfo.Name), JSON-encoded. Mirrors the parser's
+	// raw_options: the value is passed through verbatim on TreeInput.raw_options
+	// to the matching provider plugin. Currently only the kubernetes provider is
+	// populated (its resolved cluster spec).
+	ProviderOptions map[string][]byte
+
 	Plugins *plugins.Config
 	Logging logging.Config
 }
@@ -244,6 +251,9 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	}
 
 	for _, p := range providerPlugins {
+		// Attach this provider's plugin-specific options (if any) to the shared
+		// input, mirroring how parser raw_options are built per project type.
+		input.RawOptions, input.RawOptionsFormat = buildProviderOptions(opts, p.Info.GetName())
 		resp, err := p.Process(ctx, &pluginpb.ProcessRequest{Input: input})
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute provider %s: %w", p.Info.GetName(), err)
@@ -304,6 +314,19 @@ func buildIaCOptions(opts *ScanProjectOptions, projectType repoconfig.ProjectTyp
 	default:
 		return nil, "", nil
 	}
+}
+
+// buildProviderOptions returns the plugin-specific options to attach to a
+// provider plugin's TreeInput.raw_options, keyed by provider plugin name. It
+// mirrors buildIaCOptions on the parser side. Options are pre-built upstream
+// (e.g. the resolved kubernetes cluster spec) and stored in
+// ScanProjectOptions.ProviderOptions as JSON; this just hands them through.
+func buildProviderOptions(opts *ScanProjectOptions, providerName string) ([]byte, string) {
+	raw, ok := opts.ProviderOptions[providerName]
+	if !ok || len(raw) == 0 {
+		return nil, ""
+	}
+	return raw, "application/json"
 }
 
 type terraformPluginOptions struct {

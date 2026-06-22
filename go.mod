@@ -96,3 +96,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// DEV: local proto with provider raw_options (remove once proto is tagged/published)
+replace github.com/infracost/proto => ../proto
