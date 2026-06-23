@@ -487,14 +487,14 @@ jobs:
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_PR_NUMBER: ${{ inputs.pr-number }}
           PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          if [ -n "${{ inputs.pr-number }}" ]; then
+          if [ -n "$INPUT_PR_NUMBER" ]; then
             BASE_REF=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName -q .baseRefName)
             HEAD_REF=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)
-          else
-            BASE_REF="${{ github.event.pull_request.base.ref }}"
-            HEAD_REF="${{ github.event.pull_request.head.ref }}"
           fi
           echo "base-ref=${BASE_REF}" >> $GITHUB_OUTPUT
           echo "head-ref=${HEAD_REF}" >> $GITHUB_OUTPUT
