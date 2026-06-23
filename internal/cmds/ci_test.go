@@ -308,8 +308,13 @@ Done. Push this commit to see Infracost on your next PR:
 	// Verify workflow files were created with correct content.
 	diffContent, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "infracost-diff.yml"))
 	require.NoError(t, err)
-	assert.Contains(t, string(diffContent), "infracost/actions/diff@")
-	assert.Contains(t, string(diffContent), "secrets.INFRACOST_API_KEY")
+	diffWorkflow := string(diffContent)
+	assert.Contains(t, diffWorkflow, "infracost/actions/diff@")
+	assert.Contains(t, diffWorkflow, "secrets.INFRACOST_API_KEY")
+	assert.Contains(t, diffWorkflow, "INPUT_PR_NUMBER: ${{ inputs.pr-number }}")
+	assert.Contains(t, diffWorkflow, "if [ -n \"$INPUT_PR_NUMBER\" ]; then")
+	assert.NotContains(t, diffWorkflow, "if [ -n \"${{ inputs.pr-number }}\" ]; then")
+	assert.NotContains(t, diffWorkflow, "BASE_REF=\"${{ github.event.pull_request.base.ref }}\"")
 
 	scanContent, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "infracost-scan.yml"))
 	require.NoError(t, err)
