@@ -107,8 +107,8 @@ github.com/hashicorp/yamux v0.1.2 h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8
 github.com/hashicorp/yamux v0.1.2/go.mod h1:C+zze2n6e/7wshOZep2A70/aQU6QBRWJO/G6FT1wIns=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/infracost/config v0.8.0 h1:2sGxXFpYzB5yeTy8qG+hWFwTGyX35mv3TA4V4NkkYHs=
-github.com/infracost/config v0.8.0/go.mod h1:aCVTUvqPboOJRMLTkKS27DOJicsvHdR4f8n1qlBqZoo=
+github.com/infracost/config v0.9.1 h1:sJ/jpcz49HjIDbHGRsnrttHwAczkLpEogD27MtICRrw=
+github.com/infracost/config v0.9.1/go.mod h1:aCVTUvqPboOJRMLTkKS27DOJicsvHdR4f8n1qlBqZoo=
 github.com/infracost/go-proto v1.22.0 h1:lZSEKnJNazJ1rlWzn2PrAEUEsXfXtqPsqh9LQsrWP90=
 github.com/infracost/go-proto v1.22.0/go.mod h1:iVVHUHBCWl+g6IvK5dnvQwSj2maL2Qjlb08fM7OzQQ4=
 github.com/infracost/proto v1.147.0 h1:WLgVnT0ZXRdys+Bv0El+P1I1+iiZiWYGXQTeoEPH90Y=
