@@ -112,12 +112,36 @@ func (m *Manager) ensureInstalled() error {
 	if m.opts.SkipInstall {
 		return nil
 	}
+	m.removeLegacyPlugins()
 	for _, required := range requiredPlugins {
 		if _, err := m.Install(required.Name, requiredPluginVersion(required.Key)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// removeLegacyPlugins deletes binaries left over from the pre-rename naming
+// scheme (infracost-plugin-<key>). The renamed binaries report the same
+// (name, type) as the legacy ones, so leaving an orphaned legacy binary in the
+// plugin directory would trip the duplicate-plugin check at discovery. Runs
+// only in managed mode — ensureInstalled returns early on SkipInstall, so a
+// developer override directory is never touched. Best effort: failures are
+// logged and ignored.
+func (m *Manager) removeLegacyPlugins() {
+	for _, required := range requiredPlugins {
+		if required.LegacyName == "" {
+			continue
+		}
+		legacy := filepath.Join(m.opts.Cache, pluginBinaryName(required.LegacyName))
+		if err := os.Remove(legacy); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				logging.Debugf("could not remove legacy plugin binary %s: %v", legacy, err)
+			}
+			continue
+		}
+		logging.Debugf("removed legacy plugin binary %s", legacy)
+	}
 }
 
 // LoadParserPlugins returns every parser plugin discovered in the plugin
@@ -167,6 +191,15 @@ func (m *Manager) loadAll(ctx context.Context) error {
 	return m.loadErr
 }
 
+// pluginIdentity uniquely identifies a loaded plugin. A parser and a provider
+// may legitimately report the same name (e.g. the kubernetes parser and
+// provider both report "infracost/kubernetes"), so identity is the (name,
+// type) pair rather than the name alone.
+type pluginIdentity struct {
+	name string
+	typ  pb.PluginType
+}
+
 func (m *Manager) discoverAndConnect(ctx context.Context) ([]*ParserPlugin, []*ProviderPlugin, error) {
 	entries, err := os.ReadDir(m.opts.Dir)
 	if err != nil {
@@ -178,7 +211,7 @@ func (m *Manager) discoverAndConnect(ctx context.Context) ([]*ParserPlugin, []*P
 
 	var parsers []*ParserPlugin
 	var providers []*ProviderPlugin
-	seenPaths := make(map[string]string)
+	seenPaths := make(map[pluginIdentity]string)
 	for _, entry := range entries {
 		if entry.IsDir() || isPluginSidecar(entry.Name()) {
 			continue
@@ -190,15 +223,16 @@ func (m *Manager) discoverAndConnect(ctx context.Context) ([]*ParserPlugin, []*P
 			continue
 		}
 
-		var name string
+		var info *pb.GetPluginInfoResponse
 		switch {
 		case parser != nil:
-			name = parser.Info.GetName()
+			info = parser.Info
 		case provider != nil:
-			name = provider.Info.GetName()
+			info = provider.Info
 		}
+		identity := pluginIdentity{name: info.GetName(), typ: info.GetType()}
 
-		if existing, ok := seenPaths[name]; ok {
+		if existing, ok := seenPaths[identity]; ok {
 			if parser != nil {
 				parser.client.Kill()
 			}
@@ -211,9 +245,9 @@ func (m *Manager) discoverAndConnect(ctx context.Context) ([]*ParserPlugin, []*P
 			for _, p := range providers {
 				p.client.Kill()
 			}
-			return nil, nil, fmt.Errorf("found two plugins reporting the same name %q:\n  %s\n  %s\ndelete one of these files and try again", name, existing, path)
+			return nil, nil, fmt.Errorf("found two %v plugins reporting the same name %q:\n  %s\n  %s\ndelete one of these files and try again", identity.typ, identity.name, existing, path)
 		}
-		seenPaths[name] = path
+		seenPaths[identity] = path
 
 		if parser != nil {
 			parsers = append(parsers, parser)
