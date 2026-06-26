@@ -216,6 +216,18 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
+			// Ensure plugins are present/updated as a distinct phase so the
+			// spinner reflects what's actually happening (plugin downloads emit
+			// their own "Downloaded <plugin> <version>" lines above this one).
+			// Scan() ensures plugins lazily too, but that call is cached so this
+			// is a no-op by the time we scan.
+			if err := ui.RunWithSpinnerErr(cmd.Context(), "Checking plugins are up to date...", "Plugins up to date", func(_ context.Context) error {
+				_, ensureErr := cfg.Plugins.EnsurePlugins()
+				return ensureErr
+			}); err != nil {
+				return err
+			}
+
 			var result ScanResult
 			if err := ui.RunWithSpinnerErr(cmd.Context(), "Scanning...", "Scan complete", func(ctx context.Context) error {
 				var scanErr error
@@ -268,4 +280,3 @@ func renderScanLLM(w io.Writer, r ScanResult) error {
 	_, err := fmt.Fprintln(w)
 	return err
 }
-
