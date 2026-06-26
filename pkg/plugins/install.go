@@ -97,9 +97,9 @@ func (m *Manager) Install(pluginName, wantVersion string) (string, error) {
 		return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
 	}
 
-	logging.Infof("downloading plugin %q version %s for %s/%s", pluginName, downloadVersion, runtime.GOOS, runtime.GOARCH)
+	logging.Infof("downloading plugin %q version %s for %s/%s", pluginName, resolvedVersion, runtime.GOOS, runtime.GOARCH)
 
-	if err := ui.RunWithSpinnerErr(context.Background(), fmt.Sprintf("Downloading %s %s...", pluginName, downloadVersion), fmt.Sprintf("Downloaded %s %s", pluginName, downloadVersion), func(_ context.Context) error {
+	if err := ui.RunWithSpinnerErr(context.Background(), fmt.Sprintf("Downloading %s %s...", pluginName, resolvedVersion), fmt.Sprintf("Downloaded %s %s", pluginName, resolvedVersion), func(_ context.Context) error {
 		logging.Debugf("downloading plugin archive from %s", artifactURL)
 		archivePath, err := downloadAndVerify(artifactURL, artifactSHA)
 		if err != nil {
