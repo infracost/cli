@@ -16,8 +16,8 @@ require (
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/infracost/config v0.8.0
-	github.com/infracost/go-proto v1.22.0
-	github.com/infracost/proto v1.147.0
+	github.com/infracost/go-proto v1.24.2
+	github.com/infracost/proto v1.152.0
 	github.com/liamg/tml v0.7.1
 	github.com/maruel/panicparse/v2 v2.5.0
 	github.com/mattn/go-runewidth v0.0.16

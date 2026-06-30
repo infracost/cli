@@ -111,8 +111,12 @@ github.com/infracost/config v0.8.0 h1:2sGxXFpYzB5yeTy8qG+hWFwTGyX35mv3TA4V4NkkYH
 github.com/infracost/config v0.8.0/go.mod h1:aCVTUvqPboOJRMLTkKS27DOJicsvHdR4f8n1qlBqZoo=
 github.com/infracost/go-proto v1.22.0 h1:lZSEKnJNazJ1rlWzn2PrAEUEsXfXtqPsqh9LQsrWP90=
 github.com/infracost/go-proto v1.22.0/go.mod h1:iVVHUHBCWl+g6IvK5dnvQwSj2maL2Qjlb08fM7OzQQ4=
+github.com/infracost/go-proto v1.24.2 h1:zn8I65rl2F85U9xZ4v99SOIjEx6exId77vKFv+yhSOU=
+github.com/infracost/go-proto v1.24.2/go.mod h1:9m9zdHPl6mME24y3J0CdTBWXr+d03mfgXuy+9JzA/wU=
 github.com/infracost/proto v1.147.0 h1:WLgVnT0ZXRdys+Bv0El+P1I1+iiZiWYGXQTeoEPH90Y=
 github.com/infracost/proto v1.147.0/go.mod h1:Z8vPWBWblwJlw+/ksO+BtsXwf9NiOcSTWx0WRWNbfUA=
+github.com/infracost/proto v1.152.0 h1:RgLl8EYlDwOQWSYXLeoRSkVvgLbxYQnHlgtdtps0//0=
+github.com/infracost/proto v1.152.0/go.mod h1:Z8vPWBWblwJlw+/ksO+BtsXwf9NiOcSTWx0WRWNbfUA=
 github.com/jhump/protoreflect v1.17.0 h1:qOEr613fac2lOuTgWN4tPAtLL7fUSbuJL5X5XumQh94=
 github.com/jhump/protoreflect v1.17.0/go.mod h1:h9+vUUL38jiBzck8ck+6G/aeMX8Z4QUY/NiJPwPNi+8=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
