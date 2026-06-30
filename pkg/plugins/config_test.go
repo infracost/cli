@@ -87,7 +87,7 @@ func stubInfoFn(version string) func(context.Context, string) (*pb.GetPluginInfo
 
 func TestListPlugins(t *testing.T) {
 	dir := t.TempDir()
-	terraformPath := filepath.Join(dir, pluginBinaryName("infracost-plugin-terraform"))
+	terraformPath := filepath.Join(dir, pluginBinaryName("infracost-parser-terraform"))
 	require.NoError(t, os.WriteFile(terraformPath, []byte("binary"), 0o700))
 
 	cfg := &Config{Dir: dir}
@@ -136,7 +136,7 @@ func TestListPlugins_IncludesExtraPlugins(t *testing.T) {
 
 func TestListPlugins_IgnoresLegacySidecars(t *testing.T) {
 	dir := t.TempDir()
-	terraformPath := filepath.Join(dir, pluginBinaryName("infracost-plugin-terraform"))
+	terraformPath := filepath.Join(dir, pluginBinaryName("infracost-parser-terraform"))
 	require.NoError(t, os.WriteFile(terraformPath, []byte("binary"), 0o700))
 	// Legacy sidecars left over from a prior CLI version should not appear
 	// as their own list entries.
