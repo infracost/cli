@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -27,6 +28,15 @@ const (
 	handshakeProtocolVersion  = 1
 	dispenseName              = "plugin"
 )
+
+// pluginCommand builds the exec.Cmd for launching a plugin, propagating the
+// CLI's effective log level to the plugin via LOG_LEVEL so plugin logs stream
+// back at the same verbosity as the CLI (warn by default, debug under --debug).
+func pluginCommand(path string) *exec.Cmd {
+	cmd := exec.Command(path)
+	cmd.Env = append(os.Environ(), "LOG_LEVEL="+logging.WriteLevel())
+	return cmd
+}
 
 var handshakeConfig = plugin.HandshakeConfig{
 	ProtocolVersion:  handshakeProtocolVersion,
@@ -282,11 +292,13 @@ func queryPluginInfo(ctx context.Context, path string) (*pb.GetPluginInfoRespons
 		Plugins: map[string]plugin.Plugin{
 			dispenseName: grpcPlugin{},
 		},
-		Cmd:              exec.Command(path),
+		Cmd:              pluginCommand(path),
 		StartTimeout:     startTimeout,
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
-		Logger:           pluginconn.ConnectOptions{}.ResolveLogger(),
-		SyncStderr:       logging.Output(),
+		Logger:           logging.PluginHCLogger(),
+		// go-plugin re-emits parsed plugin stderr through Logger; discard the
+		// raw copy so lines aren't also printed unformatted.
+		SyncStderr: io.Discard,
 		GRPCDialOptions: []grpc.DialOption{
 			grpc.WithDefaultCallOptions(
 				grpc.MaxCallRecvMsgSize(consts.MaxGRPCMessageSize),
@@ -339,11 +351,13 @@ func (m *Manager) connect(ctx context.Context, path string) (*ParserPlugin, *Pro
 		Plugins: map[string]plugin.Plugin{
 			dispenseName: grpcPlugin{},
 		},
-		Cmd:              exec.Command(path),
+		Cmd:              pluginCommand(path),
 		StartTimeout:     startTimeout,
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
-		Logger:           pluginconn.ConnectOptions{}.ResolveLogger(),
-		SyncStderr:       logging.Output(),
+		Logger:           logging.PluginHCLogger(),
+		// go-plugin re-emits parsed plugin stderr through Logger; discard the
+		// raw copy so lines aren't also printed unformatted.
+		SyncStderr: io.Discard,
 		GRPCDialOptions: []grpc.DialOption{
 			grpc.WithDefaultCallOptions(
 				grpc.MaxCallRecvMsgSize(consts.MaxGRPCMessageSize),
@@ -394,7 +408,7 @@ func (m *Manager) connect(ctx context.Context, path string) (*ParserPlugin, *Pro
 			Info:                info,
 			ParserConfig:        parserConfig,
 			Path:                path,
-			client:               client,
+			client:              client,
 		}, nil, nil
 
 	case pb.PluginType_PROVIDER:
