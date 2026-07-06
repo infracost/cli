@@ -146,21 +146,25 @@ type rgbStop [3]int
 // hand-picked from each vendor's marketing material and tuned for
 // legibility on a dark terminal.
 var brandColors = map[string]brandStyle{
-	"claude":    {rgb: "201;100;66"},                       // #C96442 Anthropic coral
-	"copilot":   {rgb: "137;87;229"},                       // #8957E5 GitHub purple
-	"codex":     {rgb: "16;163;127", highlight: "Codex"},   // #10A37F applied only to "Codex"
+	"claude":  {rgb: "201;100;66"},                     // #C96442 Anthropic coral
+	"copilot": {rgb: "137;87;229"},                     // #8957E5 GitHub purple
+	"codex":   {rgb: "16;163;127", highlight: "Codex"}, // #10A37F applied only to "Codex"
 	// Cursor's identity is monochrome (black/white); intentionally omitted
 	// so Service() falls through to the default foreground. The icon next
 	// to the name carries the brand cue.
-	"vscode":    {rgb: "0;122;204"},                        // #007ACC VS Code blue
+	"vscode": {rgb: "0;122;204"}, // #007ACC VS Code blue
 	"jetbrains": {gradient: []rgbStop{ // pink → purple → orange, the JetBrains umbrella mark
-		{254, 49, 93},   // #FE315D pink
-		{160, 57, 163},  // #A039A3 purple
-		{255, 144, 0},   // #FF9000 orange
+		{254, 49, 93},  // #FE315D pink
+		{160, 57, 163}, // #A039A3 purple
+		{255, 144, 0},  // #FF9000 orange
 	}},
-	"zed":       {rgb: "59;130;246"},                       // #3B82F6 Zed accent blue (logo + buttons on zed.dev)
-	"neovim":    {rgb: "122;166;79"},                       // #7AA64F Neovim green
-	"gemini":    {rgb: "66;133;244"},                       // #4285F4 Google blue
+	"zed":    {rgb: "59;130;246"}, // #3B82F6 Zed accent blue (logo + buttons on zed.dev)
+	"neovim": {rgb: "122;166;79"}, // #7AA64F Neovim green
+	"gemini": {rgb: "66;133;244"}, // #4285F4 Google blue
+	"gitlab": {gradient: []rgbStop{ // GitLab tanuki: orange → red
+		{252, 109, 38}, // #FC6D26 tanuki orange
+		{226, 67, 41},  // #E24329 tanuki red
+	}},
 }
 
 // Service wraps text in the brand color registered for slug. When the

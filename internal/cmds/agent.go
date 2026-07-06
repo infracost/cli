@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -25,17 +26,18 @@ const (
 )
 
 type agent struct {
-	name     string
-	icon     string                         // slug for the embedded brand icon (internal/ui/icons/<slug>.png)
-	binaries []string                       // CLI binaries to look for on PATH
-	setup    func(bin, scope string) error  // CLI-based setup
-	teardown func(bin, scope string) error  // CLI-based teardown
-	check    func(bin string) (bool, error) // returns true if infracost skills are installed
-	manual   string                         // manual setup instructions
-	remove   string                         // manual remove instructions
-	url      string                         // fallback URL to open
-	hint     string                         // message shown before opening URL
-	enabled  bool
+	name      string
+	icon      string                         // slug for the embedded brand icon (internal/ui/icons/<slug>.png)
+	binaries  []string                       // CLI binaries to look for on PATH
+	setup     func(bin, scope string) error  // CLI-based setup
+	teardown  func(bin, scope string) error  // CLI-based teardown
+	check     func(bin string) (bool, error) // returns true if infracost skills are installed
+	manual    string                         // manual setup instructions
+	postSetup string                         // extra activation instructions shown after a successful scripted setup
+	remove    string                         // manual remove instructions
+	url       string                         // fallback URL to open
+	hint      string                         // message shown before opening URL
+	enabled   bool
 }
 
 func pluginSetup(bin, marketplace, plugin, scope string) error {
@@ -250,6 +252,167 @@ func updateAgentPluginRegistry(file, pluginDir, marketplace string) error {
 	return nil
 }
 
+// duoSkills are the CLI-bound Infracost skills installed for GitLab Duo.
+// fix-findings is intentionally excluded — it's backed by Infracost
+// Agents (MCP-only) and has no CLI binding, so it can't run on Duo's
+// shell-command path.
+var duoSkills = []string{"scan", "price-lookup", "iac-generation"}
+
+// duoConfigDir returns the base directory GitLab Duo reads user-level
+// ("global") customization from, following the precedence the Duo CLI
+// documents: GLAB_CONFIG_DIR wins, then XDG_CONFIG_HOME/gitlab/duo, then
+// the per-OS default (~/.gitlab/duo on Linux/macOS, %APPDATA%\GitLab\duo
+// on Windows).
+func duoConfigDir() (string, error) {
+	if dir := os.Getenv("GLAB_CONFIG_DIR"); dir != "" {
+		return dir, nil
+	}
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "gitlab", "duo"), nil
+	}
+	if runtime.GOOS == "windows" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			return filepath.Join(appData, "GitLab", "duo"), nil
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locating home directory: %w", err)
+	}
+	return filepath.Join(home, ".gitlab", "duo"), nil
+}
+
+// installGitLabDuoSkills places the Infracost skills where the GitLab Duo
+// CLI discovers user-level skills: <duoConfigDir>/skills/<name>/SKILL.md.
+// It shallow-clones agent-skills to a temp dir (Duo reads the copied
+// SKILL.md files directly, so there's no need to leave a checkout behind),
+// then writes each skill via writeDuoSkills.
+//
+// Only the user-level *skills* are installed — we deliberately do NOT
+// touch <duoConfigDir>/AGENTS.md or chat-rules.md, which are Duo's own
+// global-customization files a user may already maintain; overwriting them
+// would clobber the user's config. Each skill is self-contained instead
+// (see writeDuoSkills).
+func installGitLabDuoSkills() error {
+	baseDir, err := duoConfigDir()
+	if err != nil {
+		return err
+	}
+
+	var actionErr error
+	if err := ui.RunWithSpinner("Installing Infracost skills for GitLab Duo...", "Skills installed", func() {
+		tmpDir, err := os.MkdirTemp("", "infracost-agent-skills-")
+		if err != nil {
+			actionErr = fmt.Errorf("creating temp dir: %w", err)
+			return
+		}
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		cmd := exec.Command("git", "clone", "--depth=1", infracostSkillsRepo, tmpDir) //nolint:gosec // repo URL is a hardcoded constant; tmpDir is from os.MkdirTemp
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				actionErr = fmt.Errorf("git clone: %s", msg)
+			} else {
+				actionErr = fmt.Errorf("git clone: %w", err)
+			}
+			return
+		}
+
+		actionErr = writeDuoSkills(tmpDir, baseDir)
+	}); err != nil {
+		return err
+	}
+	return actionErr
+}
+
+// writeDuoSkills copies each CLI-bound skill from a checkout of
+// agent-skills (repoDir) into <baseDir>/skills/<name>/. To keep every
+// skill self-contained — and to avoid writing anything outside the
+// skills tree — the shared command matrix (plugins/infracost/BINDINGS.md)
+// is co-located inside each skill dir and the skill body's
+// `../../BINDINGS.md` link is rewritten to point at the local copy. Split
+// out from installGitLabDuoSkills so the file-placement logic is testable
+// without a network clone.
+func writeDuoSkills(repoDir, baseDir string) error {
+	skillsDir := filepath.Join(baseDir, "skills")
+
+	// BINDINGS.md (the CLI command matrix the Duo skills drive off) only
+	// exists once the dual-binding skills are published. If it's absent we
+	// still install whatever skills are present rather than hard-failing,
+	// and skip both co-locating it and the link rewrite. installed tracks
+	// whether we placed anything so a completely empty clone is an error.
+	bindings, bindingsErr := os.ReadFile(filepath.Join(repoDir, "plugins", "infracost", "BINDINGS.md")) //nolint:gosec // repoDir is a temp clone of a hardcoded repo
+
+	installed := 0
+	for _, name := range duoSkills {
+		src := filepath.Join(repoDir, "plugins", "infracost", "skills", name)
+		dst := filepath.Join(skillsDir, name)
+
+		skill, err := os.ReadFile(filepath.Join(src, "SKILL.md")) //nolint:gosec // src is under the temp clone
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // skill not in this revision — skip, don't abort
+			}
+			return fmt.Errorf("reading %s skill: %w", name, err)
+		}
+
+		// Start clean so re-running setup refreshes to the latest revision
+		// rather than leaving stale files behind.
+		if err := os.RemoveAll(dst); err != nil {
+			return fmt.Errorf("clearing %s: %w", dst, err)
+		}
+		if err := os.MkdirAll(dst, 0o750); err != nil {
+			return fmt.Errorf("creating %s: %w", dst, err)
+		}
+
+		if bindingsErr == nil {
+			// The skill links to the matrix as ../../BINDINGS.md (resolves
+			// within the repo layout); point it at the co-located copy.
+			skill = bytes.ReplaceAll(skill, []byte("](../../BINDINGS.md)"), []byte("](BINDINGS.md)"))
+		}
+		if err := os.WriteFile(filepath.Join(dst, "SKILL.md"), skill, 0o600); err != nil { //nolint:gosec // dst is <duoConfigDir>/skills/<name>; name is a hardcoded constant and baseDir is the user's own Duo config dir
+			return fmt.Errorf("writing %s skill: %w", name, err)
+		}
+		if bindingsErr == nil {
+			if err := os.WriteFile(filepath.Join(dst, "BINDINGS.md"), bindings, 0o600); err != nil { //nolint:gosec // see above — path is under the user's Duo config dir
+				return fmt.Errorf("writing %s bindings: %w", name, err)
+			}
+		}
+		installed++
+	}
+
+	if installed == 0 {
+		return fmt.Errorf("no Infracost skills found in %s — the agent-skills repository layout may have changed", repoDir)
+	}
+	return nil
+}
+
+// removeGitLabDuoSkills deletes the skill directories installGitLabDuoSkills
+// created. It only removes <duoConfigDir>/skills/<name>/ for the skills we
+// install and leaves everything else (including any user-authored AGENTS.md
+// or chat-rules.md) untouched.
+func removeGitLabDuoSkills() error {
+	baseDir, err := duoConfigDir()
+	if err != nil {
+		return err
+	}
+	var actionErr error
+	if err := ui.RunWithSpinner("Removing Infracost skills from GitLab Duo...", "Skills removed", func() {
+		skillsDir := filepath.Join(baseDir, "skills")
+		for _, name := range duoSkills {
+			if err := os.RemoveAll(filepath.Join(skillsDir, name)); err != nil {
+				actionErr = fmt.Errorf("removing %s skill: %w", name, err)
+				return
+			}
+		}
+	}); err != nil {
+		return err
+	}
+	return actionErr
+}
+
 func runAgentBinary(bin string, args ...string) error {
 	var stderr bytes.Buffer
 	cmd := exec.Command(bin, args...) //nolint:gosec // bin is user-configured or looked up on PATH
@@ -429,6 +592,67 @@ var supportedAgents = []agent{
 			ui.Code("https://geminicli.com/docs/"),
 			ui.Code("gemini skills install "+infracostSkillsRepo+".git")),
 		remove:  `To remove Infracost skills from Gemini CLI, remove the infracost skills from your Gemini configuration.`,
+		enabled: true,
+	},
+	{
+		name: "GitLab Duo",
+		icon: "gitlab",
+		// No `binaries` — install is filesystem-driven (git clone + copy
+		// into ~/.gitlab/duo/skills/), so we run setup unconditionally
+		// regardless of whether the Duo CLI is on PATH. The skills sit in
+		// the Duo config dir harmlessly until the CLI is installed and run
+		// with --enable-global-skills.
+		setup: func(_, _ string) error {
+			return installGitLabDuoSkills()
+		},
+		teardown: func(_, _ string) error {
+			return removeGitLabDuoSkills()
+		},
+		check: func(_ string) (bool, error) {
+			baseDir, err := duoConfigDir()
+			if err != nil {
+				return false, err
+			}
+			_, err = os.Stat(filepath.Join(baseDir, "skills", "scan", "SKILL.md"))
+			if err != nil {
+				if os.IsNotExist(err) {
+					return false, nil
+				}
+				return false, err
+			}
+			return true, nil
+		},
+		// Duo only loads user-level skills when it's started with global
+		// skills enabled, so the install isn't self-activating — surface
+		// the flag as an explicit next step.
+		postSetup: fmt.Sprintf(`GitLab Duo only loads user-level ("global") skills when you enable them:
+
+  • Start the Duo CLI with the flag:
+      %s
+    (or via glab: %s)
+
+  • Or enable it for every session:
+      %s
+
+Requires GitLab Duo CLI 8.83.0+ (GitLab 19.0+). User-level skills are an
+experimental feature and are read only by the Duo CLI — not the VS Code /
+JetBrains extensions or the GitLab web UI.`,
+			ui.Code("duo --enable-global-skills"),
+			ui.Code("glab duo cli --enable-global-skills"),
+			ui.Code("export GITLAB_ENABLE_GLOBAL_SKILLS=true")),
+		manual: fmt.Sprintf(`To install Infracost skills in GitLab Duo (user-level):
+  1. Install the GitLab Duo CLI (8.83.0+): %s
+  2. Clone the skills and copy them into your Duo skills directory:
+     %s
+     %s
+     %s
+  3. Start Duo with global skills enabled:
+     %s`,
+			ui.Code("https://docs.gitlab.com/user/gitlab_duo_cli/"),
+			ui.Code("git clone "+infracostSkillsRepo),
+			ui.Code("mkdir -p ~/.gitlab/duo/skills"),
+			ui.Code("cp -r agent-skills/plugins/infracost/skills/{scan,price-lookup,iac-generation} ~/.gitlab/duo/skills/"),
+			ui.Code("duo --enable-global-skills")),
 		enabled: true,
 	},
 }
@@ -634,7 +858,17 @@ func setupAgent(cfg *config.Config, a agent, scope string) error {
 			if err := a.setup(bin, scope); err != nil {
 				return err
 			}
-			ui.Successf("Infracost skills enabled for %s. Restart your agent to activate.", a.name)
+			// Agents with extra activation steps (e.g. GitLab Duo's
+			// --enable-global-skills flag) get a tailored next-step card;
+			// the generic "restart to activate" line only applies to the
+			// agents that are ready the moment the files are in place.
+			if a.postSetup != "" {
+				ui.Successf("Infracost skills installed for %s.", a.name)
+				fmt.Println()
+				fmt.Print(ui.InstructionsCard("Activate Infracost skills in "+a.name, a.postSetup))
+			} else {
+				ui.Successf("Infracost skills enabled for %s. Restart your agent to activate.", a.name)
+			}
 			return nil
 		}
 	}
@@ -695,9 +929,15 @@ func removeAgent(cfg *config.Config, a agent, scope string) error {
 		return fmt.Errorf("no remove method available for %s", a.name)
 	}
 
-	bin, err := resolveAgentBinary(cfg, a)
-	if err != nil {
-		return err
+	// Filesystem-driven agents (e.g. GitLab Duo) have no `binaries` and
+	// don't need a CLI to tear down — only resolve a binary for agents
+	// whose teardown shells out to one.
+	var bin string
+	if len(a.binaries) > 0 {
+		var err error
+		if bin, err = resolveAgentBinary(cfg, a); err != nil {
+			return err
+		}
 	}
 
 	if err := a.teardown(bin, scope); err != nil {
