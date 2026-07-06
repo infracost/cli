@@ -308,6 +308,14 @@ func installGitLabDuoSkills() error {
 		}
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 
+		// Clone the default branch (main) rather than pinning a release
+		// tag, deliberately matching how Claude Code's plugin marketplace
+		// consumes this same repo (`plugin install infracost@infracost`
+		// tracks the default branch, not the infracost-plugin-v* tags —
+		// those drive semver dependency resolution + update-gating only).
+		// Releases are cut from main, and the skills are dual-binding so a
+		// single main revision serves both Claude (MCP) and Duo (CLI); this
+		// keeps every Infracost skill channel on one consistent revision.
 		cmd := exec.Command("git", "clone", "--depth=1", infracostSkillsRepo, tmpDir) //nolint:gosec // repo URL is a hardcoded constant; tmpDir is from os.MkdirTemp
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
