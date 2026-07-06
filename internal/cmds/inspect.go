@@ -37,13 +37,13 @@ func Inspect(cfg *config.Config) *cobra.Command {
   # Top 5 FinOps issues, just the addresses (one per line):
   $ infracost inspect --top-savings 5 --fields address
 
-  # Top 5 FinOps issues with custom column projection (TSV with header):
+  # Top 5 FinOps issues with a custom column projection (aligned table):
   $ infracost inspect --top-savings 5 --fields address,monthly_savings,policy
 
   # Every resource missing the 'team' tag, one address per line:
   $ infracost inspect --missing-tag team
 
-  # Same, with extra columns for context (TSV-friendly for awk / cut):
+  # Same, with extra columns for context (add --llm/--json for scripting):
   $ infracost inspect --missing-tag team --fields address,type,monthly_cost
 
   # Resources whose 'environment' tag is set but uses a disallowed value:
