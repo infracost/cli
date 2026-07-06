@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/infracost/cli/pkg/config/process"
+	"github.com/infracost/cli/pkg/logging"
 )
 
 var _ process.Processor = (*Config)(nil)
@@ -27,6 +28,17 @@ type Config struct {
 	// version. When false, an existing flat-installed binary is used if
 	// available.
 	AutoUpdate bool `env:"INFRACOST_CLI_PLUGIN_AUTO_UPDATE" default:"true"`
+
+	// EnableK8sPlugins gates the Kubernetes parser/provider plugins. It mirrors
+	// the enableK8sPlugins run-parameter feature flag (a per-org LaunchDarkly
+	// rollout). The plugins are always downloaded (they're publicly available
+	// regardless); this flag only controls whether they're executed. When false
+	// the Kubernetes plugins are excluded from provider processing and their
+	// projects are skipped. Set from the run parameters before scanning.
+	//
+	// TODO: remove this flag (and the RequiresK8sPlugins gate) once the
+	// Kubernetes plugins are fully launched and no longer feature-gated.
+	EnableK8sPlugins bool
 
 	managerMu  sync.Mutex
 	ensureOnce sync.Once
@@ -93,16 +105,45 @@ func (c *Config) ParserPluginForProject(ctx context.Context, projectTypeOrPlugin
 	return manager.LoadParserPluginForProject(ctx, projectTypeOrPluginName)
 }
 
-// ProviderPlugins returns every loaded provider plugin.
+// ProviderPlugins returns every loaded provider plugin that should run, with
+// feature-gated plugins (currently the Kubernetes provider when
+// EnableK8sPlugins is off) filtered out.
 func (c *Config) ProviderPlugins(ctx context.Context) ([]*ProviderPlugin, error) {
+	var providers []*ProviderPlugin
 	if c.LoadProviderPlugins != nil {
-		return c.LoadProviderPlugins(ctx)
+		var err error
+		if providers, err = c.LoadProviderPlugins(ctx); err != nil {
+			return nil, err
+		}
+	} else {
+		manager, err := c.EnsurePlugins()
+		if err != nil {
+			return nil, err
+		}
+		if providers, err = manager.LoadProviderPlugins(ctx); err != nil {
+			return nil, err
+		}
 	}
-	manager, err := c.EnsurePlugins()
-	if err != nil {
-		return nil, err
+
+	filtered := make([]*ProviderPlugin, 0, len(providers))
+	for _, p := range providers {
+		if c.SkipPluginExecution(p.Info.GetName()) {
+			logging.Debugf("skipping provider plugin %q (feature flag disabled)", p.Info.GetName())
+			continue
+		}
+		filtered = append(filtered, p)
 	}
-	return manager.LoadProviderPlugins(ctx)
+	return filtered, nil
+}
+
+// SkipPluginExecution reports whether a plugin reporting the given name should
+// be excluded from execution given the current feature-flag gates. Today this
+// is the Kubernetes plugins when EnableK8sPlugins is off.
+func (c *Config) SkipPluginExecution(reportedName string) bool {
+	if c.EnableK8sPlugins {
+		return false
+	}
+	return gatedPluginNames()[reportedName]
 }
 
 // Close releases all plugin subprocess resources.

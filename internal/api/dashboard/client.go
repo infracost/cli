@@ -45,6 +45,12 @@ type RunParameters struct {
 	Guardrails        []json.RawMessage `json:"guardrails"`
 	Budgets           []json.RawMessage `json:"budgets"`
 	ConfigTemplate    string            `json:"configTemplate"`
+
+	// FeatureFlags is the JSON-serialized event.FeatureFlags proto describing
+	// which per-org feature flags are enabled for this run (e.g. whether the
+	// Kubernetes plugins should be used). Unmarshaled with protojson where it's
+	// consumed. May be empty against older dashboards that don't return it.
+	FeatureFlags json.RawMessage `json:"featureFlags"`
 }
 
 type Client interface {
@@ -145,6 +151,7 @@ func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) 
     guardrails
     budgets
     configTemplate
+    featureFlags
   }
 }`
 
