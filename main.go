@@ -36,6 +36,18 @@ var localCommandPaths = map[string]bool{
 	"infracost plugins list": true,
 }
 
+// agentNagSkipCommands lists leaf commands where the outdated-agent-skill
+// nag is suppressed: the setup/management commands manage skills directly
+// (and leave the check cache mid-flux), and `update` already prints its own
+// notice. Keyed by cobra's cmd.Name() (the leaf), matching how the
+// "command" metadata is registered.
+var agentNagSkipCommands = map[string]bool{
+	"setup":  true,
+	"remove": true,
+	"status": true,
+	"update": true,
+}
+
 // telemetryFlagAllowlist names the flags whose VALUES (not just whether
 // they were set) we record on infracost-command / infracost-run events.
 // Includes the discriminating flags users explicitly pick (policy,
@@ -90,6 +102,18 @@ func run() (exitCode int) {
 			return
 		}
 		updateMessageChan <- info
+	}()
+
+	// Check whether any configured AI agent is running an outdated Infracost
+	// skill. This can shell out to agent CLIs, so it must never block the
+	// command: the nag decision falls back to the last cached result (read
+	// now, instantly), and the refresh below runs in the background, only
+	// updating the cache for the next run. The end-of-run read is
+	// non-blocking (see below).
+	cachedStaleAgents := cmds.CachedStaleAgents()
+	staleAgentsChan := make(chan []cmds.StaleAgent, 1)
+	go func() {
+		staleAgentsChan <- cmds.RefreshStaleAgentsIfStale(context.Background())
 	}()
 
 	defer func() {
@@ -254,6 +278,23 @@ func run() (exitCode int) {
 				ui.Bold(info.LatestVersion),
 				info.Cmd,
 			)
+		}
+	}
+
+	// Warn when a configured agent is running an outdated Infracost skill.
+	// Suppressed on the agent-management / setup commands, which handle this
+	// themselves and leave the cache mid-flux. The channel read is
+	// non-blocking: if the background refresh isn't done we fall back to the
+	// last cached result so a fast command never waits on agent scanning.
+	if command, ok := events.GetMetadata[string]("command"); !ok || !agentNagSkipCommands[command] {
+		staleAgents := cachedStaleAgents
+		select {
+		case fresh := <-staleAgentsChan:
+			staleAgents = fresh
+		default:
+		}
+		if notice := cmds.FormatStaleAgentsNotice(staleAgents); notice != "" {
+			_, _ = fmt.Fprint(os.Stderr, notice)
 		}
 	}
 

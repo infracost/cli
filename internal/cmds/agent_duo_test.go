@@ -79,6 +79,37 @@ func TestWriteDuoSkills(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(baseDir, "skills", "fix-findings"))
 }
 
+func TestWriteDuoSkills_StampsVersion(t *testing.T) {
+	repoDir := t.TempDir()
+	skillsSrc := filepath.Join(repoDir, "plugins", "infracost", "skills")
+	for _, name := range duoSkills {
+		require.NoError(t, os.MkdirAll(filepath.Join(skillsSrc, name), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(skillsSrc, name, "SKILL.md"),
+			[]byte("---\nname: "+name+"\ndescription: t\n---\n"), 0o600))
+	}
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoDir, "plugins", "infracost", "BINDINGS.md"), []byte("m"), 0o600))
+	manifestDir := filepath.Join(repoDir, "plugins", "infracost", ".claude-plugin")
+	require.NoError(t, os.MkdirAll(manifestDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(manifestDir, "plugin.json"),
+		[]byte(`{"version":"0.1.1"}`), 0o600))
+
+	base := t.TempDir()
+	t.Setenv("GLAB_CONFIG_DIR", base) // so duoConfigDir() == base
+	require.NoError(t, writeDuoSkills(repoDir, base))
+
+	v, err := duoInstalledVersion()
+	require.NoError(t, err)
+	assert.Equal(t, "0.1.1", v)
+}
+
+func TestDuoInstalledVersion_NotInstalled(t *testing.T) {
+	t.Setenv("GLAB_CONFIG_DIR", t.TempDir())
+	v, err := duoInstalledVersion()
+	require.NoError(t, err)
+	assert.Empty(t, v)
+}
+
 func TestWriteDuoSkills_WithoutBindings(t *testing.T) {
 	// A revision that ships the skills but not BINDINGS.md (e.g. the
 	// MCP-only skills currently on agent-skills main) must still install

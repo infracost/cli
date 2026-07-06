@@ -2,14 +2,17 @@ package cmds
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
@@ -26,17 +29,22 @@ const (
 )
 
 type agent struct {
-	name      string
-	icon      string                         // slug for the embedded brand icon (internal/ui/icons/<slug>.png)
-	binaries  []string                       // CLI binaries to look for on PATH
-	setup     func(bin, scope string) error  // CLI-based setup
-	teardown  func(bin, scope string) error  // CLI-based teardown
-	check     func(bin string) (bool, error) // returns true if infracost skills are installed
-	manual    string                         // manual setup instructions
-	postSetup string                         // extra activation instructions shown after a successful scripted setup
-	remove    string                         // manual remove instructions
-	url       string                         // fallback URL to open
-	hint      string                         // message shown before opening URL
+	name     string
+	icon     string                         // slug for the embedded brand icon (internal/ui/icons/<slug>.png)
+	binaries []string                       // CLI binaries to look for on PATH
+	setup    func(bin, scope string) error  // CLI-based setup
+	teardown func(bin, scope string) error  // CLI-based teardown
+	check    func(bin string) (bool, error) // returns true if infracost skills are installed
+	// version reports the installed Infracost skill version for a
+	// configured agent (e.g. "0.1.1"), or "" when the agent is present but
+	// the version can't be determined. A nil version func means the agent
+	// can't be version-monitored and is skipped by the staleness check.
+	version   func(bin string) (string, error)
+	manual    string // manual setup instructions
+	postSetup string // extra activation instructions shown after a successful scripted setup
+	remove    string // manual remove instructions
+	url       string // fallback URL to open
+	hint      string // message shown before opening URL
 	enabled   bool
 }
 
@@ -101,6 +109,59 @@ func pluginCheck(bin, name string) (bool, error) {
 	return strings.Contains(out.String(), name), nil
 }
 
+// agentProbeTimeout bounds each version-detection shell-out so a slow or
+// hung agent CLI can't wedge the background staleness check.
+const agentProbeTimeout = 10 * time.Second
+
+// skillVersionRe matches a semver (optionally v-prefixed) in agent CLI
+// output, e.g. "1.2.3" or "v1.2.3".
+var skillVersionRe = regexp.MustCompile(`v?(\d+\.\d+\.\d+)`)
+
+// pluginListVersion runs `<bin> <args...>` (an agent's plugin/skill list
+// command) and returns the first semver on a line mentioning "infracost".
+// Agent CLIs don't share a stable machine-readable format, so this parses
+// defensively: a present-but-unparseable version returns "" (treated as
+// "unknown", not an error) so the staleness check simply skips it rather
+// than warning on a false signal.
+func pluginListVersion(bin string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), agentProbeTimeout)
+	defer cancel()
+
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // bin is resolved from PATH
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if !strings.Contains(strings.ToLower(line), "infracost") {
+			continue
+		}
+		if m := skillVersionRe.FindStringSubmatch(line); m != nil {
+			return m[1], nil
+		}
+	}
+	return "", nil
+}
+
+// readPluginManifestVersion reads the Infracost plugin's version from a
+// checkout/clone rooted at repoRoot (plugins/infracost/.claude-plugin/plugin.json).
+// Returns "" when the manifest is absent or has no version.
+func readPluginManifestVersion(repoRoot string) string {
+	data, err := os.ReadFile(filepath.Join(repoRoot, "plugins", "infracost", ".claude-plugin", "plugin.json")) //nolint:gosec // repoRoot is a clone dir we control
+	if err != nil {
+		return ""
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(manifest.Version)
+}
+
 func pluginTeardown(bin, marketplaceName, plugin, scope string) error {
 	var errs []error
 	var actionErr error
@@ -162,6 +223,32 @@ type agentPluginRegistry struct {
 // update (rather than duplicate) the entry in the registry — so a
 // `infracost agent setup` after a previous install pulls the latest
 // agent-skills revision instead of leaving a stale checkout in place.
+// copilotVSCodeCloneDir returns the on-disk location of the agent-skills
+// checkout that installCopilotVSCodePlugin manages, or "" if the home
+// directory can't be resolved.
+func copilotVSCodeCloneDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".vscode", "agent-plugins", "github.com", "infracost", "agent-skills")
+}
+
+// copilotVSCodeInstalledVersion reads the plugin version from the VS Code
+// clone. Returns "" when the plugin isn't installed. This reflects the
+// clone we made (VS Code loads the plugin from that path in place, it
+// doesn't re-fetch), so it's an accurate installed-version signal.
+func copilotVSCodeInstalledVersion() (string, error) {
+	dir := copilotVSCodeCloneDir()
+	if dir == "" {
+		return "", nil
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return "", nil //nolint:nilerr // absent clone == not installed, not an error
+	}
+	return readPluginManifestVersion(dir), nil
+}
+
 func installCopilotVSCodePlugin() error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -257,6 +344,13 @@ func updateAgentPluginRegistry(file, pluginDir, marketplace string) error {
 // Agents (MCP-only) and has no CLI binding, so it can't run on Duo's
 // shell-command path.
 var duoSkills = []string{"scan", "price-lookup", "iac-generation"}
+
+// duoSkillVersionFile is a marker written under <duoConfigDir>/skills/ at
+// install time recording the skill version we copied in. It's how the
+// staleness check learns Duo's installed version (Duo has no CLI that
+// reports it). The leading dot keeps it out of Duo's skill discovery,
+// which only scans skills/<name>/ subdirectories.
+const duoSkillVersionFile = ".infracost-skill-version"
 
 // duoConfigDir returns the base directory GitLab Duo reads user-level
 // ("global") customization from, following the precedence the Duo CLI
@@ -394,7 +488,37 @@ func writeDuoSkills(repoDir, baseDir string) error {
 	if installed == 0 {
 		return fmt.Errorf("no Infracost skills found in %s — the agent-skills repository layout may have changed", repoDir)
 	}
+
+	// Stamp the installed version so the staleness check can tell whether
+	// Duo is behind. Best-effort: if the manifest has no version we just
+	// clear any prior stamp so a stale number isn't left behind.
+	versionFile := filepath.Join(skillsDir, duoSkillVersionFile)
+	if v := readPluginManifestVersion(repoDir); v != "" {
+		if err := os.WriteFile(versionFile, []byte(v), 0o600); err != nil { //nolint:gosec // path is under the user's Duo config dir
+			return fmt.Errorf("writing version marker: %w", err)
+		}
+	} else {
+		_ = os.Remove(versionFile)
+	}
 	return nil
+}
+
+// duoInstalledVersion reads the version marker written by writeDuoSkills.
+// Returns "" when Duo skills aren't installed or the marker is absent
+// (e.g. installed before version stamping existed).
+func duoInstalledVersion() (string, error) {
+	baseDir, err := duoConfigDir()
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(filepath.Join(baseDir, "skills", duoSkillVersionFile)) //nolint:gosec // path is under the user's Duo config dir
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 // removeGitLabDuoSkills deletes the skill directories installGitLabDuoSkills
@@ -415,6 +539,7 @@ func removeGitLabDuoSkills() error {
 				return
 			}
 		}
+		_ = os.Remove(filepath.Join(skillsDir, duoSkillVersionFile))
 	}); err != nil {
 		return err
 	}
@@ -448,6 +573,9 @@ var supportedAgents = []agent{
 		check: func(bin string) (bool, error) {
 			return pluginCheck(bin, "infracost")
 		},
+		version: func(bin string) (string, error) {
+			return pluginListVersion(bin, "plugin", "list")
+		},
 		manual: fmt.Sprintf(`To install Infracost skills in Claude Code:
   1. Install Claude Code: %s
   2. Run the following commands:
@@ -474,6 +602,9 @@ var supportedAgents = []agent{
 		check: func(bin string) (bool, error) {
 			return pluginCheck(bin, "infracost")
 		},
+		version: func(bin string) (string, error) {
+			return pluginListVersion(bin, "plugin", "list")
+		},
 		manual: fmt.Sprintf(`To install Infracost skills in GitHub Copilot CLI:
   1. Install GitHub Copilot CLI: %s
   2. Run the following commands:
@@ -494,6 +625,9 @@ var supportedAgents = []agent{
 		// ~/.vscode/agent-plugins/ harmlessly until it is.
 		setup: func(_, _ string) error {
 			return installCopilotVSCodePlugin()
+		},
+		version: func(_ string) (string, error) {
+			return copilotVSCodeInstalledVersion()
 		},
 		manual: fmt.Sprintf(`To install Infracost skills in GitHub Copilot for VS Code:
   1. Open the Command Palette (%s / %s)
@@ -593,6 +727,9 @@ var supportedAgents = []agent{
 			}
 			return strings.Contains(out.String(), "infracost"), nil
 		},
+		version: func(bin string) (string, error) {
+			return pluginListVersion(bin, "skills", "list")
+		},
 		manual: fmt.Sprintf(`To install Infracost skills in Gemini CLI:
   1. Install Gemini CLI: %s
   2. Run the following command:
@@ -629,6 +766,9 @@ var supportedAgents = []agent{
 				return false, err
 			}
 			return true, nil
+		},
+		version: func(_ string) (string, error) {
+			return duoInstalledVersion()
 		},
 		// Duo only loads user-level skills when it's started with global
 		// skills enabled, so the install isn't self-activating — surface
@@ -678,7 +818,58 @@ func Agent(cfg *config.Config) *cobra.Command {
 	}
 	cmd.AddCommand(agentSetup(cfg))
 	cmd.AddCommand(agentRemove(cfg))
+	cmd.AddCommand(agentStatus(cfg))
 	return cmd
+}
+
+func agentStatus(cfg *config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show which agents have Infracost skills installed and whether they're up to date",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var statuses []AgentStatus
+			var latest string
+			var probeErr error
+			if err := ui.RunWithSpinner("Checking installed agent skills...", "Checked agent skills", func() {
+				statuses, latest, probeErr = AgentStatuses(cmd.Context(), cfg)
+			}); err != nil {
+				return err
+			}
+			if probeErr != nil {
+				return probeErr
+			}
+
+			// A successful live probe is the freshest possible signal, so
+			// refresh the cache the background nag reads from.
+			var stale []StaleAgent
+			for _, s := range statuses {
+				if s.Stale {
+					stale = append(stale, StaleAgent{Name: s.Name, Installed: s.Installed, Latest: s.Latest})
+				}
+			}
+			_ = saveAgentCheckCache(&agentCheckCache{CheckedAt: time.Now(), Latest: latest, Stale: stale})
+
+			w := cmd.OutOrStdout()
+			if len(statuses) == 0 {
+				_, _ = fmt.Fprintf(w, "No AI agents with Infracost skills detected. Run %s to install them.\n", ui.Code("infracost agent setup"))
+				return nil
+			}
+
+			_, _ = fmt.Fprintf(w, "Latest Infracost skill version: %s\n\n", ui.Bold(latest))
+			for _, s := range statuses {
+				if s.Stale {
+					_, _ = fmt.Fprintf(w, "  %s  %s — %s (latest %s)\n", ui.Caution("!"), s.Name, s.Installed, ui.Bold(s.Latest))
+				} else {
+					_, _ = fmt.Fprintf(w, "  %s  %s — %s (up to date)\n", ui.Positive("✔"), s.Name, s.Installed)
+				}
+			}
+			if len(stale) > 0 {
+				_, _ = fmt.Fprintf(w, "\nRun %s to upgrade the outdated agents.\n", ui.Code("infracost agent setup"))
+			}
+			return nil
+		},
+	}
 }
 
 func agentSetup(cfg *config.Config) *cobra.Command {
@@ -735,6 +926,10 @@ func RunAgentSetup(cfg *config.Config, scope string, skippable bool) (string, er
 	if err := setupAgent(cfg, *selected, scope); err != nil {
 		return "", err
 	}
+	// A just-installed agent is current by definition; drop any cached
+	// "you're behind" result so the staleness nag doesn't linger after a
+	// fix (the next background check repopulates it accurately).
+	ClearStaleAgentsCache()
 	return selected.name, nil
 }
 
@@ -846,6 +1041,23 @@ func resolveAgentBinary(cfg *config.Config, a agent) (string, error) {
 	return "", fmt.Errorf("%s CLI not found on PATH", a.name)
 }
 
+// resolveAgentBinaryForCheck is a config-optional variant used by the
+// staleness check. When cfg is nil (the background nag path, which runs
+// concurrently with flag parsing) it resolves purely from PATH, avoiding
+// a data race on config fields. When cfg is present (the explicit `agent
+// status` command) it honors any configured binary override.
+func resolveAgentBinaryForCheck(cfg *config.Config, a agent) (string, error) {
+	if cfg != nil {
+		return resolveAgentBinary(cfg, a)
+	}
+	for _, bin := range a.binaries {
+		if path, err := exec.LookPath(bin); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("%s CLI not found on PATH", a.name)
+}
+
 func setupAgent(cfg *config.Config, a agent, scope string) error {
 	// Try the scriptable install first when one is available. For
 	// agents whose setup shells out to a CLI (Claude, Copilot CLI,
@@ -952,6 +1164,9 @@ func removeAgent(cfg *config.Config, a agent, scope string) error {
 		return err
 	}
 
+	// Drop any cached staleness result so a removed agent isn't reported
+	// as "outdated" on the next run.
+	ClearStaleAgentsCache()
 	ui.Successf("Infracost skills removed from %s.", a.name)
 	return nil
 }
