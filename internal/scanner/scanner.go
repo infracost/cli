@@ -312,7 +312,9 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		return nil, fmt.Errorf("failed to create parser cache directory: %w", err)
 	}
 
+	logging.Debugf("autodetect discovered %d project(s) under %q", len(repoConfig.Projects), absoluteDirectory)
 	for _, project := range repoConfig.Projects {
+		logging.Debugf("scanning project name=%q path=%q type=%q env=%q deps=%v", project.Name, project.Path, project.Type, project.Env, project.DependencyPaths)
 		projectResult, err := pkgscanner.ScanProject(ctx, &pkgscanner.ScanProjectOptions{
 			RootDir:           absoluteDirectory,
 			CacheDir:          cacheDir,
