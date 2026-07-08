@@ -492,6 +492,12 @@ func (c lockedParserServiceClient) IdentifyProjects(ctx context.Context, in *pb.
 	return c.client.IdentifyProjects(ctx, in, opts...)
 }
 
+func (c lockedParserServiceClient) IdentifyEnvironments(ctx context.Context, in *pb.IdentifyEnvironmentsRequest, opts ...grpc.CallOption) (*pb.IdentifyEnvironmentsResponse, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client.IdentifyEnvironments(ctx, in, opts...)
+}
+
 func (c lockedParserServiceClient) Parse(ctx context.Context, in *pb.ParseRequest, opts ...grpc.CallOption) (*pb.ParseResponse, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

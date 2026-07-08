@@ -90,6 +90,10 @@ func (m mockPluginParser) IdentifyProjects(context.Context, *pluginpb.IdentifyPr
 	return &pluginpb.IdentifyProjectsResponse{}, nil
 }
 
+func (m mockPluginParser) IdentifyEnvironments(context.Context, *pluginpb.IdentifyEnvironmentsRequest, ...grpc.CallOption) (*pluginpb.IdentifyEnvironmentsResponse, error) {
+	return &pluginpb.IdentifyEnvironmentsResponse{}, nil
+}
+
 func (m mockPluginParser) Parse(context.Context, *pluginpb.ParseRequest, ...grpc.CallOption) (*pluginpb.ParseResponse, error) {
 	return m.response, m.err
 }
