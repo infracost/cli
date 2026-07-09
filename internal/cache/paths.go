@@ -15,11 +15,15 @@ const (
 	parserResultsSubdir = "parser-results"
 	pluginsSubdir       = "plugins"
 
-	// UpdateCheckFilename is the one file allowed at the cache root; the
+	// UpdateCheckFilename is a file allowed at the cache root; the
 	// update checker (internal/update) reads/writes it directly.
 	UpdateCheckFilename = "update-check.json"
-)
 
+	// AgentSkillsCheckFilename is a file allowed at the cache root; the
+	// agent-skill staleness checker (internal/cmds) reads/writes it to
+	// throttle how often it probes the user's AI agents.
+	AgentSkillsCheckFilename = "agent-skills-check.json"
+)
 
 // Root resolves the on-disk root for every infracost cache. Tries the OS
 // user-cache dir first, then the home dir, then CWD — matching the
