@@ -115,22 +115,19 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	}
 
 	genericOptions := buildGenericOptions(opts)
-	rawOptions, rawOptionsFormat, err := buildIaCOptions(opts, projectType)
+	rawOptions, err := buildIaCOptions(opts, projectType, genericOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build parser plugin options: %w", err)
 	}
 
-	// Try the parser-results cache first. The fingerprint folds in
-	// RawOptions + format so e.g. a different workspace or tfvars file
-	// invalidates correctly. Skipping the gRPC + HCL parse + module load
-	// is the entire point of this cache; the typical hot path on a 10k-
-	// project repo where one project changed is N-1 hits + 1 miss.
+	// Try the parser-results cache first. The fingerprint folds in RawOptions so e.g. a different
+	// workspace or tfvars file invalidates correctly. Skipping the gRPC + HCL parse + module load
+	// is the entire point of this cache; the typical hot path on a 10k-project repo where one
+	// project changed is N-1 hits + 1 miss.
 	pluginName := parserPlugin.Info.GetName()
 	pluginVersion := parserPlugin.Info.GetVersion()
 
-	fingerprintExtra := append([]byte(rawOptionsFormat), 0)
-	fingerprintExtra = append(fingerprintExtra, rawOptions...)
-	fingerprint, fpErr := fingerprintProject(absoluteProjectPath, fingerprintExtra)
+	fingerprint, fpErr := fingerprintProject(absoluteProjectPath, rawOptions)
 	if fpErr != nil {
 		logging.Debugf("parser fingerprint failed for %q: %s", absoluteProjectPath, fpErr)
 	}
@@ -142,10 +139,10 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 
 	if response == nil {
 		response, err = parserPlugin.Parse(ctx, &pluginpb.ParseRequest{
-			Path:             absoluteProjectPath,
-			GenericOptions:   genericOptions,
-			RawOptions:       rawOptions,
-			RawOptionsFormat: rawOptionsFormat,
+			Path:           absoluteProjectPath,
+			GenericOptions: genericOptions,
+			RawOptions:     rawOptions,
+			// raw_options_format was removed from the proto - raw_options is always JSON now.
 		})
 		if err != nil {
 			return nil, fmt.Errorf("parser plugin error: %w (run with --debug or set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
@@ -292,103 +289,75 @@ func finalProjectType(projectType repoconfig.ProjectType, absoluteProjectPath st
 }
 
 func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
-	return &options.GenericOptions{
+	genericOptions := &options.GenericOptions{
 		ProjectName:        opts.Project.Name,
 		EnvironmentName:    opts.Project.EnvName,
 		RepoDirectory:      opts.RootDir,
 		TemporaryDirectory: os.TempDir(),
 		CacheDirectory:     opts.CacheDir,
 		WorkingDirectory:   opts.RootDir,
+		// Workspace and the terraform cloud config are caller-sourced runtime options passed via
+		// GenericOptions (not the blob), because they are also read outside the plugin.
+		Workspace: opts.Project.Terraform.Workspace,
 	}
+
+	if c := opts.Project.Terraform.Cloud; c.Org != "" || c.Workspace != "" || c.Host != "" {
+		genericOptions.TerraformCloudConfiguration = &options.TerraformCloudConfiguration{
+			Organization: c.Org,
+			Workspace:    c.Workspace,
+			Hostname:     c.Host,
+		}
+	}
+
+	return genericOptions
 }
 
-func buildIaCOptions(opts *ScanProjectOptions, projectType repoconfig.ProjectType) ([]byte, string, error) {
+// buildIaCOptions returns the raw_options blob to send to the parser plugin for a project. The
+// persistable parse options live in the config plugins.<name> blob (config generates them, and
+// folds hand-written / older configs into them on load), so they are forwarded verbatim. The
+// caller-sourced runtime options are written into the typed GenericOptions fields, which the latest
+// plugins read in preference to the blob - so they are never duplicated into the blob.
+func buildIaCOptions(opts *ScanProjectOptions, projectType repoconfig.ProjectType, genericOptions *options.GenericOptions) ([]byte, error) {
 	switch projectType {
 	case repoconfig.ProjectTypeTerraform, repoconfig.ProjectTypeTerragrunt, repoconfig.ProjectTypeCiscoStacks:
-		data, err := json.Marshal(buildTerraformPluginOptions(opts, namingPolicyAttributeRequirements(opts.FinopsPolicies)))
-		return data, "application/json", err
+		if genericOptions != nil {
+			genericOptions.Env = opts.Project.Env
+			genericOptions.RequiredAttributes = protoAttributeRequirements(namingPolicyAttributeRequirements(opts.FinopsPolicies))
+		}
+		return pluginBlobJSON(opts.Project, string(projectType))
 	case repoconfig.ProjectTypeCloudFormation:
-		data, err := json.Marshal(buildCloudFormationPluginOptions(opts.Project))
-		return data, "application/json", err
+		// cdk_* projects resolve to cloudformation (see finalProjectType) and the config keys their
+		// blob under cloudformation too.
+		return pluginBlobJSON(opts.Project, string(repoconfig.ProjectTypeCloudFormation))
 	default:
-		return nil, "", nil
+		return nil, nil
 	}
 }
 
-type terraformPluginOptions struct {
-	RegexSourceMap              map[string]string            `json:"regexSourceMap,omitempty"`
-	Env                         map[string]string            `json:"env,omitempty"`
-	Vars                        map[string]any               `json:"vars,omitempty"`
-	Workspace                   string                       `json:"workspace,omitempty"`
-	TfVarsFiles                 []string                     `json:"tfVarsFiles,omitempty"`
-	TerraformCloudConfiguration *terraformCloudConfiguration `json:"terraformCloudConfiguration,omitempty"`
-	RequiredAttributes          map[string][]string          `json:"requiredAttributes,omitempty"`
-}
-
-type terraformCloudConfiguration struct {
-	Organization string `json:"organization"`
-	Workspace    string `json:"workspace"`
-	Hostname     string `json:"hostname"`
-}
-
-type cloudFormationPluginOptions struct {
-	InputParameters map[string]any `json:"inputParameters"`
-	AWSContext      *awsContext    `json:"awsContext"`
-}
-
-type awsContext struct {
-	Region    string `json:"region"`
-	AccountID string `json:"accountId"`
-	StackID   string `json:"stackId"`
-	StackName string `json:"stackName"`
-}
-
-func buildTerraformPluginOptions(opts *ScanProjectOptions, requiredAttributes []*parserapi.AttributeRequirement) *terraformPluginOptions {
-	regexSourceMap := make(map[string]string, len(opts.RepoConfig.Terraform.SourceMap))
-	for _, source := range opts.RepoConfig.Terraform.SourceMap {
-		regexSourceMap[source.Match] = source.Replace
+// pluginBlobJSON marshals the project's persisted plugins.<key> blob (keyed by the consuming plugin)
+// as JSON, returning nil when there is no blob for that key.
+func pluginBlobJSON(project *repoconfig.Project, key string) ([]byte, error) {
+	blob := project.Plugins[key]
+	if len(blob) == 0 {
+		return nil, nil
 	}
+	return json.Marshal(blob)
+}
 
-	var cloudConfig *terraformCloudConfiguration
-	if opts.Project.Terraform.Cloud.Org != "" || opts.Project.Terraform.Cloud.Workspace != "" || opts.Project.Terraform.Cloud.Host != "" {
-		cloudConfig = &terraformCloudConfiguration{
-			Organization: opts.Project.Terraform.Cloud.Org,
-			Workspace:    opts.Project.Terraform.Cloud.Workspace,
-			Hostname:     opts.Project.Terraform.Cloud.Host,
+// protoAttributeRequirements converts the naming-policy attribute requirements into the typed
+// GenericOptions form.
+func protoAttributeRequirements(reqs []*parserapi.AttributeRequirement) []*options.AttributeRequirement {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]*options.AttributeRequirement, 0, len(reqs))
+	for _, r := range reqs {
+		if r == nil {
+			continue
 		}
+		out = append(out, &options.AttributeRequirement{ResourceType: r.ResourceType, Attributes: r.Attributes})
 	}
-
-	tfRequiredAttributes := make(map[string][]string, len(requiredAttributes))
-	for _, attr := range requiredAttributes {
-		tfRequiredAttributes[attr.ResourceType] = attr.Attributes
-	}
-
-	return &terraformPluginOptions{
-		RegexSourceMap:              regexSourceMap,
-		Env:                         opts.Project.Env,
-		Vars:                        opts.Project.Terraform.Vars,
-		Workspace:                   opts.Project.Terraform.Workspace,
-		TfVarsFiles:                 opts.Project.Terraform.VarFiles,
-		TerraformCloudConfiguration: cloudConfig,
-		RequiredAttributes:          tfRequiredAttributes,
-	}
-}
-
-func buildCloudFormationPluginOptions(project *repoconfig.Project) *cloudFormationPluginOptions {
-	var awsCtx *awsContext
-	if project.AWS.Region != "" || project.AWS.AccountID != "" || project.AWS.StackID != "" || project.AWS.StackName != "" {
-		awsCtx = &awsContext{
-			Region:    project.AWS.Region,
-			AccountID: project.AWS.AccountID,
-			StackID:   project.AWS.StackID,
-			StackName: project.AWS.StackName,
-		}
-	}
-
-	return &cloudFormationPluginOptions{
-		InputParameters: nil,
-		AWSContext:      awsCtx,
-	}
+	return out
 }
 
 type namingValidationSettings struct {
