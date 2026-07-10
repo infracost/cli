@@ -26,6 +26,8 @@ import (
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+const expectedActionsRef = "c2e668fda0716ccc96353c6e6438c4a20448821a"
+
 // stripANSI removes ANSI escape codes from s so test assertions can match
 // plain text regardless of terminal coloring.
 func stripANSI(s string) string {
@@ -216,7 +218,7 @@ func TestCISetup_PipelineNonGitHub(t *testing.T) {
 	chdir(t, dir)
 	t.Setenv("INFRACOST_API_KEY", "test-api-key")
 
-	cfg := ciTestConfig(t,mocks.NewMockClient(t))
+	cfg := ciTestConfig(t, mocks.NewMockClient(t))
 	cmd := cmds.CI(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
@@ -251,7 +253,7 @@ func TestCISetup_PipelineSuccess(t *testing.T) {
 		CurrentUser(mock.Anything).
 		Return(singleOrgUser(), nil)
 
-	cfg := ciTestConfig(t,mockClient)
+	cfg := ciTestConfig(t, mockClient)
 	cmd := cmds.CI(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
@@ -309,7 +311,7 @@ Done. Push this commit to see Infracost on your next PR:
 	diffContent, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "infracost-diff.yml"))
 	require.NoError(t, err)
 	diffWorkflow := string(diffContent)
-	assert.Contains(t, diffWorkflow, "infracost/actions/diff@")
+	assert.Contains(t, diffWorkflow, "infracost/actions/diff@"+expectedActionsRef)
 	assert.Contains(t, diffWorkflow, "secrets.INFRACOST_API_KEY")
 	assert.Contains(t, diffWorkflow, "INPUT_PR_NUMBER: ${{ inputs.pr-number }}")
 	assert.Contains(t, diffWorkflow, "if [ -n \"$INPUT_PR_NUMBER\" ]; then")
@@ -318,7 +320,7 @@ Done. Push this commit to see Infracost on your next PR:
 
 	scanContent, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "infracost-scan.yml"))
 	require.NoError(t, err)
-	assert.Contains(t, string(scanContent), "infracost/actions/scan@")
+	assert.Contains(t, string(scanContent), "infracost/actions/scan@"+expectedActionsRef)
 	assert.Contains(t, string(scanContent), "secrets.INFRACOST_API_KEY")
 }
 
@@ -338,7 +340,7 @@ func TestCISetup_PipelineExistingWorkflows(t *testing.T) {
 		CurrentUser(mock.Anything).
 		Return(singleOrgUser(), nil)
 
-	cfg := ciTestConfig(t,mockClient)
+	cfg := ciTestConfig(t, mockClient)
 	cmd := cmds.CI(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
@@ -360,7 +362,7 @@ func TestCISetup_PipelineExistingWorkflows(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(workflowDir, "infracost-diff.yml"))
 	require.NoError(t, err)
 	assert.NotEqual(t, "old", string(content))
-	assert.Contains(t, string(content), "infracost/actions/diff@")
+	assert.Contains(t, string(content), "infracost/actions/diff@"+expectedActionsRef)
 }
 
 func TestCISetup_PipelineMultipleOrgs(t *testing.T) {
@@ -382,7 +384,7 @@ func TestCISetup_PipelineMultipleOrgs(t *testing.T) {
 			},
 		}, nil)
 
-	cfg := ciTestConfig(t,mockClient)
+	cfg := ciTestConfig(t, mockClient)
 	cmd := cmds.CI(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
@@ -416,7 +418,7 @@ func TestCISetup_AppAlreadyConnected(t *testing.T) {
 		HasRepo(mock.Anything, "org-1", "acme-corp/platform-infra").
 		Return(true, nil)
 
-	cfg := ciTestConfig(t,mockClient)
+	cfg := ciTestConfig(t, mockClient)
 	cmd := cmds.CI(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
@@ -464,7 +466,7 @@ func TestCISetup_PipelineHTTPS(t *testing.T) {
 		CurrentUser(mock.Anything).
 		Return(singleOrgUser(), nil)
 
-	cfg := ciTestConfig(t,mockClient)
+	cfg := ciTestConfig(t, mockClient)
 	cmd := cmds.CI(cfg)
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
