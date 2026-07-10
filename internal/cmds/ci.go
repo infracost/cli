@@ -22,7 +22,7 @@ import (
 )
 
 // actionsRef is the pinned commit SHA for the infracost/actions composite actions.
-const actionsRef = "a1f1aab438c2d0e642e7cd596a1c8750c7c75a5e"
+const actionsRef = "c2e668fda0716ccc96353c6e6438c4a20448821a"
 
 type repoInfo struct {
 	owner string
