@@ -298,11 +298,27 @@ func TestInspectGuardrailDetailToolOutputSchema(t *testing.T) {
 // doctor report and bundle are text + counts only — but the canary
 // still guards against any future doctor type accidentally pulling a
 // cyclic or schema-hostile field.
+//
+// It also pins the regression from FIX-395: doctor.Status is a Go int
+// enum with a MarshalJSON that emits its lowercase string name ("pass",
+// …). Without the TypeSchemas override, jsonschema-go reflects the
+// underlying int kind and declares status as "integer", so MCP output
+// validation rejects the string the tool actually returns and the
+// doctor tool fails outright. Assert the schema declares status as the
+// string enum the wire format carries.
 func TestDoctorToolOutputSchema(t *testing.T) {
 	schema, err := doctorToolOutputSchema()
 	require.NoError(t, err)
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
+
+	status := followSchemaPath(t, schema,
+		"report", "categories", "items", "results", "items", "status")
+	assert.Equal(t, "string", status.Type,
+		"doctor status marshals to a string name; schema must not declare it integer")
+	assert.ElementsMatch(t,
+		[]any{"pass", "warning", "fail", "skipped"}, status.Enum,
+		"status enum must match doctor.Status.String() values")
 }
 
 func TestFindingsListToolOutputSchema(t *testing.T) {
@@ -403,18 +419,11 @@ func TestRetryActionToolOutputSchema(t *testing.T) {
 	assert.Equal(t, "object", schema.Type)
 }
 
-// assertOpenJSONSchema follows the given object-property / "items" path
-// through schema and asserts the leaf is the permissive object schema
-// rawJSONSchemaOverride installs — `type: object`, no per-property /
-// item constraints. The regression we're guarding against is
-// jsonschema-go's default RawMessage inference (a byte-array schema
-// with `items.type=integer, minimum=0, maximum=255` and an outer
-// `type: ["null", "array"]`), which would reappear as `cur.Items !=
-// nil` or `cur.Types != nil`. The leaf is also asserted to marshal as
-// a JSON object rather than the boolean `true` an empty schema would
-// produce, because MCP hosts reject boolean tool schemas at
-// registration time.
-func assertOpenJSONSchema(t *testing.T, schema *jsonschema.Schema, path ...string) {
+// followSchemaPath walks the given object-property / "items" path through
+// schema and returns the leaf schema, failing the test if any step is
+// missing. "items" descends into an array's element schema; any other
+// step is looked up as an object property.
+func followSchemaPath(t *testing.T, schema *jsonschema.Schema, path ...string) *jsonschema.Schema {
 	t.Helper()
 	require.NotNil(t, schema, "starting schema is nil")
 	cur := schema
@@ -431,6 +440,23 @@ func assertOpenJSONSchema(t *testing.T, schema *jsonschema.Schema, path ...strin
 		cur = next
 	}
 	require.NotNilf(t, cur, "leaf schema is nil at %v", path)
+	return cur
+}
+
+// assertOpenJSONSchema follows the given object-property / "items" path
+// through schema and asserts the leaf is the permissive object schema
+// rawJSONSchemaOverride installs — `type: object`, no per-property /
+// item constraints. The regression we're guarding against is
+// jsonschema-go's default RawMessage inference (a byte-array schema
+// with `items.type=integer, minimum=0, maximum=255` and an outer
+// `type: ["null", "array"]`), which would reappear as `cur.Items !=
+// nil` or `cur.Types != nil`. The leaf is also asserted to marshal as
+// a JSON object rather than the boolean `true` an empty schema would
+// produce, because MCP hosts reject boolean tool schemas at
+// registration time.
+func assertOpenJSONSchema(t *testing.T, schema *jsonschema.Schema, path ...string) {
+	t.Helper()
+	cur := followSchemaPath(t, schema, path...)
 	assert.Equalf(t, "object", cur.Type, "expected open object schema at %v, got Type=%q", path, cur.Type)
 	assert.Nilf(t, cur.Types, "expected open object schema at %v, got Types=%v", path, cur.Types)
 	assert.Nilf(t, cur.Items, "expected open object schema at %v (Items being set means the byte-array default crept back), got Items=%v", path, cur.Items)

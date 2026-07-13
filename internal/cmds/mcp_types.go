@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/infracost/cli/internal/doctor"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/inspect"
 	"github.com/infracost/go-proto/pkg/rat"
@@ -602,9 +603,19 @@ type MCPDoctorInput struct {
 
 // doctorToolOutputSchema returns the JSON schema describing
 // [DoctorOutput]. No rat.Rat involved — doctor reports are text and
-// counts only.
+// counts only. doctor.Status is a Go int enum but marshals to its
+// lowercase string name (see doctor.Status.MarshalJSON), so we override
+// the reflected "integer" type with the string enum the wire format
+// actually carries — otherwise MCP output validation rejects "pass".
 func doctorToolOutputSchema() (*jsonschema.Schema, error) {
-	schema, err := jsonschema.For[DoctorOutput](nil)
+	schema, err := jsonschema.For[DoctorOutput](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[doctor.Status](): {
+				Type: "string",
+				Enum: []any{"pass", "warning", "fail", "skipped"},
+			},
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("building doctor tool output schema: %w", err)
 	}
