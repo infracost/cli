@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cache"
@@ -19,9 +20,11 @@ import (
 
 // MCPCmd builds the `infracost mcp` cobra command — a Model Context
 // Protocol stdio server. Authentication and the active organization are
-// resolved once at startup and cached for the life of the session; tools
-// (registered in registerMCPTools) read those shared values rather than
-// re-resolving on every call.
+// resolved lazily on the first tool call (see lazyTokenSource and
+// requireSessionReadyMiddleware) rather than at startup, so the server
+// always completes the MCP initialize handshake. Tools (registered in
+// registerMCPTools) read the shared token source and cfg values rather
+// than re-resolving on every call.
 func MCPCmd(cfg *config.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
@@ -34,26 +37,17 @@ client (an IDE assistant, for example) which communicates over
 stdin/stdout.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// Resolve the active organization up front. MCP clients
-			// aren't interactive, so falling through to a per-tool
-			// "no organization selected" error would surface mid-
-			// session; failing at startup gives the LLM a single,
-			// actionable signal to relay back to the user.
-			source, err := cfg.Auth.Token(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("infracost mcp cannot start: authenticating: %w", err)
-			}
-			// Long-lived MCP sessions outlive a single oauth refresh
-			// token. Another process (a CLI invocation, a web login)
-			// can rotate the token while we hold a stale in-memory
-			// snapshot; WrapWithReload re-reads the on-disk cache on
-			// invalid_grant so the next tool call recovers
-			// transparently instead of failing until the user bounces
-			// the server.
-			source = cfg.Auth.WrapWithReload(cmd.Context(), source)
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
-				return fmt.Errorf("infracost mcp cannot start: %w", err)
-			}
+			// Authentication and org resolution are deferred to the
+			// first tool call. Resolving eagerly here and returning an
+			// error would exit the process before the MCP initialize
+			// handshake completes, so the client only ever sees the
+			// stdio pipe close as an opaque connection-closed (-32000)
+			// — never the "run infracost auth login" / "no organization
+			// selected" guidance printed to stderr. Deferring instead
+			// lets the handshake finish and surfaces those messages as
+			// readable tool errors on first use (see
+			// requireSessionReadyMiddleware).
+			source := &lazyTokenSource{ctx: cmd.Context(), cfg: cfg}
 
 			srv := mcp.NewServer(&mcp.Implementation{
 				Name:    "infracost",
@@ -62,13 +56,15 @@ stdin/stdout.`,
 
 			// Capture the post-startup telemetry baseline so every
 			// request gets the same starting state. Middlewares below
-			// restore this baseline before each request and then
-			// label per-tool calls so events emitted while serving a
-			// tool can be correlated to it (e.g. command=mcp-scan).
+			// restore this baseline before each request, label per-tool
+			// calls so events emitted while serving a tool can be
+			// correlated to it (e.g. command=mcp-scan), and gate calls
+			// on auth + org readiness.
 			baseline := events.Snapshot()
 			srv.AddReceivingMiddleware(
 				resetMetadataMiddleware(baseline),
 				labelMCPCommandMiddleware(),
+				requireSessionReadyMiddleware(cfg, source),
 			)
 
 			store := cache.NewMemoryStore()
@@ -77,6 +73,105 @@ stdin/stdout.`,
 			return srv.Run(cmd.Context(), &mcp.StdioTransport{})
 		},
 	}
+}
+
+// lazyTokenSource defers authentication until a token is first needed.
+// The MCP server must complete its initialize handshake even when the
+// user isn't logged in — resolving auth eagerly at startup and failing
+// would exit the process before the handshake, so the MCP client would
+// only ever see an opaque connection-closed (-32000) instead of the
+// readable "run infracost auth login" guidance the auth gate returns on
+// first tool use.
+//
+// Token retries cfg.Auth.Token (which memoises success internally) until
+// it succeeds, so a user who runs `infracost auth login` in another
+// terminal mid-session recovers on the next tool call without restarting
+// the server. The first resolved source is wrapped with WrapWithReload —
+// long-lived MCP sessions outlive a single oauth refresh token, and
+// WrapWithReload re-reads the on-disk cache on invalid_grant so a token
+// rotated by another process (a CLI invocation, a web login) is picked
+// up transparently — and the wrapped source is then reused.
+type lazyTokenSource struct {
+	ctx context.Context
+	cfg *config.Config
+
+	mu  sync.Mutex
+	src oauth2.TokenSource
+}
+
+func (l *lazyTokenSource) Token() (*oauth2.Token, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.src == nil {
+		source, err := l.cfg.Auth.Token(l.ctx)
+		if err != nil {
+			return nil, err
+		}
+		l.src = l.cfg.Auth.WrapWithReload(l.ctx, source)
+	}
+	return l.src.Token()
+}
+
+// requireSessionReadyMiddleware gates tools/call requests on authentication
+// and an active organization, returning the same actionable errors the CLI
+// prints (run `infracost auth login`, or pick an org) as readable tool
+// errors rather than failing at startup. The MCP SDK renders an error
+// returned from a tool as a CallToolResult with IsError=true over the open
+// connection; we build that result directly here so the client sees the
+// guidance and can relay it to the user.
+//
+// The org gate is skipped for introspection/recovery tools (whoami,
+// fetch_orgs, set_org, doctor) so an agent — or the user via
+// `infracost org switch` — can inspect state and switch orgs to get
+// unstuck. It gates on the live cfg.OrgID (resolved lazily on first use),
+// so once set_org populates it subsequent calls pass through.
+func requireSessionReadyMiddleware(cfg *config.Config, source oauth2.TokenSource) mcp.Middleware {
+	recoveryTools := map[string]bool{
+		"whoami":     true,
+		"fetch_orgs": true,
+		"set_org":    true,
+		"doctor":     true,
+	}
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			params, ok := req.GetParams().(*mcp.CallToolParamsRaw)
+			if !ok || params.Name == "" {
+				return next(ctx, method, req)
+			}
+
+			// Auth gate: every tool needs a token. Force resolution now
+			// so the readable "run infracost auth login" guidance is
+			// returned instead of an opaque downstream API failure.
+			if _, err := source.Token(); err != nil {
+				return mcpToolError(fmt.Errorf("authenticating: %w", err)), nil
+			}
+
+			// Org gate: resolve lazily on first use. Tools that operate
+			// against an org fail with the actionable multi-org message
+			// (errNoOrgSelected) when none is selected; recovery tools
+			// are exempt.
+			if cfg.OrgID == "" && !recoveryTools[params.Name] {
+				if err := resolveOrg(ctx, cfg, source); err != nil {
+					return mcpToolError(err), nil
+				}
+			}
+
+			return next(ctx, method, req)
+		}
+	}
+}
+
+// mcpToolError builds a CallToolResult that reports err as a tool
+// execution error (IsError=true, message in Content) rather than an MCP
+// protocol-level error, so the client surfaces the guidance to the LLM.
+func mcpToolError(err error) *mcp.CallToolResult {
+	res := &mcp.CallToolResult{}
+	res.SetError(err)
+	return res
 }
 
 // resetMetadataMiddleware restores the supplied telemetry-metadata
