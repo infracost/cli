@@ -41,9 +41,9 @@ type Config struct {
 	// scoped dashboard links (e.g. the Agents waitlist).
 	OrgSlug string
 
-	// AgentsEnabled mirrors the resolved active org's agentsEnabled flag (the
-	// dashboard's coast-access entitlement). The Agents commands and MCP tools
-	// gate on it; see ensureAgentsEnabled.
+	// AgentsEnabled is the resolved Agents entitlement the Agents commands and
+	// MCP tools gate on (see ensureAgentsEnabled). It is true when the coast-
+	// access entitlement is set on either the user directly or the active org
 	AgentsEnabled bool
 
 	// ClaudePath is the path to the Claude CLI binary. Defaults to "claude" (looked up on PATH).
