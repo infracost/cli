@@ -28,9 +28,14 @@ type Role struct {
 }
 
 type CurrentUser struct {
-	ID            string         `json:"id"`
-	Name          string         `json:"name"`
-	Email         string         `json:"email"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	// AgentsEnabled reports whether Infracost Agents is enabled for this user
+	// directly (rather than via one of their orgs). Driven server-side by the
+	// coast-access entitlement targeted at the user. When true the Agents
+	// commands / MCP tools are enabled regardless of the active org's flag.
+	AgentsEnabled bool           `json:"agentsEnabled"`
 	Organizations []Organization `json:"organizations"`
 }
 
@@ -73,6 +78,7 @@ func (c *client) CurrentUser(ctx context.Context) (CurrentUser, error) {
     id
     name
     email
+    agentsEnabled
     organizations {
       id
       name

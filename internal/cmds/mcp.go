@@ -987,7 +987,7 @@ func setOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, 
 	// resolved slug + agentsEnabled flag so the Agents gate reflects the
 	// newly-selected org rather than the one resolved at startup.
 	cfg.Org = in.Slug
-	applyActiveOrgByID(cfg, uc.Organizations, orgID)
+	applyActiveOrgByID(cfg, uc, orgID)
 
 	// Persist so the next MCP session (or CLI invocation) starts on
 	// the same org, mirroring what `infracost org switch <slug>` does.
