@@ -15,9 +15,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
-	github.com/infracost/config v0.11.1-0.20260714133450-cdea9fbca70d
-	github.com/infracost/go-proto v1.25.1
-	github.com/infracost/proto v1.158.1-0.20260713113858-cd2bda46a784
+	github.com/infracost/config v0.12.0
+	github.com/infracost/go-proto v1.26.0
+	github.com/infracost/proto v1.159.0
 	github.com/liamg/tml v0.7.1
 	github.com/maruel/panicparse/v2 v2.5.0
 	github.com/mattn/go-runewidth v0.0.16
