@@ -115,7 +115,10 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	}
 
 	genericOptions := buildGenericOptions(opts)
-	rawOptions, err := buildIaCOptions(opts, projectType, genericOptions)
+	// The plugin blob is always forwarded verbatim, keyed by the project type, so every plugin
+	// (Terraform, CloudFormation, Kubernetes, ...) receives its persisted parse options - including
+	// per-environment options like a Helm chart's selected values files.
+	rawOptions, err := pluginBlobJSON(opts.Project, string(projectType))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build parser plugin options: %w", err)
 	}
@@ -296,9 +299,13 @@ func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
 		TemporaryDirectory: os.TempDir(),
 		CacheDirectory:     opts.CacheDir,
 		WorkingDirectory:   opts.RootDir,
-		// Workspace and the terraform cloud config are caller-sourced runtime options passed via
-		// GenericOptions (not the blob), because they are also read outside the plugin.
-		Workspace: opts.Project.Terraform.Workspace,
+		// Caller-sourced runtime options always travel in GenericOptions, regardless of project
+		// type - that is the point of GenericOptions: any plugin that cares reads them, the rest
+		// ignore them, and they are never duplicated into the opaque plugin blob. (Workspace and the
+		// terraform cloud config are also read outside the plugin.)
+		Env:                opts.Project.Env,
+		RequiredAttributes: protoAttributeRequirements(namingPolicyAttributeRequirements(opts.FinopsPolicies)),
+		Workspace:          opts.Project.Terraform.Workspace,
 	}
 
 	if c := opts.Project.Terraform.Cloud; c.Org != "" || c.Workspace != "" || c.Host != "" {
@@ -310,28 +317,6 @@ func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
 	}
 
 	return genericOptions
-}
-
-// buildIaCOptions returns the raw_options blob to send to the parser plugin for a project. The
-// persistable parse options live in the config plugins.<name> blob (config generates them, and
-// folds hand-written / older configs into them on load), so they are forwarded verbatim. The
-// caller-sourced runtime options are written into the typed GenericOptions fields, which the latest
-// plugins read in preference to the blob - so they are never duplicated into the blob.
-func buildIaCOptions(opts *ScanProjectOptions, projectType repoconfig.ProjectType, genericOptions *options.GenericOptions) ([]byte, error) {
-	switch projectType {
-	case repoconfig.ProjectTypeTerraform, repoconfig.ProjectTypeTerragrunt, repoconfig.ProjectTypeCiscoStacks:
-		if genericOptions != nil {
-			genericOptions.Env = opts.Project.Env
-			genericOptions.RequiredAttributes = protoAttributeRequirements(namingPolicyAttributeRequirements(opts.FinopsPolicies))
-		}
-		return pluginBlobJSON(opts.Project, string(projectType))
-	case repoconfig.ProjectTypeCloudFormation:
-		// cdk_* projects resolve to cloudformation (see finalProjectType) and the config keys their
-		// blob under cloudformation too.
-		return pluginBlobJSON(opts.Project, string(repoconfig.ProjectTypeCloudFormation))
-	default:
-		return nil, nil
-	}
 }
 
 // pluginBlobJSON marshals the project's persisted plugins.<key> blob (keyed by the consuming plugin)
