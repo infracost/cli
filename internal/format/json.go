@@ -284,7 +284,7 @@ func computeSummary(out *Output) *OutputSummary {
 				s.FailingFinopsPolicies++
 			}
 			for _, fr := range fp.FailingResources {
-				failingFinopsRes[fr.Name] = struct{}{}
+				failingFinopsRes[p.ProjectName+"\x00"+fr.Name] = struct{}{}
 				for _, iss := range fr.Issues {
 					if iss.MonthlySavings != nil {
 						totalSavings = totalSavings.Add(iss.MonthlySavings)
@@ -298,7 +298,7 @@ func computeSummary(out *Output) *OutputSummary {
 				s.FailingTaggingPolicies++
 			}
 			for _, fr := range t.FailingResources {
-				failingTaggingRes[fr.Address] = struct{}{}
+				failingTaggingRes[p.ProjectName+"\x00"+fr.Address] = struct{}{}
 			}
 		}
 	}

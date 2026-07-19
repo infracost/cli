@@ -36,6 +36,16 @@ type Config struct {
 	// OrgID is the resolved organization ID, set after resolving --org or from RunParameters.
 	OrgID string
 
+	// OrgSlug is the resolved active organization's slug, set alongside OrgID
+	// when the org is resolved from the user cache. Used for building org-
+	// scoped dashboard links (e.g. the Agents waitlist).
+	OrgSlug string
+
+	// AgentsEnabled is the resolved Agents entitlement the Agents commands and
+	// MCP tools gate on (see ensureAgentsEnabled). It is true when the coast-
+	// access entitlement is set on either the user directly or the active org
+	AgentsEnabled bool
+
 	// ClaudePath is the path to the Claude CLI binary. Defaults to "claude" (looked up on PATH).
 	ClaudePath string `env:"INFRACOST_CLI_CLAUDE_PATH" flag:"claude-path;hidden" usage:"Path to the Claude CLI binary"`
 
@@ -46,6 +56,9 @@ type Config struct {
 	// JSON toggles JSON output for both logs and command results. Shared with
 	// any sub-config that registers `flagvalue:"json"` (e.g. logging).
 	JSON process.BoolFlag `env:"INFRACOST_CLI_LOG_JSON" flag:"json" usage:"Output logs and command results as JSON"`
+
+	// Debug enables debug logging. Shared with logging.
+	Debug process.BoolFlag `flag:"debug" usage:"Enable debug logging"`
 
 	// LLM toggles a compact, token-efficient output format intended for piping
 	// into LLM prompts. Carries the same data as --json in fewer tokens.

@@ -68,6 +68,9 @@ func PreviewFix(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	if cfg.OrgID == "" {
 		return PreviewFixResult{}, fmt.Errorf("no organization selected")
 	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return PreviewFixResult{}, err
+	}
 	actionType, err := resolveAutomatableActionType(in.Type)
 	if err != nil {
 		return PreviewFixResult{}, err
@@ -104,6 +107,9 @@ func CreateFix(ctx context.Context, cfg *config.Config, source oauth2.TokenSourc
 	}
 	if cfg.OrgID == "" {
 		return CreateFixResult{}, fmt.Errorf("no organization selected")
+	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return CreateFixResult{}, err
 	}
 	actionType, err := resolveAnyActionType(in.Type)
 	if err != nil {
@@ -178,7 +184,7 @@ const (
 // UpdateTaskStatus is the unified task-mutation entry point. It validates
 // the verb + reason combination, then routes to whichever Agents endpoint
 // matches the user's intent. The two Agents endpoints have different wire
-// shapes; the function normalises them into UpdateTaskStatusResult so
+// shapes; the function normalizes them into UpdateTaskStatusResult so
 // the CLI / MCP layers only need one renderer.
 //
 // Confirm and correct go through POST /report (so the AgentLearning
@@ -201,6 +207,9 @@ func UpdateTaskStatus(ctx context.Context, cfg *config.Config, source oauth2.Tok
 	}
 	if cfg.OrgID == "" {
 		return UpdateTaskStatusResult{}, fmt.Errorf("no organization selected")
+	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return UpdateTaskStatusResult{}, err
 	}
 
 	client := cfg.Agents.Client(api.Client(ctx, source, cfg.OrgID))

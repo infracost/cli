@@ -43,7 +43,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 		if err != nil {
 			return err
 		}
-		cfg.OrgID = orgID
+		applyActiveOrgByID(cfg, uc, orgID)
 		return nil
 	}
 
@@ -52,7 +52,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 		if slug, readErr := auth.ReadLocalOrg(wd); readErr == nil && slug != "" {
 			orgID, _, resolveErr := auth.ResolveOrgID(slug, uc.Organizations)
 			if resolveErr == nil {
-				cfg.OrgID = orgID
+				applyActiveOrgByID(cfg, uc, orgID)
 				return nil
 			}
 			logging.WithError(resolveErr).Msg("local .infracost/org references unknown org, ignoring")
@@ -63,7 +63,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	if uc.SelectedOrgID != "" {
 		for _, org := range uc.Organizations {
 			if org.ID == uc.SelectedOrgID {
-				cfg.OrgID = org.ID
+				applyActiveOrg(cfg, uc, org)
 				return nil
 			}
 		}
@@ -72,7 +72,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 
 	// No org context set — if single org, use it silently.
 	if len(uc.Organizations) == 1 {
-		cfg.OrgID = uc.Organizations[0].ID
+		applyActiveOrg(cfg, uc, uc.Organizations[0])
 		return nil
 	}
 
@@ -82,7 +82,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 		if pickErr == nil {
 			for _, org := range uc.Organizations {
 				if org.Slug == slug {
-					cfg.OrgID = org.ID
+					applyActiveOrg(cfg, uc, org)
 					uc.SelectedOrgID = org.ID
 					if saveErr := cfg.Auth.SaveUserCache(uc); saveErr != nil {
 						logging.WithError(saveErr).Msg("failed to save org selection")
@@ -97,6 +97,28 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	}
 
 	return errNoOrgSelected(uc.Organizations)
+}
+
+// applyActiveOrg records the resolved active organization on cfg, including
+// the per-org agentsEnabled flag the Agents commands / MCP tools gate on and
+// the slug used for org-scoped dashboard links.
+func applyActiveOrg(cfg *config.Config, uc *auth.UserCache, org auth.CachedOrganization) {
+	cfg.OrgID = org.ID
+	cfg.OrgSlug = org.Slug
+	cfg.AgentsEnabled = org.AgentsEnabled || uc.AgentsEnabled
+}
+
+// applyActiveOrgByID looks up org id in orgs and applies it via applyActiveOrg.
+// id has already been validated by auth.ResolveOrgID, so a miss is unexpected;
+// we still set OrgID defensively so the caller isn't left without one.
+func applyActiveOrgByID(cfg *config.Config, uc *auth.UserCache, id string) {
+	for _, org := range uc.Organizations {
+		if org.ID == id {
+			applyActiveOrg(cfg, uc, org)
+			return
+		}
+	}
+	cfg.OrgID = id
 }
 
 // errNoOrgSelected returns an actionable error for the multi-org +
@@ -159,10 +181,11 @@ func cacheUser(cfg *config.Config, user dashboard.CurrentUser) *auth.UserCache {
 			roles[j] = r.ID
 		}
 		orgs[i] = auth.CachedOrganization{
-			ID:    org.ID,
-			Name:  org.Name,
-			Slug:  org.Slug,
-			Roles: roles,
+			ID:            org.ID,
+			Name:          org.Name,
+			Slug:          org.Slug,
+			Roles:         roles,
+			AgentsEnabled: org.AgentsEnabled,
 		}
 	}
 
@@ -170,6 +193,7 @@ func cacheUser(cfg *config.Config, user dashboard.CurrentUser) *auth.UserCache {
 		ID:            user.ID,
 		Name:          user.Name,
 		Email:         user.Email,
+		AgentsEnabled: user.AgentsEnabled,
 		Organizations: orgs,
 	}
 

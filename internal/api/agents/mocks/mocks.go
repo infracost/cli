@@ -74,7 +74,7 @@ type MockClient_CreateAction_Call struct {
 //   - orgID string
 //   - findingID string
 //   - req agents.CreateActionRequest
-func (_e *MockClient_Expecter) CreateAction(ctx interface{}, orgID interface{}, findingID interface{}, req interface{}) *MockClient_CreateAction_Call {
+func (_e *MockClient_Expecter) CreateAction(ctx any, orgID any, findingID any, req any) *MockClient_CreateAction_Call {
 	return &MockClient_CreateAction_Call{Call: _e.mock.On("CreateAction", ctx, orgID, findingID, req)}
 }
 
@@ -152,7 +152,7 @@ type MockClient_GenerateAction_Call struct {
 //   - orgID string
 //   - findingID string
 //   - req agents.GenerateActionRequest
-func (_e *MockClient_Expecter) GenerateAction(ctx interface{}, orgID interface{}, findingID interface{}, req interface{}) *MockClient_GenerateAction_Call {
+func (_e *MockClient_Expecter) GenerateAction(ctx any, orgID any, findingID any, req any) *MockClient_GenerateAction_Call {
 	return &MockClient_GenerateAction_Call{Call: _e.mock.On("GenerateAction", ctx, orgID, findingID, req)}
 }
 
@@ -229,7 +229,7 @@ type MockClient_GetFinding_Call struct {
 //   - ctx context.Context
 //   - orgID string
 //   - findingID string
-func (_e *MockClient_Expecter) GetFinding(ctx interface{}, orgID interface{}, findingID interface{}) *MockClient_GetFinding_Call {
+func (_e *MockClient_Expecter) GetFinding(ctx any, orgID any, findingID any) *MockClient_GetFinding_Call {
 	return &MockClient_GetFinding_Call{Call: _e.mock.On("GetFinding", ctx, orgID, findingID)}
 }
 
@@ -301,7 +301,7 @@ type MockClient_ListFindings_Call struct {
 //   - ctx context.Context
 //   - orgID string
 //   - params agents.ListFindingsParams
-func (_e *MockClient_Expecter) ListFindings(ctx interface{}, orgID interface{}, params interface{}) *MockClient_ListFindings_Call {
+func (_e *MockClient_Expecter) ListFindings(ctx any, orgID any, params any) *MockClient_ListFindings_Call {
 	return &MockClient_ListFindings_Call{Call: _e.mock.On("ListFindings", ctx, orgID, params)}
 }
 
@@ -374,7 +374,7 @@ type MockClient_ReportTask_Call struct {
 //   - orgID string
 //   - taskID string
 //   - req agents.ReportTaskRequest
-func (_e *MockClient_Expecter) ReportTask(ctx interface{}, orgID interface{}, taskID interface{}, req interface{}) *MockClient_ReportTask_Call {
+func (_e *MockClient_Expecter) ReportTask(ctx any, orgID any, taskID any, req any) *MockClient_ReportTask_Call {
 	return &MockClient_ReportTask_Call{Call: _e.mock.On("ReportTask", ctx, orgID, taskID, req)}
 }
 
@@ -451,7 +451,7 @@ type MockClient_RetryAction_Call struct {
 //   - ctx context.Context
 //   - orgID string
 //   - actionID string
-func (_e *MockClient_Expecter) RetryAction(ctx interface{}, orgID interface{}, actionID interface{}) *MockClient_RetryAction_Call {
+func (_e *MockClient_Expecter) RetryAction(ctx any, orgID any, actionID any) *MockClient_RetryAction_Call {
 	return &MockClient_RetryAction_Call{Call: _e.mock.On("RetryAction", ctx, orgID, actionID)}
 }
 
@@ -524,7 +524,7 @@ type MockClient_UpdateFindingStatus_Call struct {
 //   - orgID string
 //   - findingID string
 //   - req agents.UpdateFindingStatusRequest
-func (_e *MockClient_Expecter) UpdateFindingStatus(ctx interface{}, orgID interface{}, findingID interface{}, req interface{}) *MockClient_UpdateFindingStatus_Call {
+func (_e *MockClient_Expecter) UpdateFindingStatus(ctx any, orgID any, findingID any, req any) *MockClient_UpdateFindingStatus_Call {
 	return &MockClient_UpdateFindingStatus_Call{Call: _e.mock.On("UpdateFindingStatus", ctx, orgID, findingID, req)}
 }
 
@@ -602,7 +602,7 @@ type MockClient_UpdateTaskStatus_Call struct {
 //   - orgID string
 //   - taskID string
 //   - req agents.UpdateTaskStatusRequest
-func (_e *MockClient_Expecter) UpdateTaskStatus(ctx interface{}, orgID interface{}, taskID interface{}, req interface{}) *MockClient_UpdateTaskStatus_Call {
+func (_e *MockClient_Expecter) UpdateTaskStatus(ctx any, orgID any, taskID any, req any) *MockClient_UpdateTaskStatus_Call {
 	return &MockClient_UpdateTaskStatus_Call{Call: _e.mock.On("UpdateTaskStatus", ctx, orgID, taskID, req)}
 }
 

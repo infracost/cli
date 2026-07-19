@@ -31,8 +31,13 @@ type programWriter struct {
 }
 
 func (w programWriter) Write(b []byte) (int, error) {
-	// Println adds its own newline; trim ours so we don't double up.
-	w.p.Println(strings.TrimRight(string(b), "\n"))
+	// Println adds its own newline; trim ours so we don't double up. Skip
+	// empty/whitespace-only writes so stray newline-only chunks (e.g. a writer
+	// that emits a line and its trailing newline separately) don't push the
+	// spinner around with blank lines.
+	if s := strings.TrimRight(string(b), "\n"); strings.TrimSpace(s) != "" {
+		w.p.Println(s)
+	}
 	return len(b), nil
 }
 
@@ -145,8 +150,8 @@ func RunWithSpinnerErr(ctx context.Context, title, doneTitle string, action func
 
 	p := tea.NewProgram(m,
 		tea.WithOutput(os.Stderr),
-		tea.WithInput(&bytes.Buffer{}),    // don't read from stdin
-		tea.WithoutSignalHandler(),        // avoid signal conflicts in tests / subprocesses
+		tea.WithInput(&bytes.Buffer{}), // don't read from stdin
+		tea.WithoutSignalHandler(),     // avoid signal conflicts in tests / subprocesses
 	)
 
 	// Route logs through Println so they appear above the spinner

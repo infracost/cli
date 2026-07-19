@@ -16,6 +16,11 @@ type Organization struct {
 	Name  string `json:"name"`
 	Slug  string `json:"slug"`
 	Roles []Role `json:"roles"`
+	// AgentsEnabled reports whether Infracost Agents (findings / tasks /
+	// actions) is enabled for this org. Driven server-side by the
+	// coast-access entitlement; the CLI gates the Agents commands and MCP
+	// tools on it, surfacing a waitlist message when it's false.
+	AgentsEnabled bool `json:"agentsEnabled"`
 }
 
 type Role struct {
@@ -23,9 +28,14 @@ type Role struct {
 }
 
 type CurrentUser struct {
-	ID            string         `json:"id"`
-	Name          string         `json:"name"`
-	Email         string         `json:"email"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	// AgentsEnabled reports whether Infracost Agents is enabled for this user
+	// directly (rather than via one of their orgs). Driven server-side by the
+	// coast-access entitlement targeted at the user. When true the Agents
+	// commands / MCP tools are enabled regardless of the active org's flag.
+	AgentsEnabled bool           `json:"agentsEnabled"`
 	Organizations []Organization `json:"organizations"`
 }
 
@@ -40,6 +50,12 @@ type RunParameters struct {
 	Guardrails        []json.RawMessage `json:"guardrails"`
 	Budgets           []json.RawMessage `json:"budgets"`
 	ConfigTemplate    string            `json:"configTemplate"`
+
+	// FeatureFlags is the JSON-serialized event.FeatureFlags proto describing
+	// which per-org feature flags are enabled for this run (e.g. whether the
+	// Kubernetes plugins should be used). Unmarshaled with protojson where it's
+	// consumed. May be empty against older dashboards that don't return it.
+	FeatureFlags json.RawMessage `json:"featureFlags"`
 }
 
 type Client interface {
@@ -62,10 +78,12 @@ func (c *client) CurrentUser(ctx context.Context) (CurrentUser, error) {
     id
     name
     email
+    agentsEnabled
     organizations {
       id
       name
       slug
+      agentsEnabled
       roles {
         id
       }
@@ -139,6 +157,7 @@ func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) 
     guardrails
     budgets
     configTemplate
+    featureFlags
   }
 }`
 

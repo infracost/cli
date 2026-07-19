@@ -6,29 +6,41 @@ package scanner
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/api/dashboard"
 	testingconfig "github.com/infracost/cli/internal/config/testing"
 	"github.com/infracost/cli/pkg/auth"
-	parserMock "github.com/infracost/cli/pkg/plugins/parser/mocks"
-	providerMock "github.com/infracost/cli/pkg/plugins/providers/mocks"
+	"github.com/infracost/cli/pkg/plugins"
+	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	"github.com/infracost/proto/gen/go/infracost/parser"
 	"github.com/infracost/proto/gen/go/infracost/parser/api"
-	armpb "github.com/infracost/proto/gen/go/infracost/parser/arm"
-	"github.com/infracost/proto/gen/go/infracost/parser/cloudformation"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/infracost/proto/gen/go/infracost/provider"
-	"github.com/stretchr/testify/mock"
+	treepb "github.com/infracost/proto/gen/go/infracost/tree"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
 )
+
+type sequenceTokenSource struct {
+	tokens []string
+	calls  int
+}
+
+func (s *sequenceTokenSource) Token() (*oauth2.Token, error) {
+	idx := s.calls
+	s.calls++
+	if idx >= len(s.tokens) {
+		idx = len(s.tokens) - 1
+	}
+	return &oauth2.Token{AccessToken: s.tokens[idx]}, nil
+}
 
 type testScannerOpts struct {
 	// Parser mock responses (used by Scan tests).
@@ -48,11 +60,100 @@ type testScannerOpts struct {
 	googlePolicies []*provider.FinopsPolicy
 	azurePolicies  []*provider.FinopsPolicy
 
-	// processValidator is called with the input to each provider's Process
+	unsupportedResources []*treepb.Resource
+
+	// processValidator is called with the input to each provider's ProcessTree
 	// method, allowing tests to assert on the fields sent to providers.
-	processValidator func(*testing.T, *provider.Input)
+	processValidator func(*testing.T, *provider.TreeInput)
 
 	currency string
+}
+
+type mockPluginParser struct {
+	response *pluginpb.ParseResponse
+	err      error
+}
+
+type mockProviderPlugin struct {
+	t            *testing.T
+	policies     []*provider.FinopsPolicy
+	resources    []*provider.Resource
+	finopsResult []*provider.FinopsPolicyResult
+	validator    func(*testing.T, *provider.TreeInput)
+}
+
+func (m mockPluginParser) GetParserConfig(context.Context, *pluginpb.GetParserConfigRequest, ...grpc.CallOption) (*pluginpb.GetParserConfigResponse, error) {
+	return &pluginpb.GetParserConfigResponse{}, nil
+}
+
+func (m mockPluginParser) IdentifyProjects(context.Context, *pluginpb.IdentifyProjectsRequest, ...grpc.CallOption) (*pluginpb.IdentifyProjectsResponse, error) {
+	return &pluginpb.IdentifyProjectsResponse{}, nil
+}
+
+func (m mockPluginParser) IdentifyEnvironments(context.Context, *pluginpb.IdentifyEnvironmentsRequest, ...grpc.CallOption) (*pluginpb.IdentifyEnvironmentsResponse, error) {
+	return &pluginpb.IdentifyEnvironmentsResponse{}, nil
+}
+
+func (m mockPluginParser) Parse(context.Context, *pluginpb.ParseRequest, ...grpc.CallOption) (*pluginpb.ParseResponse, error) {
+	return m.response, m.err
+}
+
+func (m mockProviderPlugin) Process(_ context.Context, req *pluginpb.ProcessRequest, _ ...grpc.CallOption) (*pluginpb.ProcessResponse, error) {
+	if m.validator != nil {
+		m.validator(m.t, req.GetInput())
+	}
+	return &pluginpb.ProcessResponse{Output: &provider.Output{Resources: m.resources, FinopsResults: m.finopsResult}}, nil
+}
+
+func (m mockProviderPlugin) ListFinopsPolicies(context.Context, *pluginpb.ListFinopsPoliciesRequest, ...grpc.CallOption) (*pluginpb.ListFinopsPoliciesResponse, error) {
+	policies := make([]*pluginpb.FinopsPolicy, 0, len(m.policies))
+	for _, policy := range m.policies {
+		policies = append(policies, &pluginpb.FinopsPolicy{
+			Slug:             policy.GetSlug(),
+			Name:             policy.GetName(),
+			Group:            policy.GetGroup(),
+			Description:      policy.GetDescription(),
+			OnlyNewResources: policy.GetOnlyNewResources(),
+		})
+	}
+	return &pluginpb.ListFinopsPoliciesResponse{Policies: policies}, nil
+}
+
+func oldParseResponseToPlugin(resp *api.ParseResponse, unsupportedResources []*treepb.Resource) *pluginpb.ParseResponse {
+	if resp == nil {
+		return nil
+	}
+	out := &pluginpb.ParseResponse{Diagnostics: resp.Diagnostics}
+	if resp.Result == nil {
+		return out
+	}
+
+	switch result := resp.Result.Value.(type) {
+	case *api.ParseResponseResult_Terraform:
+		providers := map[string]*treepb.Provider{}
+		seen := map[provider.Provider]struct{}{}
+		pkgscanner.GetRequiredProviders(result.Terraform, seen)
+		for p := range seen {
+			providers[providerKey(p)] = &treepb.Provider{}
+		}
+		out.Tree = &treepb.Tree{Providers: providers, UnsupportedResources: unsupportedResources}
+	case *api.ParseResponseResult_Cloudformation:
+		out.Tree = &treepb.Tree{Providers: map[string]*treepb.Provider{"aws": {}}, UnsupportedResources: unsupportedResources}
+	}
+	return out
+}
+
+func providerKey(p provider.Provider) string {
+	switch p {
+	case provider.Provider_PROVIDER_AWS:
+		return "aws"
+	case provider.Provider_PROVIDER_GOOGLE:
+		return "google"
+	case provider.Provider_PROVIDER_AZURERM:
+		return "azurerm"
+	default:
+		return ""
+	}
 }
 
 // newTestScanner creates a Scanner from the shared test config with mocked
@@ -63,52 +164,41 @@ func newTestScanner(t *testing.T, opts testScannerOpts) *Scanner {
 	t.Helper()
 
 	cfg := testingconfig.Config(t)
+	cfg.Plugins.Dir = t.TempDir()
 
 	// Set up parser mock when a parse response is configured.
 	if opts.parseResponse != nil || opts.parseErr != nil {
-		parserClient := parserMock.NewMockParserServiceClient(t)
-		parserClient.EXPECT().Initialize(mock.Anything, mock.Anything).Return(&api.InitializeResponse{}, nil)
-		parserClient.EXPECT().Parse(mock.Anything, mock.Anything).Return(opts.parseResponse, opts.parseErr)
-		cfg.Plugins.Parser.Load = func(hclog.Level) (api.ParserServiceClient, func(), error) {
-			return parserClient, func() {}, nil
+		cfg.Plugins.LoadParserPluginForProject = func(context.Context, string) (*plugins.ParserPlugin, error) {
+			return &plugins.ParserPlugin{
+				ParserServiceClient: mockPluginParser{response: oldParseResponseToPlugin(opts.parseResponse, opts.unsupportedResources), err: opts.parseErr},
+				Info:                &pluginpb.GetPluginInfoResponse{Name: "test-parser", Version: "0.0.0", Type: pluginpb.PluginType_PARSER},
+				ParserConfig:        &pluginpb.GetParserConfigResponse{},
+			}, nil
 		}
 	}
 
-	// Set up provider mocks — each mock supports both ListFinopsPolicies and Process.
-	setupProviderMock := func(
+	// Set up provider plugin mocks. ListFinopsPolicies and Process are
+	// stubbed on each provider mock so the same scanner works for both
+	// ListPolicies and Scan tests.
+	buildProviderPlugin := func(
+		name string,
 		policies []*provider.FinopsPolicy,
 		resources []*provider.Resource,
 		finopsResults []*provider.FinopsPolicyResult,
-	) func(hclog.Level) (provider.ProviderServiceClient, func(), error) {
-		m := providerMock.NewMockProviderServiceClient(t)
-		m.EXPECT().ListFinopsPolicies(mock.Anything, mock.Anything).Return(&provider.ListFinopsPoliciesResponse{
-			Policies: policies,
-		}, nil).Maybe()
-		// Optional — scanner.Scan calls this once for ARM-typed projects to
-		// populate the parser's InitializeRequest. .Maybe() so non-ARM tests
-		// don't trip over an unexpected-call assertion.
-		m.EXPECT().ListSupportedResources(mock.Anything, mock.Anything).
-			Return(&provider.ListSupportedResourcesResponse{}, nil).Maybe()
-		processCall := m.EXPECT().Process(mock.Anything, mock.Anything)
-		if opts.processValidator != nil {
-			processCall.Run(func(_ context.Context, in *provider.ProcessRequest, _ ...grpc.CallOption) {
-				opts.processValidator(t, in.Input)
-			})
-		}
-		processCall.Return(&provider.ProcessResponse{
-			Output: &provider.Output{
-				Resources:     resources,
-				FinopsResults: finopsResults,
-			},
-		}, nil).Maybe()
-		return func(hclog.Level) (provider.ProviderServiceClient, func(), error) {
-			return m, func() {}, nil
+	) *plugins.ProviderPlugin {
+		return &plugins.ProviderPlugin{
+			ProviderServiceClient: mockProviderPlugin{t: t, policies: policies, resources: resources, finopsResult: finopsResults, validator: opts.processValidator},
+			Info:                  &pluginpb.GetPluginInfoResponse{Name: name, Type: pluginpb.PluginType_PROVIDER},
 		}
 	}
 
-	cfg.Plugins.Providers.LoadAWS = setupProviderMock(opts.awsPolicies, opts.awsResources, opts.awsFinops)
-	cfg.Plugins.Providers.LoadGoogle = setupProviderMock(opts.googlePolicies, opts.googleResources, opts.googleFinops)
-	cfg.Plugins.Providers.LoadAzurerm = setupProviderMock(opts.azurePolicies, opts.azureResources, opts.azureFinops)
+	cfg.Plugins.LoadProviderPlugins = func(context.Context) ([]*plugins.ProviderPlugin, error) {
+		return []*plugins.ProviderPlugin{
+			buildProviderPlugin("aws", opts.awsPolicies, opts.awsResources, opts.awsFinops),
+			buildProviderPlugin("google", opts.googlePolicies, opts.googleResources, opts.googleFinops),
+			buildProviderPlugin("azurerm", opts.azurePolicies, opts.azureResources, opts.azureFinops),
+		}, nil
+	}
 
 	if opts.currency != "" {
 		cfg.Currency = opts.currency
@@ -301,44 +391,6 @@ func awsTerraformParseResponse(resourceTypes ...string) *api.ParseResponse {
 	}
 }
 
-// awsCloudFormationParseResponse returns a ParseResponse shaped like a
-// CFN parse result. The resource types don't drive provider routing
-// (the scanner hardcodes CFN → AWS), so the keys are illustrative.
-func awsCloudFormationParseResponse(resourceTypes ...string) *api.ParseResponse {
-	resources := make(map[string]*cloudformation.Resource, len(resourceTypes))
-	for i, rt := range resourceTypes {
-		resources[fmt.Sprintf("R%d", i)] = &cloudformation.Resource{Type: rt}
-	}
-	return &api.ParseResponse{
-		Result: &api.ParseResponseResult{
-			Value: &api.ParseResponseResult_Cloudformation{
-				Cloudformation: &cloudformation.Result{
-					Resources: resources,
-				},
-			},
-		},
-	}
-}
-
-// azureARMParseResponse returns a ParseResponse shaped like an ARM
-// parse result. Scanner routing for ARM is hardcoded to AZURERM, so
-// the resource types are illustrative only.
-func azureARMParseResponse(resourceTypes ...string) *api.ParseResponse {
-	resources := make(map[string]*armpb.Resource, len(resourceTypes))
-	for i, rt := range resourceTypes {
-		resources[fmt.Sprintf("R%d", i)] = &armpb.Resource{Type: rt}
-	}
-	return &api.ParseResponse{
-		Result: &api.ParseResponseResult{
-			Value: &api.ParseResponseResult_Arm{
-				Arm: &armpb.Result{
-					Resources: resources,
-				},
-			},
-		},
-	}
-}
-
 func TestScan(t *testing.T) {
 	t.Run("basic scan with aws resources", func(t *testing.T) {
 		dir := writeTestProject(t)
@@ -363,50 +415,36 @@ func TestScan(t *testing.T) {
 		}
 	})
 
-	t.Run("cloudformation result routes to aws provider", func(t *testing.T) {
+	t.Run("refreshes access token before each provider call", func(t *testing.T) {
 		dir := writeTestProject(t, `version: "0.3"
 projects:
-  - path: .
-    name: test-project
-    type: cloudformation
+  - path: p1
+    name: project-one
+  - path: p2
+    name: project-two
 `)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "p1"), 0755))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "p2"), 0755))
+
+		var providerTokens []string
 		s := newTestScanner(t, testScannerOpts{
-			parseResponse: awsCloudFormationParseResponse("AWS::EC2::Instance"),
-			awsResources: []*provider.Resource{
-				{Name: "MyInstance", Type: "AWS::EC2::Instance"},
+			parseResponse: awsTerraformParseResponse("aws_instance"),
+			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
+			processValidator: func(_ *testing.T, input *provider.TreeInput) {
+				providerTokens = append(providerTokens, input.Infracost.ApiKey)
 			},
 		})
 
-		result, err := s.Scan(context.Background(), dashboard.RunParameters{
+		tokenSource := &sequenceTokenSource{tokens: []string{"token-1", "token-2"}}
+		_, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", tokenSource)
 		require.NoError(t, err)
-		require.Len(t, result.Projects, 1)
-		require.Len(t, result.Projects[0].Resources, 1, "expected the AWS provider mock to be invoked for a CFN parse response")
-		require.Equal(t, "MyInstance", result.Projects[0].Resources[0].Name)
-	})
-
-	t.Run("arm result routes to azurerm provider", func(t *testing.T) {
-		dir := writeTestProject(t, `version: "0.3"
-projects:
-  - path: .
-    name: test-project
-    type: arm
-`)
-		s := newTestScanner(t, testScannerOpts{
-			parseResponse: azureARMParseResponse("Microsoft.Storage/storageAccounts"),
-			azureResources: []*provider.Resource{
-				{Name: "examplestorage", Type: "Microsoft.Storage/storageAccounts"},
-			},
-		})
-
-		result, err := s.Scan(context.Background(), dashboard.RunParameters{
-			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
-		require.NoError(t, err)
-		require.Len(t, result.Projects, 1)
-		require.Len(t, result.Projects[0].Resources, 1, "expected the Azurerm provider mock to be invoked for an ARM parse response")
-		require.Equal(t, "examplestorage", result.Projects[0].Resources[0].Name)
+		// The token source is consulted once per project; each project's
+		// token is then reused across all 3 provider plugins, giving 6
+		// captured tokens but only 2 Token() invocations.
+		require.Equal(t, []string{"token-1", "token-1", "token-1", "token-2", "token-2", "token-2"}, providerTokens)
+		require.Equal(t, 2, tokenSource.calls)
 	})
 
 	t.Run("repo usage file is loaded", func(t *testing.T) {
@@ -456,7 +494,7 @@ projects:
 			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
 			currency:      "EUR",
 		})
-		
+
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
 		}, dir, "main", auth.AuthenticationToken("test-token"))
@@ -587,7 +625,7 @@ projects:
 		s := newTestScanner(t, testScannerOpts{
 			parseResponse: awsTerraformParseResponse("aws_instance"),
 			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
-			processValidator: func(t *testing.T, input *provider.Input) {
+			processValidator: func(t *testing.T, input *provider.TreeInput) {
 				t.Helper()
 				if input.ProjectInfo == nil {
 					t.Fatal("expected ProjectInfo to be set")
@@ -623,7 +661,7 @@ projects:
 		s := newTestScanner(t, testScannerOpts{
 			parseResponse: awsTerraformParseResponse("aws_instance"),
 			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
-			processValidator: func(t *testing.T, input *provider.Input) {
+			processValidator: func(t *testing.T, input *provider.TreeInput) {
 				t.Helper()
 				if input.ProjectInfo.IsProduction {
 					t.Error("expected IsProduction to be false for non-matching branch filter")
@@ -655,7 +693,7 @@ projects:
 		s := newTestScanner(t, testScannerOpts{
 			parseResponse: awsTerraformParseResponse("aws_instance"),
 			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
-			processValidator: func(t *testing.T, input *provider.Input) {
+			processValidator: func(t *testing.T, input *provider.TreeInput) {
 				t.Helper()
 				if input.FinopsPolicyConfig == nil {
 					t.Fatal("expected FinopsPolicyConfig to be set")
@@ -665,6 +703,42 @@ projects:
 				}
 				if input.FinopsPolicyConfig.Policies[0].Slug != "test-finops-policy" {
 					t.Errorf("expected slug test-finops-policy, got %q", input.FinopsPolicyConfig.Policies[0].Slug)
+				}
+			},
+		})
+
+		_, err = s.Scan(context.Background(), dashboard.RunParameters{
+			UsageDefaults:  emptyUsageDefaults(t),
+			FinopsPolicies: []json.RawMessage{policyJSON},
+		}, dir, "main", auth.AuthenticationToken("test-token"))
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("USE_ALL_LOCAL_POLICIES leaves FinopsPolicyConfig nil so provider evaluates all", func(t *testing.T) {
+		t.Setenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES", "true")
+
+		dir := writeTestProject(t)
+
+		// The env var should drop the explicit policy list, leaving the
+		// provider's FinopsPolicyConfig nil so it evaluates every policy.
+		policySettings := &event.FinopsPolicySettings{
+			Slug: "test-finops-policy",
+			Name: "Test FinOps Policy",
+		}
+		policyJSON, err := protojson.Marshal(policySettings)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: awsTerraformParseResponse("aws_instance"),
+			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
+			processValidator: func(t *testing.T, input *provider.TreeInput) {
+				t.Helper()
+				if input.FinopsPolicyConfig != nil {
+					t.Errorf("expected FinopsPolicyConfig to be nil when USE_ALL_LOCAL_POLICIES is set, got %+v", input.FinopsPolicyConfig)
 				}
 			},
 		})
@@ -729,6 +803,64 @@ projects:
 		if len(proj.TagPolicyResults) == 0 {
 			t.Fatal("expected tag policy results to be populated")
 		}
+	})
+
+	t.Run("tag policies include parser unsupported resources", func(t *testing.T) {
+		dir := writeTestProject(t)
+
+		tagPolicy := &event.TagPolicy{
+			Id:   "tp-unsupported",
+			Name: "Require env tag",
+			Requirements: []*event.TagPolicyRequirement{
+				{Key: "env", Type: event.TagPolicyRequirement_ANY, Mandatory: true},
+			},
+		}
+		tagJSON, err := protojson.Marshal(tagPolicy)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: awsTerraformParseResponse("aws_instance"),
+			awsResources: []*provider.Resource{
+				{
+					Name: "aws_instance.web",
+					Type: "aws_instance",
+					Tagging: &provider.Tagging{
+						SupportsTags: true,
+						Tags:         []*provider.Tag{{Key: "env", Value: "prod"}},
+					},
+				},
+			},
+			unsupportedResources: []*treepb.Resource{
+				{
+					Id:           "aws_iam_role.worker",
+					IsFree:       true,
+					SupportsTags: true,
+					Definition: &treepb.Definition{
+						ResourceType: "aws_iam_role",
+						Address: &parser.Address{Segments: []*parser.Segment{
+							{Value: "aws_iam_role"},
+							{Value: "worker"},
+						}},
+					},
+				},
+			},
+		})
+
+		result, err := s.Scan(context.Background(), dashboard.RunParameters{
+			UsageDefaults: emptyUsageDefaults(t),
+			TagPolicies:   []json.RawMessage{tagJSON},
+		}, dir, "main", auth.AuthenticationToken("test-token"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		proj := result.Projects[0]
+		require.Len(t, proj.TagPolicyResults, 1)
+		require.Equal(t, 2, proj.TagPolicyResults[0].TotalTaggableResources)
+		require.Len(t, proj.TagPolicyResults[0].FailingResources, 1)
+		require.Equal(t, "aws_iam_role.worker", proj.TagPolicyResults[0].FailingResources[0].Address)
 	})
 
 	t.Run("budgets evaluated against resources", func(t *testing.T) {

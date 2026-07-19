@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/infracost/cli/internal/doctor"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/inspect"
 	"github.com/infracost/go-proto/pkg/rat"
@@ -18,7 +19,7 @@ import (
 // Action.Config / Action.Result, FindingEvent.Detail,
 // FindingTaskEvent.Detail, plus PreviewFixResult.Config and
 // CreateFixInput.ConfigJSON in the CLI's own types). jsonschema-go's
-// reflection-based inference doesn't recognise RawMessage as opaque JSON
+// reflection-based inference doesn't recognize RawMessage as opaque JSON
 // — it sees `type RawMessage []byte` and emits
 // `{"type":["null","array"],"items":{"type":"integer","minimum":0,"maximum":255}}`,
 // which rejects every real payload the API returns.
@@ -27,7 +28,7 @@ import (
 //   - MCP hosts (which require tool schemas to be objects) accept the
 //     declaration at registration time.
 //   - LLM tool-use layers know to send a JSON object on the wire rather
-//     than serialising the value as a string. Without a declared type
+//     than serializing the value as a string. Without a declared type
 //     they default to string, which is what Agents rejected as
 //     `invalid type or config` when create_fix received a stringified
 //     config.
@@ -602,9 +603,19 @@ type MCPDoctorInput struct {
 
 // doctorToolOutputSchema returns the JSON schema describing
 // [DoctorOutput]. No rat.Rat involved — doctor reports are text and
-// counts only.
+// counts only. doctor.Status is a Go int enum but marshals to its
+// lowercase string name (see doctor.Status.MarshalJSON), so we override
+// the reflected "integer" type with the string enum the wire format
+// actually carries — otherwise MCP output validation rejects "pass".
 func doctorToolOutputSchema() (*jsonschema.Schema, error) {
-	schema, err := jsonschema.For[DoctorOutput](nil)
+	schema, err := jsonschema.For[DoctorOutput](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[doctor.Status](): {
+				Type: "string",
+				Enum: []any{"pass", "warning", "fail", "skipped"},
+			},
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("building doctor tool output schema: %w", err)
 	}

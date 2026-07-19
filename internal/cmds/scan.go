@@ -61,19 +61,19 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		target = "."
 	}
 
-	absoluteDirectory, err := filepath.Abs(filepath.Clean(target))
+	absolutePath, err := filepath.Abs(filepath.Clean(target))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path to target: %w", err)
 	}
+	absoluteDirectory := absolutePath
 
-	if info, err := os.Stat(absoluteDirectory); err != nil {
+	if info, err := os.Stat(absolutePath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("target directory does not exist")
 		}
 		return nil, fmt.Errorf("failed to get info for target directory: %w", err)
 	} else if !info.IsDir() {
-		// TODO: should probably generate a minimal config for a single project in this case, but for now just require a directory
-		return nil, fmt.Errorf("target is not a directory")
+		absoluteDirectory = filepath.Dir(absolutePath)
 	}
 
 	repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
@@ -116,7 +116,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		PricingEndpoint: cfg.PricingEndpoint,
 	}
 	startTime := time.Now()
-	result, err := s.Scan(ctx, runParameters, absoluteDirectory, branchName, source)
+	result, err := s.Scan(ctx, runParameters, absolutePath, branchName, source)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan target: %w", err)
 	}
@@ -128,10 +128,10 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 
 	// Load previous result for this directory (stale allowed) for run diff counts.
 	var prevForDir *format.Output
-	if p, err := store.ForPathAllowStale(absoluteDirectory); err != nil {
-		logging.Infof("could not load previous run data for directory: %v", err)
+	if p, err := store.ForPathAllowStale(absolutePath); err != nil {
+		logging.Infof("could not load previous run data for path: %v", err)
 	} else {
-		logging.Infof("found previous run data for directory in cache")
+		logging.Infof("found previous run data for path in cache")
 		prevForDir = p
 	}
 
@@ -143,7 +143,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		output.TrackDiff(ctx, eventsClient, prev)
 	}
 
-	if err := store.Write(absoluteDirectory, &output); err != nil {
+	if err := store.Write(absolutePath, &output); err != nil {
 		logging.Warn("failed to cache results: " + err.Error())
 	}
 
@@ -171,7 +171,11 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
   # Scan against a different organization's policies & prices
   $ infracost scan --org acme`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
+			startTime := time.Now()
+
+			cache.Prune(cache.DefaultPruneAge)
+
 			if len(args) > 0 {
 				in.Path = args[0]
 			}
@@ -189,11 +193,38 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 				outputFormat = "json"
 			}
 
+			defer func() {
+				if runErr != nil {
+					msg := runErr.Error()
+					if len(msg) > 200 {
+						msg = msg[:200]
+					}
+					eventsClient := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+					eventsClient.Push(context.Background(), "infracost-error",
+						"error", msg,
+						"runSeconds", time.Since(startTime).Seconds(),
+						"outputFormat", outputFormat,
+					)
+				}
+			}()
+
 			source, err := cfg.Auth.Token(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("failed to log in: %w", err)
 			}
 			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+				return err
+			}
+
+			// Ensure plugins are present/updated as a distinct phase so the
+			// spinner reflects what's actually happening (plugin downloads emit
+			// their own "Downloaded <plugin> <version>" lines above this one).
+			// Scan() ensures plugins lazily too, but that call is cached so this
+			// is a no-op by the time we scan.
+			if err := ui.RunWithSpinnerErr(cmd.Context(), "Checking plugins are up to date...", "Plugins up to date", func(_ context.Context) error {
+				_, ensureErr := cfg.Plugins.EnsurePlugins()
+				return ensureErr
+			}); err != nil {
 				return err
 			}
 

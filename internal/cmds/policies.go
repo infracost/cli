@@ -19,7 +19,6 @@ import (
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
-	"github.com/infracost/proto/gen/go/infracost/provider"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/text/cases"
@@ -463,30 +462,34 @@ func prettyCustomSettings(raw string) string {
 	return pretty
 }
 
-func resolveProviderFilter(names []string, taggingOnly bool) ([]provider.Provider, error) {
+func resolveProviderFilter(names []string, taggingOnly bool) ([]string, error) {
 	if taggingOnly {
-		return []provider.Provider{}, nil
+		return []string{}, nil
 	}
 	if len(names) == 0 {
 		return nil, nil
 	}
-	mapping := map[string]provider.Provider{
-		"aws":    provider.Provider_PROVIDER_AWS,
-		"azure":  provider.Provider_PROVIDER_AZURERM,
-		"google": provider.Provider_PROVIDER_GOOGLE,
+	known := map[string]struct{}{
+		"aws":     {},
+		"azure":   {},
+		"azurerm": {},
+		"google":  {},
 	}
-	out := make([]provider.Provider, 0, len(names))
-	seen := map[provider.Provider]bool{}
+	out := make([]string, 0, len(names))
+	seen := map[string]bool{}
 	for _, name := range names {
-		p, ok := mapping[strings.ToLower(strings.TrimSpace(name))]
-		if !ok {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if _, ok := known[key]; !ok {
 			return nil, fmt.Errorf("unknown provider %q (must be one of: aws, azure, google)", name)
 		}
-		if seen[p] {
+		if key == "azure" {
+			key = "azurerm"
+		}
+		if seen[key] {
 			continue
 		}
-		seen[p] = true
-		out = append(out, p)
+		seen[key] = true
+		out = append(out, key)
 	}
 	return out, nil
 }

@@ -18,6 +18,11 @@ var (
 	loggerConfigured bool
 	logger           zerolog.Logger
 
+	// effectiveWriteLevel is the level the CLI logs at after flags/env are
+	// resolved (see Process). It is propagated to plugin subprocesses via the
+	// LOG_LEVEL env var and used as the level for the plugin log adapter.
+	effectiveWriteLevel = "warn"
+
 	// output is a swappable destination so callers (e.g. the spinner)
 	// can redirect log writes through a TUI that owns stderr.
 	output = &outputRouter{target: os.Stderr}
@@ -60,6 +65,7 @@ func Output() io.Writer { return output }
 type Config struct {
 	WriteLevel string `env:"INFRACOST_CLI_LOG_LEVEL" default:"warn"`
 	JSON       bool   `flagvalue:"json"`
+	Debug      bool   `flagvalue:"debug"`
 }
 
 // ToHCLogLevel converts the WriteLevel to an hclog.Level for use in logging outputs from the
@@ -85,7 +91,28 @@ func (config *Config) ToHCLogLevel() hclog.Level {
 	}
 }
 
+// WriteLevel returns the level the CLI logs at after flags/env are resolved.
+// It is propagated to plugin subprocesses via the LOG_LEVEL env var so they
+// log at the same verbosity as the CLI.
+func WriteLevel() string { return effectiveWriteLevel }
+
+// PluginLogLevel returns the hclog level for the plugin log adapter, never
+// returning hclog.NoLevel (it falls back to warn) so go-plugin keeps parsing
+// and demuxing plugin stderr instead of treating the logger as disabled.
+func PluginLogLevel() hclog.Level {
+	level := (&Config{WriteLevel: effectiveWriteLevel}).ToHCLogLevel()
+	if level == hclog.NoLevel {
+		return hclog.Warn
+	}
+	return level
+}
+
 func (config *Config) Process() {
+	if config.Debug {
+		config.WriteLevel = zerolog.DebugLevel.String()
+	}
+	effectiveWriteLevel = strings.ToLower(config.WriteLevel)
+
 	if loggerConfigured {
 		return
 	}

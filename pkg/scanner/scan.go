@@ -2,29 +2,33 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/pkg/logging"
-	"github.com/infracost/go-proto/pkg/flag"
 	"github.com/infracost/cli/pkg/plugins"
 	repoconfig "github.com/infracost/config"
+	"github.com/infracost/go-proto/pkg/address"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 	goprotoevent "github.com/infracost/go-proto/pkg/event"
 	providerconv "github.com/infracost/go-proto/pkg/providers"
 	"github.com/infracost/go-proto/pkg/rat"
-	parserpb "github.com/infracost/proto/gen/go/infracost/parser/api"
+	treeresource "github.com/infracost/go-proto/pkg/tree/resource"
+	parserapi "github.com/infracost/proto/gen/go/infracost/parser/api"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/options"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/infracost/proto/gen/go/infracost/provider"
+	treepb "github.com/infracost/proto/gen/go/infracost/tree"
 	"github.com/infracost/proto/gen/go/infracost/usage"
+	"golang.org/x/oauth2"
 )
 
 // ProjectResult holds the outputs for a single project scan.
@@ -46,6 +50,10 @@ type ScanProjectOptions struct {
 	RepoConfig *repoconfig.Config
 	Project    *repoconfig.Project
 
+	// TokenSource is consulted immediately before each provider plugin call so
+	// long multi-project scans don't reuse an expired access token.
+	TokenSource oauth2.TokenSource
+	// AccessToken is a fallback for callers that don't have a refresh-capable token source.
 	AccessToken     string // nolint:gosec // G117: passed to providers, and not exposed
 	BranchName      string
 	RepositoryName  string
@@ -91,20 +99,57 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	// Evaluate production filters.
 	isProduction := EvaluateProductionFilters(opts.ProductionFilters, opts.RepositoryName, opts.BranchName, opts.Project.Name)
 
-	if err := opts.Plugins.EnsureParser(); err != nil {
-		return nil, fmt.Errorf("failed to ensure parser plugin: %w", err)
+	projectType := finalProjectType(opts.Project.Type, absoluteProjectPath)
+	parserPlugin, err := opts.Plugins.ParserPluginForProject(ctx, string(projectType))
+	if err != nil {
+		return nil, fmt.Errorf("failed to load parser plugin for project type %q: %w", projectType, err)
 	}
 
-	response, err := opts.Plugins.Parser.Parse(ctx, absoluteProjectPath, opts.RepoConfig, opts.Project, opts.Logging.ToHCLogLevel(), &options.GenericOptions{
-		ProjectName:        opts.Project.Name,
-		EnvironmentName:    opts.Project.EnvName,
-		RepoDirectory:      opts.RootDir,
-		TemporaryDirectory: os.TempDir(),
-		CacheDirectory:     opts.CacheDir,
-		WorkingDirectory:   opts.RootDir,
-	})
+	// Skip projects handled by a feature-gated parser (currently the Kubernetes
+	// parser when enableK8sPlugins is off). The plugin is still installed and
+	// autodetection still recognizes its projects; we just don't execute it. A
+	// nil result signals the caller to drop the project.
+	if opts.Plugins.SkipPluginExecution(parserPlugin.Info.GetName()) {
+		logging.Debugf("skipping project %q handled by gated plugin %q (feature flag disabled)", opts.Project.Name, parserPlugin.Info.GetName())
+		return nil, nil
+	}
+
+	genericOptions := buildGenericOptions(opts)
+	rawOptions, err := buildIaCOptions(opts, projectType, genericOptions)
 	if err != nil {
-		return nil, fmt.Errorf("parser plugin error: %w (set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
+		return nil, fmt.Errorf("failed to build parser plugin options: %w", err)
+	}
+
+	// Try the parser-results cache first. The fingerprint folds in RawOptions so e.g. a different
+	// workspace or tfvars file invalidates correctly. Skipping the gRPC + HCL parse + module load
+	// is the entire point of this cache; the typical hot path on a 10k-project repo where one
+	// project changed is N-1 hits + 1 miss.
+	pluginName := parserPlugin.Info.GetName()
+	pluginVersion := parserPlugin.Info.GetVersion()
+
+	fingerprint, fpErr := fingerprintProject(absoluteProjectPath, rawOptions)
+	if fpErr != nil {
+		logging.Debugf("parser fingerprint failed for %q: %s", absoluteProjectPath, fpErr)
+	}
+
+	var response *pluginpb.ParseResponse
+	if fpErr == nil {
+		response = loadParsedResponse(pluginName, pluginVersion, absoluteProjectPath, fingerprint)
+	}
+
+	if response == nil {
+		response, err = parserPlugin.Parse(ctx, &pluginpb.ParseRequest{
+			Path:           absoluteProjectPath,
+			GenericOptions: genericOptions,
+			RawOptions:     rawOptions,
+			// raw_options_format was removed from the proto - raw_options is always JSON now.
+		})
+		if err != nil {
+			return nil, fmt.Errorf("parser plugin error: %w (run with --debug or set INFRACOST_CLI_LOG_LEVEL=debug for more details)", err)
+		}
+		if fpErr == nil && response != nil {
+			saveParsedResponse(pluginName, pluginVersion, absoluteProjectPath, fingerprint, response)
+		}
 	}
 
 	projectResult := &ProjectResult{
@@ -121,30 +166,27 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		}
 	}
 
-	if response.Result == nil {
-		return nil, fmt.Errorf("parser plugin returned no result and no critical diagnostics")
+	if response == nil || response.Tree == nil {
+		return nil, fmt.Errorf("parser plugin returned no tree and no critical diagnostics")
 	}
 
-	var requiredProviders []provider.Provider
-	switch result := response.Result.Value.(type) {
-	case *parserpb.ParseResponseResult_Terraform:
-		rps := make(map[provider.Provider]struct{})
-		unsupported := GetRequiredProviders(result.Terraform, rps)
-		for u := range unsupported {
-			logging.Warnf("skipping unsupported provider: %s", u)
-		}
-		requiredProviders = slices.Collect(maps.Keys(rps))
-		projectResult.RemoteModuleCalls = extractRemoteModuleCalls(result.Terraform)
-	case *parserpb.ParseResponseResult_Cloudformation:
+	projectResult.RemoteModuleCalls = response.Tree.GetRemoteModuleCalls()
+	requiredProviders := GetRequiredProvidersFromTree(response.Tree)
+	if len(requiredProviders) == 0 && projectType == repoconfig.ProjectTypeCloudFormation {
 		requiredProviders = []provider.Provider{provider.Provider_PROVIDER_AWS}
-	case *parserpb.ParseResponseResult_Arm:
-		requiredProviders = []provider.Provider{provider.Provider_PROVIDER_AZURERM}
-	default:
-		return nil, fmt.Errorf("unsupported parse result type: %T", result)
 	}
 
-	input := &provider.Input{
-		ParseResult:  response,
+	// nil FinopsPolicies => leave the config nil so the provider evaluates all
+	// policies; an empty (non-nil) slice keeps the config so it evaluates none.
+	var finopsPolicyConfig *provider.FinopsPolicyConfiguration
+	if opts.FinopsPolicies != nil {
+		finopsPolicyConfig = &provider.FinopsPolicyConfiguration{
+			Policies: opts.FinopsPolicies,
+		}
+	}
+
+	input := &provider.TreeInput{
+		Tree:         response.Tree,
 		AbsolutePath: absoluteProjectPath,
 		ProjectInfo: &provider.ProjectInfo{
 			Name:         opts.Project.Name,
@@ -154,9 +196,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		},
 		PreviousResourceAddresses: opts.PreviousResourceAddresses,
 		Usage:                     projectUsage,
-		FinopsPolicyConfig: &provider.FinopsPolicyConfiguration{
-			Policies: opts.FinopsPolicies,
-		},
+		FinopsPolicyConfig:        finopsPolicyConfig,
 		Features: &provider.Features{
 			EnablePriceLookups:         true,
 			EnableRecommendations:      true,
@@ -175,39 +215,286 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		},
 	}
 
-	for _, rp := range requiredProviders {
-		if err := opts.Plugins.EnsureProvider(rp); err != nil {
-			logging.WithError(err).Msgf("failed to ensure provider %s", rp)
+	taggableResources := make([]*provider.Resource, 0, len(response.Tree.GetUnsupportedResources()))
+	for _, res := range response.Tree.GetUnsupportedResources() {
+		pr := treeresource.ProtoToProviderResource(res)
+		if pr == nil {
 			continue
 		}
-
-		var loader func(hclog.Level) (provider.ProviderServiceClient, func(), error)
-		switch rp {
-		case provider.Provider_PROVIDER_AWS:
-			loader = opts.Plugins.Providers.LoadAWS
-		case provider.Provider_PROVIDER_GOOGLE:
-			loader = opts.Plugins.Providers.LoadGoogle
-		case provider.Provider_PROVIDER_AZURERM:
-			loader = opts.Plugins.Providers.LoadAzurerm
-		default:
-			continue
+		if pr.IsFree {
+			pr.IsSupported = true
 		}
-
-		rs, ps, err := opts.Plugins.Providers.ProcessInput(ctx, rp, input, loader, opts.Logging.ToHCLogLevel())
-		if err != nil {
-			return nil, fmt.Errorf("failed to execute provider %s: %w", rp, err)
+		if def := res.GetDefinition(); def != nil && !slices.Contains(input.PreviousResourceAddresses, address.FromProto(def.GetAddress()).String()) {
+			pr.Action = provider.ResourceAction_CREATE
 		}
-		projectResult.Resources = append(projectResult.Resources, rs...)
-		projectResult.FinopsResults = append(projectResult.FinopsResults, ps...)
+		projectResult.Resources = append(projectResult.Resources, pr)
+		taggableResources = append(taggableResources, pr)
 	}
 
-	// Evaluate tag policies against all provider resources.
-	projectResult.TagPolicyResults = goprotoevent.TagPolicies(opts.TagPolicies).EvaluateAgainstResources(projectResult.Resources, input.ProjectInfo)
+	_ = requiredProviders // No longer used to gate plugin invocation — every loaded provider plugin runs.
+
+	providerPlugins, err := opts.Plugins.ProviderPlugins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load provider plugins: %w", err)
+	}
+
+	// Refresh the access token once, immediately before the first provider
+	// call — skipped entirely when no provider plugins are loaded so we
+	// don't burn a refresh for a no-op scan.
+	if len(providerPlugins) > 0 && opts.TokenSource != nil {
+		token, err := opts.TokenSource.Token()
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve access token: %w", err)
+		}
+		input.Infracost.ApiKey = token.AccessToken
+	}
+
+	for _, p := range providerPlugins {
+		resp, err := p.Process(ctx, &pluginpb.ProcessRequest{Input: input})
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute provider %s: %w", p.Info.GetName(), err)
+		}
+		output := resp.GetOutput()
+		if output == nil {
+			continue
+		}
+		projectResult.Resources = append(projectResult.Resources, output.Resources...)
+		taggableResources = append(taggableResources, output.Resources...)
+		projectResult.FinopsResults = append(projectResult.FinopsResults, output.FinopsResults...)
+	}
+
+	// Evaluate tag policies against provider output plus parser-flagged unsupported resources.
+	projectResult.TagPolicyResults = goprotoevent.TagPolicies(opts.TagPolicies).EvaluateAgainstResources(taggableResources, input.ProjectInfo)
 
 	// Compute total monthly cost from resources.
 	projectResult.TotalMonthlyCost = TotalMonthlyCostFromResources(projectResult.Resources)
 
 	return projectResult, nil
+}
+
+func finalProjectType(projectType repoconfig.ProjectType, absoluteProjectPath string) repoconfig.ProjectType {
+	if projectType == repoconfig.ProjectTypeUnknown {
+		if stat, err := os.Stat(filepath.Join(absoluteProjectPath, "terragrunt.hcl")); err == nil && !stat.IsDir() {
+			return repoconfig.ProjectTypeTerragrunt
+		}
+		if stat, err := os.Stat(filepath.Join(absoluteProjectPath, "terragrunt.hcl.json")); err == nil && !stat.IsDir() {
+			return repoconfig.ProjectTypeTerragrunt
+		}
+		return repoconfig.ProjectTypeTerraform
+	}
+	if strings.HasPrefix(string(projectType), "cdk_") {
+		return repoconfig.ProjectTypeCloudFormation
+	}
+	return projectType
+}
+
+func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
+	genericOptions := &options.GenericOptions{
+		ProjectName:        opts.Project.Name,
+		EnvironmentName:    opts.Project.EnvName,
+		RepoDirectory:      opts.RootDir,
+		TemporaryDirectory: os.TempDir(),
+		CacheDirectory:     opts.CacheDir,
+		WorkingDirectory:   opts.RootDir,
+		// Workspace and the terraform cloud config are caller-sourced runtime options passed via
+		// GenericOptions (not the blob), because they are also read outside the plugin.
+		Workspace: opts.Project.Terraform.Workspace,
+	}
+
+	if c := opts.Project.Terraform.Cloud; c.Org != "" || c.Workspace != "" || c.Host != "" {
+		genericOptions.TerraformCloudConfiguration = &options.TerraformCloudConfiguration{
+			Organization: c.Org,
+			Workspace:    c.Workspace,
+			Hostname:     c.Host,
+		}
+	}
+
+	return genericOptions
+}
+
+// buildIaCOptions returns the raw_options blob to send to the parser plugin for a project. The
+// persistable parse options live in the config plugins.<name> blob (config generates them, and
+// folds hand-written / older configs into them on load), so they are forwarded verbatim. The
+// caller-sourced runtime options are written into the typed GenericOptions fields, which the latest
+// plugins read in preference to the blob - so they are never duplicated into the blob.
+func buildIaCOptions(opts *ScanProjectOptions, projectType repoconfig.ProjectType, genericOptions *options.GenericOptions) ([]byte, error) {
+	switch projectType {
+	case repoconfig.ProjectTypeTerraform, repoconfig.ProjectTypeTerragrunt, repoconfig.ProjectTypeCiscoStacks:
+		if genericOptions != nil {
+			genericOptions.Env = opts.Project.Env
+			genericOptions.RequiredAttributes = protoAttributeRequirements(namingPolicyAttributeRequirements(opts.FinopsPolicies))
+		}
+		return pluginBlobJSON(opts.Project, string(projectType))
+	case repoconfig.ProjectTypeCloudFormation:
+		// cdk_* projects resolve to cloudformation (see finalProjectType) and the config keys their
+		// blob under cloudformation too.
+		return pluginBlobJSON(opts.Project, string(repoconfig.ProjectTypeCloudFormation))
+	case repoconfig.ProjectTypeARM:
+		// Forward the project's azure: deployment-scope context to the ARM parser
+		// plugin so resourceGroup()/subscription()/tenant() resolve to the user's
+		// values instead of synthetic defaults. Emits nil when unset, in which
+		// case the parser falls back to its own defaults.
+		return armRawOptions(opts.Project)
+	default:
+		return nil, nil
+	}
+}
+
+// armRawOptions marshals the project's azure: context into the JSON RawOptions
+// blob the ARM parser plugin expects (options.Options: azureContext). Returns
+// nil,nil when no azure context is configured so the parser uses its defaults.
+func armRawOptions(project *repoconfig.Project) ([]byte, error) {
+	az := project.Azure
+	if az.SubscriptionID == "" && az.TenantID == "" && az.ResourceGroupName == "" && az.Location == "" && az.ManagementGroupID == "" {
+		return nil, nil
+	}
+	type armAzureContext struct {
+		SubscriptionID    string `json:"subscriptionId,omitempty"`
+		TenantID          string `json:"tenantId,omitempty"`
+		ResourceGroupName string `json:"resourceGroupName,omitempty"`
+		Location          string `json:"location,omitempty"`
+		ManagementGroupID string `json:"managementGroupId,omitempty"`
+	}
+	return json.Marshal(struct {
+		AzureContext armAzureContext `json:"azureContext"`
+	}{
+		AzureContext: armAzureContext{
+			SubscriptionID:    az.SubscriptionID,
+			TenantID:          az.TenantID,
+			ResourceGroupName: az.ResourceGroupName,
+			Location:          az.Location,
+			ManagementGroupID: az.ManagementGroupID,
+		},
+	})
+}
+
+// pluginBlobJSON marshals the project's persisted plugins.<key> blob (keyed by the consuming plugin)
+// as JSON, returning nil when there is no blob for that key.
+func pluginBlobJSON(project *repoconfig.Project, key string) ([]byte, error) {
+	blob := project.Plugins[key]
+	if len(blob) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(blob)
+}
+
+// protoAttributeRequirements converts the naming-policy attribute requirements into the typed
+// GenericOptions form.
+func protoAttributeRequirements(reqs []*parserapi.AttributeRequirement) []*options.AttributeRequirement {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]*options.AttributeRequirement, 0, len(reqs))
+	for _, r := range reqs {
+		if r == nil {
+			continue
+		}
+		out = append(out, &options.AttributeRequirement{ResourceType: r.ResourceType, Attributes: r.Attributes})
+	}
+	return out
+}
+
+type namingValidationSettings struct {
+	AttributeValidationRules []string `json:"attributeValidationRules"`
+}
+
+func namingPolicyAttributeRequirements(policies []*event.FinopsPolicySettings) []*parserapi.AttributeRequirement {
+	grouped := make(map[string]map[string]struct{})
+	for _, policy := range policies {
+		if len(policy.GetSettings()) <= 2 {
+			continue
+		}
+
+		var settings namingValidationSettings
+		if err := json.Unmarshal([]byte(policy.GetSettings()), &settings); err != nil {
+			continue
+		}
+
+		for _, rule := range settings.AttributeValidationRules {
+			resourceType, attribute, err := parseAttributeValidationRule(rule)
+			if err != nil {
+				continue
+			}
+			attrs, ok := grouped[resourceType]
+			if !ok {
+				attrs = make(map[string]struct{})
+				grouped[resourceType] = attrs
+			}
+			attrs[attribute] = struct{}{}
+		}
+	}
+
+	reqs := make([]*parserapi.AttributeRequirement, 0, len(grouped))
+	for rt, attrs := range grouped {
+		names := make([]string, 0, len(attrs))
+		for name := range attrs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		reqs = append(reqs, &parserapi.AttributeRequirement{ResourceType: rt, Attributes: names})
+	}
+	sort.Slice(reqs, func(i, j int) bool { return reqs[i].ResourceType < reqs[j].ResourceType })
+	return reqs
+}
+
+func parseAttributeValidationRule(rule string) (resourceType, attribute string, err error) {
+	keyRaw, valueRaw, found := strings.Cut(rule, ":")
+	if !found {
+		return "", "", fmt.Errorf("invalid rule format, expected 'resource_type.attribute: /regex/': %s", rule)
+	}
+
+	key := strings.TrimSpace(keyRaw)
+	value := strings.TrimSpace(valueRaw)
+
+	resourceType, attribute, found = strings.Cut(key, ".")
+	if !found {
+		return "", "", fmt.Errorf("invalid attribute key, expected 'resource_type.attribute': %s", key)
+	}
+	resourceType = strings.TrimSpace(resourceType)
+	attribute = strings.TrimSpace(attribute)
+	if resourceType == "" || attribute == "" {
+		return "", "", fmt.Errorf("invalid attribute key, expected non-empty resource type and attribute: %s", key)
+	}
+
+	if len(value) < 2 || value[0] != '/' || value[len(value)-1] != '/' {
+		return "", "", fmt.Errorf("invalid regex literal, expected /pattern/: %s", value)
+	}
+	if _, err := regexp.Compile(value[1 : len(value)-1]); err != nil {
+		return "", "", err
+	}
+
+	return resourceType, attribute, nil
+}
+
+func GetRequiredProvidersFromTree(tree *treepb.Tree) []provider.Provider {
+	if tree == nil {
+		return nil
+	}
+
+	seen := make(map[provider.Provider]struct{})
+	for raw := range tree.GetProviders() {
+		if raw == "azure" {
+			raw = "azurerm"
+		}
+		p := providerconv.ToProto(raw)
+		if p == provider.Provider_PROVIDER_UNSPECIFIED {
+			logging.Warnf("skipping unsupported provider: %s", raw)
+			continue
+		}
+		seen[p] = struct{}{}
+	}
+
+	out := make([]provider.Provider, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	providerOrder := map[provider.Provider]int{
+		provider.Provider_PROVIDER_AWS:     0,
+		provider.Provider_PROVIDER_GOOGLE:  1,
+		provider.Provider_PROVIDER_AZURERM: 2,
+	}
+	sort.Slice(out, func(i, j int) bool { return providerOrder[out[i]] < providerOrder[out[j]] })
+	return out
 }
 
 // GetRequiredProviders extracts the set of cloud providers required by a Terraform
@@ -232,40 +519,3 @@ func GetRequiredProviders(result *terraform.ModuleResult, providers map[provider
 	}
 	return unsupported
 }
-
-// extractRemoteModuleCalls extracts unique remote (non-registry) module call
-// URLs from a terraform parse result, stripping credentials and query parameters.
-// Registry modules are excluded since they don't correspond to git repositories.
-func extractRemoteModuleCalls(module *terraform.ModuleResult) []string {
-	if module == nil {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	for _, call := range collectRemoteModuleCalls(module) {
-		seen[call] = struct{}{}
-	}
-	result := make([]string, 0, len(seen))
-	for call := range seen {
-		result = append(result, call)
-	}
-	return result
-}
-
-func collectRemoteModuleCalls(module *terraform.ModuleResult) []string {
-	var results []string
-	if module.LoadData != nil && module.LoadData.Source != nil &&
-		module.LoadData.Source.Flags&uint64(flag.RegistryModule) == 0 &&
-		module.LoadData.Source.Flags&uint64(flag.RemoteModule) != 0 {
-		url := credRedactionRegex.ReplaceAllString(module.LoadData.Source.Base, "://")
-		url, _, _ = strings.Cut(url, "?")
-		results = append(results, url)
-	}
-	for _, mods := range module.Modules {
-		for _, mod := range mods.Results {
-			results = append(results, collectRemoteModuleCalls(mod)...)
-		}
-	}
-	return results
-}
-
-var credRedactionRegex = regexp.MustCompile(`(?im)://(.+):(.+)@`)

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
-	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -19,8 +19,19 @@ import (
 	"golang.org/x/oauth2"
 )
 
+const callbackServerShutdownDelay = time.Second
+
 func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, error) {
 	caller, _ := events.GetMetadata[string]("caller")
+
+	listeners, err := c.callbackListeners()
+	if err != nil {
+		if isCallbackPortInUse(err) {
+			return nil, nil, fmt.Errorf("callback server error: %w (use --oauth-callback-port or INFRACOST_CLI_OAUTH_CALLBACK_PORT to change the port)", err)
+		}
+		return nil, nil, fmt.Errorf("callback server error: %w", err)
+	}
+	defer closeCallbackListeners(listeners)
 
 	config := c.OAuth2Config()
 
@@ -36,55 +47,55 @@ func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, e
 	var callbackErr error
 	var serverErr error
 
-	addr := fmt.Sprintf(":%d", c.CallbackPort)
-	if runtime.GOOS == "windows" {
-		addr = fmt.Sprintf("localhost:%d", c.CallbackPort)
+	server := &http.Server{
+		// timeouts not strictly necessary for one-time callback service
+		// but we need to keep golangci-lint happy
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  15 * time.Second,
 	}
 
-	wg.Go(func() {
-		server := &http.Server{
-			Addr: addr,
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		code = r.URL.Query().Get("code")
+		errorCode := r.URL.Query().Get("error")
+		returnedState := r.URL.Query().Get("state")
 
-			// timeouts not strictly necessary for one-time callback service
-			// but we need to keep golangci-lint happy
-			ReadTimeout:  5 * time.Second,
-			WriteTimeout: 10 * time.Second,
-			IdleTimeout:  15 * time.Second,
+		switch {
+		case returnedState != state:
+			callbackErr = errors.New("state mismatch")
+			writeCallbackPlain(w, "Authentication failed: state mismatch. Please run 'infracost auth login' again.")
+		case len(errorCode) > 0:
+			denied := parseLoginDenied(errorCode, r.URL.Query().Get("error_description"))
+			callbackErr = denied
+			writeCallbackDenied(w, denied)
+		case len(code) == 0:
+			callbackErr = errors.New("no code returned")
+			writeCallbackPlain(w, "Authentication failed: no code returned. Please run 'infracost auth login' again.")
+		default:
+			writeCallbackPlain(w, "Authentication successful. You can close this window and return to your terminal.")
 		}
 
-		mux := http.NewServeMux()
-		mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-			code = r.URL.Query().Get("code")
-			errorCode := r.URL.Query().Get("error")
-			returnedState := r.URL.Query().Get("state")
-
-			switch {
-			case returnedState != state:
-				callbackErr = errors.New("state mismatch")
-				writeCallbackPlain(w, "Authentication failed: state mismatch. Please run 'infracost auth login' again.")
-			case len(errorCode) > 0:
-				denied := parseLoginDenied(errorCode, r.URL.Query().Get("error_description"))
-				callbackErr = denied
-				writeCallbackDenied(w, denied)
-			case len(code) == 0:
-				callbackErr = errors.New("no code returned")
-				writeCallbackPlain(w, "Authentication failed: no code returned. Please run 'infracost auth login' again.")
-			default:
-				writeCallbackPlain(w, "Authentication successful. You can close this window and return to your terminal.")
-			}
-
-			// We got the code (or at least a request), so we can stop the server.
-			// Using a goroutine to avoid deadlocking the handler.
-			go func() {
-				_ = server.Shutdown(context.Background())
-			}()
-		})
-		server.Handler = mux
-
-		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			serverErr = err
-		}
+		// We got the code (or at least a request), so we can stop the server.
+		// Use a short delay to give browsers time to finish rendering the
+		// localhost response before the listener closes; Firefox can otherwise
+		// report "Problem loading localhost" even though authentication succeeded.
+		// Using a goroutine avoids deadlocking the handler.
+		go func() {
+			time.Sleep(callbackServerShutdownDelay)
+			_ = server.Shutdown(context.Background())
+		}()
 	})
+	server.Handler = mux
+
+	for _, listener := range listeners {
+		listener := listener
+		wg.Go(func() {
+			if err := server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+				serverErr = err
+			}
+		})
+	}
 
 	fmt.Printf("Please go to the following URL to log in:\n%s\n", ui.Code(authURL))
 	browserCtx, cancel := context.WithCancel(ctx)
@@ -112,6 +123,66 @@ func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, e
 	return config.TokenSource(ctx, token), token, nil
 }
 
+func (c *Config) callbackListeners() ([]net.Listener, error) {
+	addresses := c.callbackAddresses()
+	if callbackPortAcceptsConnections(addresses) {
+		return nil, syscall.EADDRINUSE
+	}
+
+	var listeners []net.Listener
+	var lastErr error
+	for _, address := range addresses {
+		listener, err := net.Listen(address.network, address.addr)
+		if err != nil {
+			if isCallbackPortInUse(err) {
+				return nil, err
+			}
+			lastErr = err
+			continue
+		}
+		listeners = append(listeners, listener)
+	}
+
+	if len(listeners) == 0 {
+		return nil, lastErr
+	}
+
+	return listeners, nil
+}
+
+type callbackAddress struct {
+	network string
+	addr    string
+}
+
+func (c *Config) callbackAddresses() []callbackAddress {
+	return []callbackAddress{
+		{network: "tcp4", addr: fmt.Sprintf("127.0.0.1:%d", c.CallbackPort)},
+		{network: "tcp6", addr: fmt.Sprintf("[::1]:%d", c.CallbackPort)},
+	}
+}
+
+func callbackPortAcceptsConnections(addresses []callbackAddress) bool {
+	for _, address := range addresses {
+		conn, err := net.DialTimeout(address.network, address.addr, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+	}
+	return false
+}
+
+func closeCallbackListeners(listeners []net.Listener) {
+	for _, listener := range listeners {
+		_ = listener.Close()
+	}
+}
+
+func isCallbackPortInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE)
+}
+
 func state() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
@@ -132,9 +203,9 @@ func writeCallbackPlain(w http.ResponseWriter, msg string) {
 func writeCallbackDenied(w http.ResponseWriter, e *LoginDeniedError) {
 	if e.UnverifiedEmail {
 		renderCallback(w, callbackContent{
-			Title:        "Please verify your email",
-			Body:         "Check your inbox for a verification link from Infracost, then run ",
-			BodyCode:     "infracost auth login",
+			Title:         "Please verify your email",
+			Body:          "Check your inbox for a verification link from Infracost, then run ",
+			BodyCode:      "infracost auth login",
 			BodyAfterCode: " again.",
 		})
 		return

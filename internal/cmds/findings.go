@@ -56,6 +56,9 @@ func ListFindings(ctx context.Context, cfg *config.Config, source oauth2.TokenSo
 	if cfg.OrgID == "" {
 		return FindingsListResult{}, fmt.Errorf("no organization selected")
 	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return FindingsListResult{}, err
+	}
 	client := cfg.Agents.Client(api.Client(ctx, source, cfg.OrgID))
 	events.RegisterMetadata("orgId", cfg.OrgID)
 
@@ -91,6 +94,9 @@ func GetFinding(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	}
 	if cfg.OrgID == "" {
 		return FindingsGetResult{}, fmt.Errorf("no organization selected")
+	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return FindingsGetResult{}, err
 	}
 	client := cfg.Agents.Client(api.Client(ctx, source, cfg.OrgID))
 	events.RegisterMetadata("orgId", cfg.OrgID)
@@ -132,6 +138,9 @@ func UpdateFindingStatus(ctx context.Context, cfg *config.Config, source oauth2.
 	}
 	if cfg.OrgID == "" {
 		return UpdateFindingStatusResult{}, fmt.Errorf("no organization selected")
+	}
+	if err := ensureAgentsEnabled(cfg); err != nil {
+		return UpdateFindingStatusResult{}, err
 	}
 
 	client := cfg.Agents.Client(api.Client(ctx, source, cfg.OrgID))

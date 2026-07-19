@@ -23,12 +23,16 @@ Or download the archive for your platform from the
 ```bash
 # macOS (Apple Silicon)
 tar -xzf infracost-darwin-arm64.tar.gz
-mv infracost /usr/local/bin/infracost
+mkdir -p ~/.local/bin
+mv infracost ~/.local/bin/infracost
 
 # Linux (amd64)
 tar -xzf infracost-linux-amd64.tar.gz
-mv infracost /usr/local/bin/infracost
+mkdir -p ~/.local/bin
+mv infracost ~/.local/bin/infracost
 ```
+
+The install script also prefers `~/.local/bin` when it is already on your `PATH`; otherwise it installs to `/usr/local/bin`.
 
 On Windows, download the `.zip` archive and extract it to a directory on your `PATH`.
 
@@ -118,41 +122,51 @@ infracost inspect --summary
 
 ### Plugins
 
-Plugins are downloaded automatically from the manifest when you run the CLI. No manual setup is required.
+Plugins are downloaded automatically from the plugin Infracost releases when you run the CLI. Parser plugins are ensured up front; provider plugins are downloaded on demand when a scan needs them. No manual setup is required.
 
 #### Version Pinning
 
-By default, the CLI downloads the latest version of each plugin. You can pin to a specific version using environment
-variables:
+By default, the CLI downloads the latest version of each plugin. You can pin individual plugins to a specific version using environment variables:
 
-- `INFRACOST_CLI_PARSER_PLUGIN_VERSION` — pin the parser plugin version
-- `INFRACOST_CLI_PROVIDER_PLUGIN_AWS_VERSION` — pin the AWS provider plugin version
-- `INFRACOST_CLI_PROVIDER_PLUGIN_AZURE_VERSION` — pin the Azure provider plugin version
-- `INFRACOST_CLI_PROVIDER_PLUGIN_GOOGLE_VERSION` — pin the Google provider plugin version
+- `INFRACOST_CLI_PLUGIN_TERRAFORM_VERSION` — pin the Terraform parser plugin version
+- `INFRACOST_CLI_PLUGIN_TERRAGRUNT_VERSION` — pin the Terragrunt parser plugin version
+- `INFRACOST_CLI_PLUGIN_CLOUDFORMATION_VERSION` — pin the CloudFormation parser plugin version
+- `INFRACOST_CLI_PLUGIN_CISCOSTACKS_VERSION` — pin the CiscoStacks parser plugin version
+- `INFRACOST_CLI_PLUGIN_AWS_VERSION` — pin the AWS provider plugin version
+- `INFRACOST_CLI_PLUGIN_GOOGLE_VERSION` — pin the Google provider plugin version
+- `INFRACOST_CLI_PLUGIN_AZURE_VERSION` — pin the Azure provider plugin version
+
+The older parser/provider version environment variables are still accepted as fallbacks.
 
 #### Updates
 
-Plugins auto-update by default. Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to disable automatic plugin updates. When disabled, the CLI uses the latest cached version if one exists, and only downloads from the manifest if no cached version is found.
+Plugins auto-update by default. Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to disable automatic plugin updates. When disabled, the CLI uses an existing flat-installed plugin binary if one exists, and only downloads from the plugin Infracost releases if the binary is missing.
 
-To update the CLI itself, you can use the `update` command. This will update the CLI binary by downloading the latest release from GitHub. Note that this does not update plugins, which are managed separately as described above.
+Set `INFRACOST_CLI_PLUGIN_BASE_URL` to override the plugin Infracost releases URL. Use `--debug` to show plugin download URLs and other debug logs.
+
+To update the CLI itself, you can use the `update` command. This updates the CLI binary by downloading the latest CLI archive from the Infracost releases bucket. Note that this does not update plugins, which are managed separately as described above.
 
 #### Local Plugin Overrides
 
-If you are developing plugins locally, you can bypass the download mechanism entirely by pointing the CLI at your local
-builds:
+If you are developing plugins locally, you can bypass the download mechanism entirely by pointing the CLI at a flat directory containing your local plugin builds:
 
 ```bash
-# Parser
-export INFRACOST_CLI_PARSER_PLUGIN=/path/to/bin/infracost-parser-plugin
-
-# Providers
-export INFRACOST_CLI_PROVIDER_PLUGIN_AWS=/path/to/bin/infracost-provider-plugin-aws
-export INFRACOST_CLI_PROVIDER_PLUGIN_GOOGLE=/path/to/bin/infracost-provider-plugin-google
-export INFRACOST_CLI_PROVIDER_PLUGIN_AZURERM=/path/to/bin/infracost-provider-plugin-azurerm
+export INFRACOST_CLI_PLUGIN_DIR=/path/to/plugins
 ```
 
-When a plugin path override is set, the CLI uses that binary directly and skips downloading for that plugin.
+The directory should contain plugin binaries side by side, for example:
 
+```text
+/path/to/plugins/infracost-plugin-terraform
+/path/to/plugins/infracost-plugin-terragrunt
+/path/to/plugins/infracost-plugin-cloudformation
+/path/to/plugins/infracost-plugin-ciscostacks
+/path/to/plugins/infracost-plugin-aws
+/path/to/plugins/infracost-plugin-google
+/path/to/plugins/infracost-plugin-azure
+```
+
+When `INFRACOST_CLI_PLUGIN_DIR` is set, the CLI uses that directory as-is and skips plugin downloads.
 
 ## Bugs and feedback
 
@@ -160,5 +174,4 @@ If you run into any issues or have feedback, please open a thread in [GitHub Dis
 
 ## Contributing
 
-We ❤️ contributions big or small. Please start by opening a thread in [GitHub Discussions](https://github.com/infracost/infracost/discussions) to discuss your idea before submitting a PR. 
-
+We ❤️ contributions big or small. Please start by opening a thread in [GitHub Discussions](https://github.com/infracost/infracost/discussions) to discuss your idea before submitting a PR.

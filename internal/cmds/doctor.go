@@ -457,10 +457,10 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 						info, err := update.CheckLatestVersion(ctx)
 						if err != nil {
 							return doctor.Result{
-								Status:  doctor.StatusWarning,
-								Label:   fmt.Sprintf("Version %s", version.Version),
-								Detail:  "(unable to check for updates)",
-								Hint:    err.Error(),
+								Status: doctor.StatusWarning,
+								Label:  fmt.Sprintf("Version %s", version.Version),
+								Detail: "(unable to check for updates)",
+								Hint:   err.Error(),
 							}
 						}
 						if info.UpToDate {
@@ -571,7 +571,7 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 	}
 
 	if checkAgents {
-		categories = append(categories, buildAgentChecks(cfg, scope))
+		categories = append(categories, buildAgentChecks(ctx, cfg, scope))
 	}
 	if checkIDE {
 		categories = append(categories, buildIDEChecks())
@@ -580,7 +580,13 @@ func buildCategories(ctx context.Context, cfg *config.Config, checkAgents, check
 	return categories
 }
 
-func buildAgentChecks(cfg *config.Config, scope string) doctor.Category {
+func buildAgentChecks(ctx context.Context, cfg *config.Config, scope string) doctor.Category {
+	// Best-effort single lookup of the latest published skill version so
+	// each installed agent can be flagged as up-to-date or behind. If it
+	// fails (offline, etc.) latest stays "" and we just report install
+	// status without a version comparison.
+	latest, _ := fetchLatestSkillVersion(ctx)
+
 	var checks []doctor.Check
 	for _, a := range supportedAgents {
 		if !a.enabled || a.check == nil {
@@ -593,33 +599,62 @@ func buildAgentChecks(cfg *config.Config, scope string) doctor.Category {
 				return setupAgent(cfg, a, scope)
 			},
 			Run: func(_ context.Context) doctor.Result {
-				bin, err := resolveAgentBinary(cfg, a)
-				if err != nil {
-					return doctor.Result{
-						Status: doctor.StatusSkipped,
-						Hint:   "binary not found on PATH",
+				// Filesystem-driven agents (e.g. GitLab Duo) have no binary;
+				// only resolve one for CLI-backed agents.
+				var bin string
+				var verbose []string
+				if len(a.binaries) > 0 {
+					resolved, err := resolveAgentBinary(cfg, a)
+					if err != nil {
+						return doctor.Result{
+							Status: doctor.StatusSkipped,
+							Hint:   "binary not found on PATH",
+						}
 					}
+					bin = resolved
+					verbose = append(verbose, fmt.Sprintf("binary: %s", bin))
 				}
+
 				installed, err := a.check(bin)
 				if err != nil {
 					return doctor.Result{
 						Status:  doctor.StatusWarning,
 						Hint:    fmt.Sprintf("could not verify skills: %s", err),
-						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+						Verbose: verbose,
 					}
 				}
-				if installed {
+				if !installed {
 					return doctor.Result{
-						Status:  doctor.StatusPass,
-						Detail:  "(skills installed)",
-						Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+						Status:  doctor.StatusWarning,
+						Detail:  "(skills not installed)",
+						Hint:    fmt.Sprintf("Run `infracost agent setup` to install skills for %s", a.name),
+						Verbose: verbose,
+					}
+				}
+
+				// Installed — compare against the latest version when we can.
+				if a.version != nil && latest != "" {
+					if v, verr := a.version(bin); verr == nil && v != "" {
+						verbose = append(verbose, fmt.Sprintf("skill version: %s (latest %s)", v, latest))
+						if isSkillStale(v, latest) {
+							return doctor.Result{
+								Status:  doctor.StatusWarning,
+								Detail:  fmt.Sprintf("(skill %s → %s)", v, latest),
+								Hint:    fmt.Sprintf("Run `infracost agent setup` to upgrade %s", a.name),
+								Verbose: verbose,
+							}
+						}
+						return doctor.Result{
+							Status:  doctor.StatusPass,
+							Detail:  fmt.Sprintf("(skills installed, %s)", v),
+							Verbose: verbose,
+						}
 					}
 				}
 				return doctor.Result{
-					Status:  doctor.StatusWarning,
-					Detail:  "(skills not installed)",
-					Hint:    fmt.Sprintf("Run `infracost agent setup` to install skills for %s", a.name),
-					Verbose: []string{fmt.Sprintf("binary: %s", bin)},
+					Status:  doctor.StatusPass,
+					Detail:  "(skills installed)",
+					Verbose: verbose,
 				}
 			},
 		})

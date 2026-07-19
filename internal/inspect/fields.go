@@ -13,6 +13,14 @@ var (
 	fieldsTopSavings        = []string{"address", "policy", "policy_slug", "project", "monthly_savings", "description"}
 	fieldsFilteredResources = []string{"address", "type", "project", "monthly_cost", "is_free"}
 
+	// Human defaults trim the machine-oriented columns from the tables a
+	// person reads when they don't pass --fields. The full sets above stay
+	// selectable via --fields and unchanged for --json/--llm.
+	//   policy_slug — a machine key that duplicates the human policy name.
+	//   is_free     — redundant with a $0 monthly_cost for a reader.
+	fieldsTopSavingsHuman        = []string{"address", "policy", "project", "monthly_savings", "description"}
+	fieldsFilteredResourcesHuman = []string{"address", "type", "project", "monthly_cost"}
+
 	// Summary fields are the scalar metrics on Summary. Lists like
 	// project_details / failing_policy_list aren't projectable here —
 	// they need a dedicated view with --fields support of their own.
@@ -55,24 +63,6 @@ func validateFields(requested, available []string) ([]string, error) {
 		out = append(out, f)
 	}
 	return out, nil
-}
-
-// projectRow projects a single record (represented as a map of all
-// available fields → values) into the user-requested column order. Used
-// by the writers that need to emit tabular text or structured rows.
-func projectRow(row map[string]string, fields []string) []string {
-	out := make([]string, 0, len(fields))
-	for _, f := range fields {
-		out = append(out, row[f])
-	}
-	return out
-}
-
-// writeTSVHeader prints a tab-separated header row for the given fields.
-// Used by views that emit one record per line in human-readable mode
-// when --fields is set (so the columns are unambiguous).
-func tsvHeader(fields []string) string {
-	return strings.Join(fields, "\t")
 }
 
 // effectiveFields normalizes the requested field list against an

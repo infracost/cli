@@ -1,16 +1,19 @@
 package scanner
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	repoconfig "github.com/infracost/config"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
-	"github.com/stretchr/testify/require"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
 	"github.com/infracost/proto/gen/go/infracost/provider"
+	treepb "github.com/infracost/proto/gen/go/infracost/tree"
 	"github.com/infracost/proto/gen/go/infracost/usage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMatchProductionFilter(t *testing.T) {
@@ -140,6 +143,38 @@ func TestGetRequiredProviders(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetRequiredProvidersFromTreeSorted(t *testing.T) {
+	got := GetRequiredProvidersFromTree(&treepb.Tree{Providers: map[string]*treepb.Provider{
+		"google":  {},
+		"azurerm": {},
+		"aws":     {},
+	}})
+
+	require.Equal(t, []provider.Provider{
+		provider.Provider_PROVIDER_AWS,
+		provider.Provider_PROVIDER_GOOGLE,
+		provider.Provider_PROVIDER_AZURERM,
+	}, got)
+}
+
+func TestNamingPolicyAttributeRequirements(t *testing.T) {
+	policies := []*event.FinopsPolicySettings{
+		{
+			Settings: `{"attributeValidationRules":["aws_instance.tags.Name: /^prod-/", "aws_instance.instance_type: /^m/", "bad rule"]}`,
+		},
+		{
+			Settings: `{"attributeValidationRules":["aws_s3_bucket.bucket: /^logs-/"]}`,
+		},
+	}
+
+	got := namingPolicyAttributeRequirements(policies)
+	require.Len(t, got, 2)
+	require.Equal(t, "aws_instance", got[0].ResourceType)
+	require.Equal(t, []string{"instance_type", "tags.Name"}, got[0].Attributes)
+	require.Equal(t, "aws_s3_bucket", got[1].ResourceType)
+	require.Equal(t, []string{"bucket"}, got[1].Attributes)
 }
 
 func TestCountUsage(t *testing.T) {
@@ -423,11 +458,11 @@ projects:
   - path: .
     name: my-project
 `
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -446,11 +481,11 @@ projects:
   - path: .
     name: from-template
 `
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -474,14 +509,14 @@ projects:
   - path: .
     name: from-template
 `
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -493,7 +528,7 @@ projects:
 	t.Run("auto-generates config for empty directory", func(t *testing.T) {
 		dir := t.TempDir()
 
-		cfg, err := LoadOrGenerateRepositoryConfig(dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -507,7 +542,7 @@ func TestFileExists(t *testing.T) {
 	t.Run("existing file", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "test.txt")
-		if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+		if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if !fileExists(path) {
@@ -526,5 +561,79 @@ func TestFileExists(t *testing.T) {
 		if fileExists(dir) {
 			t.Error("expected directory to return false")
 		}
+	})
+}
+
+func TestArmRawOptions(t *testing.T) {
+	t.Run("no azure context returns nil", func(t *testing.T) {
+		blob, err := armRawOptions(&repoconfig.Project{})
+		require.NoError(t, err)
+		require.Nil(t, blob, "expected nil raw options when no azure context is configured")
+	})
+
+	t.Run("azure context is forwarded as azureContext JSON", func(t *testing.T) {
+		project := &repoconfig.Project{
+			Azure: repoconfig.ProjectAzureConfig{
+				SubscriptionID:    "sub-123",
+				TenantID:          "tenant-456",
+				ResourceGroupName: "my-rg",
+				Location:          "westeurope",
+				ManagementGroupID: "my-mg",
+			},
+		}
+
+		blob, err := armRawOptions(project)
+		require.NoError(t, err)
+		require.NotNil(t, blob)
+
+		var decoded struct {
+			AzureContext struct {
+				SubscriptionID    string `json:"subscriptionId"`
+				TenantID          string `json:"tenantId"`
+				ResourceGroupName string `json:"resourceGroupName"`
+				Location          string `json:"location"`
+				ManagementGroupID string `json:"managementGroupId"`
+			} `json:"azureContext"`
+		}
+		require.NoError(t, json.Unmarshal(blob, &decoded))
+		require.Equal(t, "sub-123", decoded.AzureContext.SubscriptionID)
+		require.Equal(t, "tenant-456", decoded.AzureContext.TenantID)
+		require.Equal(t, "my-rg", decoded.AzureContext.ResourceGroupName)
+		require.Equal(t, "westeurope", decoded.AzureContext.Location)
+		require.Equal(t, "my-mg", decoded.AzureContext.ManagementGroupID)
+	})
+
+	t.Run("partial azure context omits empty fields", func(t *testing.T) {
+		blob, err := armRawOptions(&repoconfig.Project{
+			Azure: repoconfig.ProjectAzureConfig{Location: "eastus"},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, blob)
+		require.Contains(t, string(blob), `"location":"eastus"`)
+		require.NotContains(t, string(blob), "subscriptionId")
+	})
+}
+
+func TestBuildIaCOptionsARM(t *testing.T) {
+	t.Run("arm project routes through armRawOptions", func(t *testing.T) {
+		opts := &ScanProjectOptions{
+			Project: &repoconfig.Project{
+				Type:  repoconfig.ProjectTypeARM,
+				Azure: repoconfig.ProjectAzureConfig{Location: "eastus"},
+			},
+		}
+		blob, err := buildIaCOptions(opts, repoconfig.ProjectTypeARM, nil)
+		require.NoError(t, err)
+		require.NotNil(t, blob)
+		require.Contains(t, string(blob), "azureContext")
+	})
+
+	t.Run("arm project with no azure context sends nil options", func(t *testing.T) {
+		opts := &ScanProjectOptions{
+			Project: &repoconfig.Project{Type: repoconfig.ProjectTypeARM},
+		}
+		blob, err := buildIaCOptions(opts, repoconfig.ProjectTypeARM, nil)
+		require.NoError(t, err)
+		require.Nil(t, blob)
 	})
 }

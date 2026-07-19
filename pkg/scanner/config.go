@@ -1,11 +1,11 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	repoconfig "github.com/infracost/config"
 	"github.com/infracost/proto/gen/go/infracost/usage"
@@ -25,16 +25,10 @@ func LoadUsageData(r io.Reader, defaults *usage.Usage) (*usage.Usage, error) {
 // LoadOrGenerateRepositoryConfig loads an infracost.yml config from the given directory,
 // or generates one if it doesn't exist. If an infracost.yml.tmpl template exists, it is
 // used as the basis for generation.
-func LoadOrGenerateRepositoryConfig(dir string, opts ...repoconfig.GenerationOption) (*repoconfig.Config, error) {
-	env := make(map[string]string, len(os.Environ()))
-	for _, kv := range os.Environ() {
-		key, val, _ := strings.Cut(kv, "=")
-		env[key] = val
-	}
-
+func LoadOrGenerateRepositoryConfig(ctx context.Context, dir string, opts ...repoconfig.GenerationOption) (*repoconfig.Config, error) {
 	configPath := filepath.Join(dir, RepoConfigFilename)
 	if fileExists(configPath) {
-		c, err := repoconfig.LoadConfigFile(configPath, dir, env)
+		c, err := repoconfig.LoadConfigFile(configPath, dir)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %w", err)
 		}
@@ -43,7 +37,9 @@ func LoadOrGenerateRepositoryConfig(dir string, opts ...repoconfig.GenerationOpt
 
 	opts = append(
 		opts,
-		repoconfig.WithEnvVars(env),
+		repoconfig.WithIgnorePermissionErrors(true),
+		repoconfig.WithIgnoreHiddenDirs(true),
+		repoconfig.WithSkipCDK(true),
 	)
 
 	templatePath := filepath.Join(dir, RepoConfigTemplateFilename)
@@ -55,7 +51,7 @@ func LoadOrGenerateRepositoryConfig(dir string, opts ...repoconfig.GenerationOpt
 		opts = append(opts, repoconfig.WithTemplate(string(content)))
 	}
 
-	c, err := repoconfig.Generate(dir, opts...)
+	c, err := repoconfig.Generate(ctx, dir, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate config: %w", err)
 	}

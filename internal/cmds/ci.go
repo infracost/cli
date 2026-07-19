@@ -22,7 +22,7 @@ import (
 )
 
 // actionsRef is the pinned commit SHA for the infracost/actions composite actions.
-const actionsRef = "a1f1aab438c2d0e642e7cd596a1c8750c7c75a5e"
+const actionsRef = "c2e668fda0716ccc96353c6e6438c4a20448821a"
 
 type repoInfo struct {
 	owner string
@@ -487,14 +487,14 @@ jobs:
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_PR_NUMBER: ${{ inputs.pr-number }}
           PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          if [ -n "${{ inputs.pr-number }}" ]; then
+          if [ -n "$INPUT_PR_NUMBER" ]; then
             BASE_REF=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName -q .baseRefName)
             HEAD_REF=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)
-          else
-            BASE_REF="${{ github.event.pull_request.base.ref }}"
-            HEAD_REF="${{ github.event.pull_request.head.ref }}"
           fi
           echo "base-ref=${BASE_REF}" >> $GITHUB_OUTPUT
           echo "head-ref=${HEAD_REF}" >> $GITHUB_OUTPUT

@@ -16,14 +16,21 @@ type CachedOrganization struct {
 	Name  string   `json:"name"`
 	Slug  string   `json:"slug"`
 	Roles []string `json:"roles,omitempty"`
+	// AgentsEnabled mirrors the dashboard's per-org agentsEnabled flag so the
+	// Agents commands / MCP tools can gate without an extra API call.
+	AgentsEnabled bool `json:"agentsEnabled,omitempty"`
 }
 
 // UserCache stores the current user's identity and organization memberships.
 // It is populated on login and used to resolve --org flag values without an API call.
 type UserCache struct {
-	ID            string               `json:"id"`
-	Name          string               `json:"name"`
-	Email         string               `json:"email"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	// AgentsEnabled mirrors the dashboard's user-level agentsEnabled flag. When
+	// true, Agents is enabled regardless of which org is active; otherwise the
+	// gate falls back to the active org's CachedOrganization.AgentsEnabled.
+	AgentsEnabled bool                 `json:"agentsEnabled,omitempty"`
 	Organizations []CachedOrganization `json:"organizations"`
 	SelectedOrgID string               `json:"selectedOrgId,omitempty"`
 	UpdatedAt     time.Time            `json:"updatedAt"`

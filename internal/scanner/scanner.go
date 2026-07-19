@@ -6,10 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
-	"github.com/hashicorp/go-hclog"
 	"github.com/infracost/cli/internal/api/dashboard"
+	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/trace"
 	"github.com/infracost/cli/pkg/logging"
@@ -18,6 +17,7 @@ import (
 	repoconfig "github.com/infracost/config"
 	goprotoevent "github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
+	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -50,7 +50,28 @@ type TaggingPolicy struct {
 	*event.TagPolicy
 }
 
-func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters, providers []provider.Provider) ([]FinOpsPolicy, []TaggingPolicy, error) {
+// applyFeatureFlags reads the per-org feature flags returned in the run
+// parameters and applies the ones the CLI acts on to the plugin config.
+// Currently this gates the Kubernetes plugins on enableK8sPlugins. It must run
+// before any plugin is loaded so the manager knows whether to download and load
+// them (EnsurePlugins builds the Manager once and memoizes it).
+func (s *Scanner) applyFeatureFlags(runParameters *dashboard.RunParameters) error {
+	if runParameters == nil || len(runParameters.FeatureFlags) == 0 {
+		return nil
+	}
+	flags := new(event.FeatureFlags)
+	if err := pj.Unmarshal(runParameters.FeatureFlags, flags); err != nil {
+		return fmt.Errorf("failed to unmarshal feature flags: %w", err)
+	}
+	s.Plugins.EnableK8sPlugins = flags.GetEnableK8SPlugins()
+	return nil
+}
+
+func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters, providerFilter []string) ([]FinOpsPolicy, []TaggingPolicy, error) {
+	if err := s.applyFeatureFlags(runParameters); err != nil {
+		return nil, nil, err
+	}
+
 	var tagPolicies []*event.TagPolicy
 	var finopsPolicySettings []*event.FinopsPolicySettings
 	var hasRunParameters bool
@@ -77,41 +98,42 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 		hasRunParameters = true
 	}
 
-	pluginLoaders := map[provider.Provider]func(hclog.Level) (provider.ProviderServiceClient, func(), error){
-		provider.Provider_PROVIDER_AWS:     s.Plugins.Providers.LoadAWS,
-		provider.Provider_PROVIDER_GOOGLE:  s.Plugins.Providers.LoadGoogle,
-		provider.Provider_PROVIDER_AZURERM: s.Plugins.Providers.LoadAzurerm,
+	// Bypass the dashboard policy filter so every locally-available policy is
+	// listed — used to develop policies before they're registered upstream.
+	if os.Getenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES") != "" {
+		hasRunParameters = false
 	}
 
-	if providers == nil {
-		providers = []provider.Provider{
-			provider.Provider_PROVIDER_AWS,
-			provider.Provider_PROVIDER_GOOGLE,
-			provider.Provider_PROVIDER_AZURERM,
-		}
+	providerPlugins, err := s.Plugins.ProviderPlugins(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load provider plugins: %w", err)
+	}
+
+	wantProvider := make(map[string]struct{}, len(providerFilter))
+	for _, name := range providerFilter {
+		wantProvider[name] = struct{}{}
 	}
 
 	var finOpsPolicies []FinOpsPolicy
-	for _, prov := range providers {
-		pluginLoader, ok := pluginLoaders[prov]
-		if !ok {
-			continue
+	for _, p := range providerPlugins {
+		providerName := p.Info.GetName()
+		if len(wantProvider) > 0 {
+			if _, ok := wantProvider[providerName]; !ok {
+				continue
+			}
 		}
-		if err := s.Plugins.EnsureProvider(prov); err != nil {
-			logging.WithError(err).Msgf("failed to ensure provider %s", prov)
-			continue
-		}
-		providerFinopsPolicies, err := s.Plugins.Providers.ListFinopsPolicies(ctx, pluginLoader)
+
+		resp, err := p.ListFinopsPolicies(ctx, &pluginpb.ListFinopsPoliciesRequest{})
 		if err != nil {
-			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", prov)
+			logging.WithError(err).Msgf("failed to list FinOps policies for provider %s", providerName)
 			continue
 		}
-		for _, policy := range providerFinopsPolicies {
+		for _, policy := range resp.GetPolicies() {
 			var settings *event.FinopsPolicySettings
 			if hasRunParameters {
 				var enabled bool
 				for _, s := range finopsPolicySettings {
-					if s.Slug == policy.Slug {
+					if s.Slug == policy.GetSlug() {
 						enabled = true
 						settings = s
 						break
@@ -122,9 +144,15 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 				}
 			}
 			finOpsPolicies = append(finOpsPolicies, FinOpsPolicy{
-				FinopsPolicy: policy,
-				Settings:     settings,
-				Provider:     strings.TrimPrefix(prov.String(), "PROVIDER_"),
+				FinopsPolicy: &provider.FinopsPolicy{
+					Slug:             policy.GetSlug(),
+					Name:             policy.GetName(),
+					Group:            policy.GetGroup(),
+					Description:      policy.GetDescription(),
+					OnlyNewResources: policy.GetOnlyNewResources(),
+				},
+				Settings: settings,
+				Provider: providerName,
 			})
 		}
 	}
@@ -150,12 +178,13 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 	return finOpsPolicies, outputTagPolicies, nil
 }
 
-func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absoluteDirectory, branchName string, tokenSource oauth2.TokenSource) (*format.Result, error) {
+func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absolutePath, branchName string, tokenSource oauth2.TokenSource) (*format.Result, error) {
 	var result format.Result
 
-	token, err := tokenSource.Token()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve access token: %w", err)
+	// Apply run-parameter feature flags (e.g. the Kubernetes plugin gate) before
+	// EnsurePlugins loads any plugins below.
+	if err := s.applyFeatureFlags(&runParameters); err != nil {
+		return nil, err
 	}
 
 	repositoryName := runParameters.RepositoryName
@@ -176,10 +205,50 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		repoConfigOpts = append(repoConfigOpts, repoconfig.WithTemplate(runParameters.ConfigTemplate))
 	}
 
-	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(absoluteDirectory, repoConfigOpts...)
+	repoConfigOpts = append(repoConfigOpts, repoconfig.WithPluginDir(s.Plugins.PluginDir()))
+
+	// Ensure required plugins are installed before generating the repo
+	// config — autodetection delegates to plugin identifiers, so a missing
+	// binary means its file types (e.g. terraform plan JSON) won't be
+	// recognized.
+	if _, err := s.Plugins.EnsurePlugins(); err != nil {
+		return nil, fmt.Errorf("failed to install plugins: %w", err)
+	}
+
+	stat, err := os.Stat(absolutePath)
+	if err != nil {
+		return nil, err
+	}
+	isFileMode := !stat.IsDir()
+	absoluteDirectory := absolutePath
+	if isFileMode {
+		absoluteDirectory = filepath.Dir(absolutePath)
+		// no point searching recursively if we know the file w're looking at
+		repoConfigOpts = append(repoConfigOpts, repoconfig.WithMaxSearchDepth(1))
+		repoConfigOpts = append(repoConfigOpts, repoconfig.WithSingleFileMode(true))
+
+	}
+
+	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(ctx, absoluteDirectory, repoConfigOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("repository configuration error: %w", err)
 	}
+
+	if isFileMode {
+		// if we're scanning a single file, filter the repo config to only include the project that matches that file
+		var filtered []*repoconfig.Project
+		for _, candidate := range repoConfig.Projects {
+			candidatePath := filepath.Join(absoluteDirectory, candidate.Path)
+			if absolutePath == candidatePath {
+				filtered = append(filtered, candidate)
+			}
+		}
+		if len(filtered) == 0 {
+			return nil, fmt.Errorf("file at %q is not a recognized scannable type", absolutePath)
+		}
+		repoConfig.Projects = filtered
+	}
+
 	result.Config = repoConfig
 	if s.Currency != "" {
 		result.Config.Currency = s.Currency
@@ -226,42 +295,32 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		tagPolicies = append(tagPolicies, policy)
 	}
 
-	finopsPolicies := make([]*event.FinopsPolicySettings, 0, len(runParameters.FinopsPolicies))
-	for _, p := range runParameters.FinopsPolicies {
-		policy := new(event.FinopsPolicySettings)
-		if err := pj.Unmarshal(p, policy); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal FinOps policy: %w", err)
+	var finopsPolicies []*event.FinopsPolicySettings
+	if os.Getenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES") == "" {
+		finopsPolicies = make([]*event.FinopsPolicySettings, 0, len(runParameters.FinopsPolicies))
+		for _, p := range runParameters.FinopsPolicies {
+			policy := new(event.FinopsPolicySettings)
+			if err := pj.Unmarshal(p, policy); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal FinOps policy: %w", err)
+			}
+			finopsPolicies = append(finopsPolicies, policy)
 		}
-		finopsPolicies = append(finopsPolicies, policy)
 	}
 
-	cacheDir := filepath.Join(os.TempDir(), ".infracost", "cache")
+	cacheDir := cache.ParserDir()
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
-		return nil, fmt.Errorf("failed to create cache directory: %w", err)
+		return nil, fmt.Errorf("failed to create parser cache directory: %w", err)
 	}
 
-	// Populate the parser's ARM supported-resource set from the
-	// Azurerm provider plugin once per scan, when any project in the
-	// run is ARM-typed. Without this the parser defaults to
-	// "everything supported" and ARM types the providers binary
-	// doesn't handle get silently dropped on the providers
-	// translator's unhandled-fallthrough.
-	if hasARMProject(repoConfig.Projects) {
-		if err := s.populateARMSupportedResources(ctx); err != nil {
-			// Non-fatal: scan can still proceed with the parser's
-			// supported-by-default behaviour; only the
-			// silently-dropped-as-unsupported quirk persists.
-			logging.WithError(err).Msg("failed to fetch ARM supported resources from Azurerm provider plugin; falling back to parser defaults")
-		}
-	}
-
+	logging.Debugf("autodetect discovered %d project(s) under %q", len(repoConfig.Projects), absoluteDirectory)
 	for _, project := range repoConfig.Projects {
+		logging.Debugf("scanning project name=%q path=%q type=%q env=%q deps=%v", project.Name, project.Path, project.Type, project.Env, project.DependencyPaths)
 		projectResult, err := pkgscanner.ScanProject(ctx, &pkgscanner.ScanProjectOptions{
 			RootDir:           absoluteDirectory,
 			CacheDir:          cacheDir,
 			RepoConfig:        repoConfig,
 			Project:           project,
-			AccessToken:       token.AccessToken,
+			TokenSource:       tokenSource,
 			BranchName:        branchName,
 			RepositoryName:    repositoryName,
 			OrgID:             runParameters.OrganizationID,
@@ -278,6 +337,11 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan project %q: %w", project.Name, err)
+		}
+		// A nil result means the project was intentionally skipped (e.g. a
+		// Kubernetes project while the k8s plugins are feature-gated off).
+		if projectResult == nil {
+			continue
 		}
 
 		result.Projects = append(result.Projects, &format.ProjectResult{
@@ -333,31 +397,3 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	return &result, nil
 }
 
-// hasARMProject reports whether any of the autodetect-emitted
-// projects in this scan is ARM-typed. Used to decide whether to load
-// the Azurerm provider plugin early (to call ListSupportedResources)
-// rather than waiting for the post-parse Process step.
-func hasARMProject(projects []*repoconfig.Project) bool {
-	for _, p := range projects {
-		if p.Type == repoconfig.ProjectTypeARM {
-			return true
-		}
-	}
-	return false
-}
-
-// populateARMSupportedResources ensures the Azurerm provider plugin
-// is on disk, spawns it, asks for its supported set, and stashes the
-// ARM slice on the parser plugin config. parseARM picks it up and
-// passes it through InitializeRequest before each parse.
-func (s *Scanner) populateARMSupportedResources(ctx context.Context) error {
-	if err := s.Plugins.EnsureProvider(provider.Provider_PROVIDER_AZURERM); err != nil {
-		return fmt.Errorf("failed to ensure Azurerm provider plugin: %w", err)
-	}
-	supp, err := s.Plugins.Providers.ARMSupportedResources(ctx, s.Plugins.Providers.LoadAzurerm)
-	if err != nil {
-		return fmt.Errorf("failed to query Azurerm provider plugin for supported resources: %w", err)
-	}
-	s.Plugins.Parser.SupportedARMResources = supp
-	return nil
-}
