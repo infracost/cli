@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -69,8 +70,9 @@ type ScanProjectOptions struct {
 	RepoUsage                 *usage.Usage
 	PreviousResourceAddresses []string
 
-	Plugins *plugins.Config
-	Logging logging.Config
+	Plugins       *plugins.Config
+	Logging       logging.Config
+	PluginOptions map[string]map[string]any
 }
 
 // ScanProject scans a single project and returns its resources, costs, and policy results.
@@ -114,8 +116,17 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		return nil, nil
 	}
 
+	overrides := make(map[string]any)
+	if opts.PluginOptions != nil {
+		for _, key := range []string{string(projectType), parserPlugin.Info.GetName(), strings.TrimPrefix(parserPlugin.Info.GetName(), "infracost/")} {
+			if values, ok := opts.PluginOptions[key]; ok {
+				maps.Copy(overrides, values)
+			}
+		}
+	}
+
 	genericOptions := buildGenericOptions(opts)
-	rawOptions, err := buildIaCOptions(opts, projectType, genericOptions)
+	rawOptions, err := buildIaCOptions(opts, projectType, genericOptions, overrides)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build parser plugin options: %w", err)
 	}
@@ -317,30 +328,37 @@ func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
 // folds hand-written / older configs into them on load), so they are forwarded verbatim. The
 // caller-sourced runtime options are written into the typed GenericOptions fields, which the latest
 // plugins read in preference to the blob - so they are never duplicated into the blob.
-func buildIaCOptions(opts *ScanProjectOptions, projectType repoconfig.ProjectType, genericOptions *options.GenericOptions) ([]byte, error) {
+func buildIaCOptions(opts *ScanProjectOptions, projectType repoconfig.ProjectType, genericOptions *options.GenericOptions, overrides map[string]any) ([]byte, error) {
 	switch projectType {
 	case repoconfig.ProjectTypeTerraform, repoconfig.ProjectTypeTerragrunt, repoconfig.ProjectTypeCiscoStacks:
 		if genericOptions != nil {
 			genericOptions.Env = opts.Project.Env
 			genericOptions.RequiredAttributes = protoAttributeRequirements(namingPolicyAttributeRequirements(opts.FinopsPolicies))
 		}
-		return pluginBlobJSON(opts.Project, string(projectType))
+		return pluginBlobJSON(opts.Project, string(projectType), overrides)
 	case repoconfig.ProjectTypeCloudFormation:
 		// cdk_* projects resolve to cloudformation (see finalProjectType) and the config keys their
 		// blob under cloudformation too.
-		return pluginBlobJSON(opts.Project, string(repoconfig.ProjectTypeCloudFormation))
+		return pluginBlobJSON(opts.Project, string(repoconfig.ProjectTypeCloudFormation), overrides)
 	default:
+		if len(overrides) > 0 {
+			return json.Marshal(overrides) // send the overrides as a blob even when the project type is unknown
+		}
 		return nil, nil
 	}
 }
 
 // pluginBlobJSON marshals the project's persisted plugins.<key> blob (keyed by the consuming plugin)
 // as JSON, returning nil when there is no blob for that key.
-func pluginBlobJSON(project *repoconfig.Project, key string) ([]byte, error) {
+func pluginBlobJSON(project *repoconfig.Project, key string, overrides map[string]any) ([]byte, error) {
 	blob := project.Plugins[key]
-	if len(blob) == 0 {
-		return nil, nil
+	if blob == nil {
+		if len(overrides) == 0 {
+			return nil, nil
+		}
+		return json.Marshal(overrides)
 	}
+	maps.Copy(blob, overrides)
 	return json.Marshal(blob)
 }
 

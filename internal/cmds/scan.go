@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/infracost/cli/internal/api"
@@ -55,7 +56,7 @@ type ScanResult = *format.Output
 // CLI text output from --json / --llm scrapes and from MCP tool
 // calls. It is deliberately a separate parameter, not a ScanInput
 // field, so MCP tool callers cannot impersonate the CLI.
-func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, store cache.Store, in ScanInput, outputFormat string) (ScanResult, error) {
+func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, store cache.Store, in ScanInput, outputFormat string, pluginOpts map[string]map[string]any) (ScanResult, error) {
 	target := in.Path
 	if target == "" {
 		target = "."
@@ -116,7 +117,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		PricingEndpoint: cfg.PricingEndpoint,
 	}
 	startTime := time.Now()
-	result, err := s.Scan(ctx, runParameters, absolutePath, branchName, source)
+	result, err := s.Scan(ctx, runParameters, absolutePath, branchName, source, pluginOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan target: %w", err)
 	}
@@ -159,6 +160,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 func ScanCmd(cfg *config.Config) *cobra.Command {
 	var in ScanInput
 	var includeWarnings bool
+	var options []string
 	cmd := &cobra.Command{
 		Use:   "scan [path]",
 		Short: "Scan your IaC and derive FinOps costs and policy violations",
@@ -179,6 +181,12 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 			if len(args) > 0 {
 				in.Path = args[0]
 			}
+
+			pluginOptionMap, err := parsePluginOptions(options)
+			if err != nil {
+				return err
+			}
+
 			// Currency on the CLI comes from --currency (env-bound on
 			// cfg). Threading it through ScanInput keeps the pure
 			// function agnostic of cfg.Currency so the MCP can supply
@@ -231,7 +239,7 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 			var result ScanResult
 			if err := ui.RunWithSpinnerErr(cmd.Context(), "Scanning...", "Scan complete", func(ctx context.Context) error {
 				var scanErr error
-				result, scanErr = Scan(ctx, cfg, source, &cfg.Cache, in, outputFormat)
+				result, scanErr = Scan(ctx, cfg, source, &cfg.Cache, in, outputFormat, pluginOptionMap)
 				return scanErr
 			}); err != nil {
 				return err
@@ -242,8 +250,54 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 
 	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
 	cmd.Flags().BoolVar(&includeWarnings, "include-warnings", false, "Also show warning-severity diagnostics in the summary")
+	cmd.Flags().StringArrayVarP(&options, "option", "o", options, "Specify a plugin-specific option e.g. -o infracost/terraform.option=yes")
 
 	return cmd
+}
+
+// parsePluginOptions turns repeated --option/-o flags into a nested blob keyed
+// by plugin name, e.g. "terraform.sourceMap.http=https" becomes
+// {"terraform": {"sourceMap": {"http": "https"}}}. Dots delimit nesting and an
+// option without "=" is treated as the boolean true (e.g. "-o terraform.foo").
+// The exact keys accepted are plugin-specific; see the relevant plugin's docs.
+func parsePluginOptions(options []string) (map[string]map[string]any, error) {
+	pluginOptionMap := make(map[string]map[string]any)
+	for _, option := range options {
+		var rawVal any = true
+		key, value, ok := strings.Cut(option, "=")
+		if ok {
+			rawVal = value
+		}
+
+		keyParts := strings.Split(key, ".")
+		plugin := keyParts[0]
+		keyParts = keyParts[1:]
+
+		if len(keyParts) == 0 {
+			return nil, fmt.Errorf("option %s is missing a key", option)
+		}
+
+		if pluginOptionMap[plugin] == nil {
+			pluginOptionMap[plugin] = make(map[string]any)
+		}
+
+		target := pluginOptionMap[plugin]
+		for i, part := range keyParts {
+			if i == len(keyParts)-1 {
+				// Last part, set the value
+				target[part] = rawVal
+				break
+			}
+			if existing, ok := target[part]; !ok {
+				target[part] = make(map[string]any)
+			} else if _, ok := existing.(map[string]any); !ok {
+				return nil, fmt.Errorf("option %s is not a map, cannot set %s", strings.Join(keyParts[:i+1], "."), strings.Join(keyParts[i+1:], "."))
+			}
+
+			target = target[part].(map[string]any)
+		}
+	}
+	return pluginOptionMap, nil
 }
 
 func scanRenderers(includeWarnings bool) Renderers[ScanResult] {

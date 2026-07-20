@@ -403,7 +403,7 @@ func TestScan(t *testing.T) {
 
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -438,7 +438,7 @@ projects:
 		tokenSource := &sequenceTokenSource{tokens: []string{"token-1", "token-2"}}
 		_, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", tokenSource)
+		}, dir, "main", tokenSource, nil)
 		require.NoError(t, err)
 		// The token source is consulted once per project; each project's
 		// token is then reused across all 3 provider plugins, giving 6
@@ -470,7 +470,7 @@ resource_type_default_usage:
 
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -497,7 +497,7 @@ projects:
 
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -525,7 +525,7 @@ projects:
 
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -552,7 +552,7 @@ projects:
 
 		_, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err == nil {
 			t.Fatal("expected error for nil parse result")
 		}
@@ -572,7 +572,7 @@ projects:
 
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -596,7 +596,7 @@ projects:
 
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -639,7 +639,7 @@ projects:
 		_, err = s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults:     emptyUsageDefaults(t),
 			ProductionFilters: []json.RawMessage{filterJSON},
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -672,7 +672,7 @@ projects:
 		_, err = s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults:     emptyUsageDefaults(t),
 			ProductionFilters: []json.RawMessage{filterJSON},
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -710,7 +710,7 @@ projects:
 		_, err = s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults:  emptyUsageDefaults(t),
 			FinopsPolicies: []json.RawMessage{policyJSON},
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -746,7 +746,7 @@ projects:
 		_, err = s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults:  emptyUsageDefaults(t),
 			FinopsPolicies: []json.RawMessage{policyJSON},
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -795,7 +795,7 @@ projects:
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
 			TagPolicies:   []json.RawMessage{tagJSON},
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -851,7 +851,7 @@ projects:
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
 			TagPolicies:   []json.RawMessage{tagJSON},
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -905,7 +905,7 @@ projects:
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
 			Budgets:       []json.RawMessage{budgetJSON},
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -926,7 +926,7 @@ projects:
 
 		result, err := s.Scan(context.Background(), dashboard.RunParameters{
 			UsageDefaults: emptyUsageDefaults(t),
-		}, dir, "main", auth.AuthenticationToken("test-token"))
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

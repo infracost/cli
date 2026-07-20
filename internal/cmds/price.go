@@ -93,7 +93,7 @@ func Price(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, s
 		PricingEndpoint: cfg.PricingEndpoint,
 	}
 	startTime := time.Now()
-	result, err := s.Scan(ctx, runParameters, dir, branchName, source)
+	result, err := s.Scan(ctx, runParameters, dir, branchName, source, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan target: %w", err)
 	}
