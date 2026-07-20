@@ -107,24 +107,25 @@ func (m *Manager) Dir() string { return m.opts.Dir }
 
 // EnsureInstalled downloads and installs any required plugins that aren't
 // already present in the cache directory. It is a no-op when SkipInstall is
-// set.
-func (m *Manager) EnsureInstalled() error {
+// set. The context bounds the metadata/archive downloads and lets a caller
+// cancel a slow install.
+func (m *Manager) EnsureInstalled(ctx context.Context) error {
 	m.installMu.Lock()
 	defer m.installMu.Unlock()
 
 	m.installOnce.Do(func() {
-		m.installErr = m.ensureInstalled()
+		m.installErr = m.ensureInstalled(ctx)
 	})
 	return m.installErr
 }
 
-func (m *Manager) ensureInstalled() error {
+func (m *Manager) ensureInstalled(ctx context.Context) error {
 	if m.opts.SkipInstall {
 		return nil
 	}
 	m.removeLegacyPlugins()
 	for _, required := range requiredPlugins {
-		if _, err := m.Install(required.Name, requiredPluginVersion(required.Key)); err != nil {
+		if _, err := m.Install(ctx, required.Name, requiredPluginVersion(required.Key)); err != nil {
 			return err
 		}
 	}
