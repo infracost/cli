@@ -212,7 +212,7 @@ func TestDownloadAndVerify(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		path, err := downloadAndVerify(srv.URL, correctSHA)
+		path, err := downloadAndVerify(context.Background(), srv.URL, correctSHA)
 		require.NoError(t, err)
 		defer func() { _ = os.Remove(path) }()
 
@@ -227,7 +227,7 @@ func TestDownloadAndVerify(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		path, err := downloadAndVerify(srv.URL, "0000000000000000000000000000000000000000000000000000000000000000")
+		path, err := downloadAndVerify(context.Background(), srv.URL, "0000000000000000000000000000000000000000000000000000000000000000")
 		if path != "" {
 			defer func() { _ = os.Remove(path) }()
 		}
@@ -240,7 +240,7 @@ func TestDownloadAndVerify(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		path, err := downloadAndVerify(srv.URL, "")
+		path, err := downloadAndVerify(context.Background(), srv.URL, "")
 		require.NoError(t, err)
 		defer func() { _ = os.Remove(path) }()
 
@@ -255,7 +255,7 @@ func TestDownloadAndVerify(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		path, err := downloadAndVerify(srv.URL, "")
+		path, err := downloadAndVerify(context.Background(), srv.URL, "")
 		if path != "" {
 			defer func() { _ = os.Remove(path) }()
 		}
@@ -275,7 +275,7 @@ func TestFetchSHA256(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		got, err := fetchSHA256(srv.URL)
+		got, err := fetchSHA256(context.Background(), srv.URL)
 		require.NoError(t, err)
 		assert.Equal(t, "abc123", got)
 	})
@@ -286,7 +286,7 @@ func TestFetchSHA256(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		_, err := fetchSHA256(srv.URL)
+		_, err := fetchSHA256(context.Background(), srv.URL)
 		assert.ErrorContains(t, err, "unexpected HTTP status")
 	})
 
@@ -294,7 +294,7 @@ func TestFetchSHA256(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 		defer srv.Close()
 
-		_, err := fetchSHA256(srv.URL)
+		_, err := fetchSHA256(context.Background(), srv.URL)
 		assert.ErrorContains(t, err, "empty checksum response")
 	})
 }
@@ -319,7 +319,7 @@ func TestInstall(t *testing.T) {
 		m := NewManager(ManagerOptions{Cache: cacheDir, AutoUpdate: true})
 		m.queryInfo = stubInfoFn("1.0.0")
 
-		got, err := m.Install(pluginName, "1.0.0")
+		got, err := m.Install(context.Background(), pluginName, "1.0.0")
 		require.NoError(t, err)
 		assert.Equal(t, binaryPath, got)
 	})
@@ -330,7 +330,7 @@ func TestInstall(t *testing.T) {
 		require.NoError(t, os.WriteFile(binaryPath, pluginContent, 0750))
 
 		m := NewManager(ManagerOptions{Cache: cacheDir, AutoUpdate: false})
-		got, err := m.Install(pluginName, "")
+		got, err := m.Install(context.Background(), pluginName, "")
 		require.NoError(t, err)
 		assert.Equal(t, binaryPath, got)
 	})
@@ -351,7 +351,7 @@ func TestInstall(t *testing.T) {
 		m := NewManager(ManagerOptions{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true})
 		m.queryInfo = stubInfoFn("dev")
 
-		got, err := m.Install(pluginName, "")
+		got, err := m.Install(context.Background(), pluginName, "")
 		require.NoError(t, err)
 		assert.Equal(t, binaryPath, got)
 	})
@@ -383,7 +383,7 @@ func TestInstall(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(cacheDir, pluginName, runtime.GOOS+"_"+runtime.GOARCH, "latest"), 0750))
 
 		m := NewManager(ManagerOptions{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true})
-		got, err := m.Install(pluginName, "")
+		got, err := m.Install(context.Background(), pluginName, "")
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(cacheDir, binaryName), got)
 
@@ -417,7 +417,7 @@ func TestInstall(t *testing.T) {
 
 		cacheDir := t.TempDir()
 		m := NewManager(ManagerOptions{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true})
-		got, err := m.Install(pluginName, "")
+		got, err := m.Install(context.Background(), pluginName, "")
 		require.NoError(t, err)
 
 		expected := filepath.Join(cacheDir, binaryName)
@@ -456,7 +456,7 @@ func TestInstall(t *testing.T) {
 
 		cacheDir := t.TempDir()
 		m := NewManager(ManagerOptions{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true})
-		got, err := m.Install(pluginName, "2.0.0")
+		got, err := m.Install(context.Background(), pluginName, "2.0.0")
 		require.NoError(t, err)
 
 		expected := filepath.Join(cacheDir, binaryName)
@@ -491,7 +491,7 @@ func TestInstall(t *testing.T) {
 		m := NewManager(ManagerOptions{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true})
 		m.queryInfo = stubInfoFn("0.0.1")
 
-		got, err := m.Install(pluginName, "")
+		got, err := m.Install(context.Background(), pluginName, "")
 		require.NoError(t, err)
 		assert.Equal(t, binaryPath, got)
 		assert.Equal(t, 0, checksumFetches)
@@ -505,7 +505,7 @@ func TestInstall(t *testing.T) {
 		defer srv.Close()
 
 		m := NewManager(ManagerOptions{Cache: t.TempDir(), BaseURL: srv.URL, AutoUpdate: true})
-		_, err := m.Install(pluginName, "")
+		_, err := m.Install(context.Background(), pluginName, "")
 		assert.ErrorContains(t, err, "failed to fetch plugin version")
 	})
 }
@@ -515,7 +515,7 @@ func TestEnsureInstalled(t *testing.T) {
 		dir := t.TempDir()
 		c := &Config{Dir: dir, BaseURL: "http://127.0.0.1:1", AutoUpdate: true}
 
-		mgr, err := c.EnsurePlugins()
+		mgr, err := c.EnsurePlugins(context.Background())
 		require.NoError(t, err)
 		require.NotNil(t, mgr)
 	})
@@ -564,7 +564,7 @@ func TestEnsureInstalled(t *testing.T) {
 		// Every required plugin is downloaded unconditionally, including the
 		// feature-gated Kubernetes ones — the gate only affects execution.
 		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
-		_, err := c.EnsurePlugins()
+		_, err := c.EnsurePlugins(context.Background())
 		require.NoError(t, err)
 
 		for _, required := range requiredPlugins {
@@ -572,6 +572,67 @@ func TestEnsureInstalled(t *testing.T) {
 			data, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, []byte(required.Name), data)
+		}
+	})
+}
+
+func TestUpdatePlugins(t *testing.T) {
+	t.Run("plugin dir override returns an error", func(t *testing.T) {
+		c := &Config{Dir: t.TempDir(), BaseURL: "http://127.0.0.1:1"}
+
+		err := c.UpdatePlugins(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "INFRACOST_CLI_PLUGIN_DIR")
+	})
+
+	t.Run("updates all required plugins ignoring AutoUpdate", func(t *testing.T) {
+		archiveName := pluginArchiveName()
+		archiveData := make(map[string][]byte)
+		archiveSHA := make(map[string]string)
+		archiveDir := t.TempDir()
+		for _, required := range requiredPlugins {
+			archivePath := createPluginArchive(t, archiveDir, archiveName+"-"+required.Name, pluginBinaryName(required.Name), []byte(required.Name+"-v2"))
+			data, err := os.ReadFile(archivePath)
+			require.NoError(t, err)
+			archiveData[required.Name] = data
+			archiveSHA[required.Name] = fileSHA256(t, archivePath)
+		}
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+			if len(parts) != 5 || parts[1] != runtime.GOOS || parts[2] != runtime.GOARCH || parts[3] != "latest" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			name := parts[0]
+			if _, ok := archiveData[name]; !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			switch parts[4] {
+			case "version":
+				_, _ = w.Write([]byte("0.0.2\n"))
+			case archiveName + ".sha256":
+				_, _ = w.Write([]byte(archiveSHA[name] + "\n"))
+			case archiveName:
+				_, _ = w.Write(archiveData[name])
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer srv.Close()
+
+		cacheDir := t.TempDir()
+		// AutoUpdate deliberately left false: UpdatePlugins must force it on and
+		// still download every required plugin.
+		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: false}
+		require.NoError(t, c.UpdatePlugins(context.Background()))
+
+		for _, required := range requiredPlugins {
+			path := filepath.Join(cacheDir, pluginBinaryName(required.Name))
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, []byte(required.Name+"-v2"), data)
 		}
 	})
 }

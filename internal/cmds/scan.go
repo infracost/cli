@@ -230,8 +230,8 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 			// their own "Downloaded <plugin> <version>" lines above this one).
 			// Scan() ensures plugins lazily too, but that call is cached so this
 			// is a no-op by the time we scan.
-			if err := ui.RunWithSpinnerErr(cmd.Context(), "Checking plugins are up to date...", "Plugins up to date", func(_ context.Context) error {
-				_, ensureErr := cfg.Plugins.EnsurePlugins()
+			if err := ui.RunWithSpinnerErr(cmd.Context(), "Checking plugins are up to date...", "Plugins up to date", func(ctx context.Context) error {
+				_, ensureErr := cfg.Plugins.EnsurePlugins(ctx)
 				return ensureErr
 			}); err != nil {
 				return err

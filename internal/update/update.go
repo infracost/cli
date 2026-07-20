@@ -90,14 +90,22 @@ func Update(ctx context.Context) error {
 	}
 
 	if info.UpToDate {
-		fmt.Printf("Already up to date (%s).\n", info.Current)
+		ui.Successf("Already up to date (%s).", info.Current)
 		return nil
 	}
 
 	latestVersion, _ := semver.NewVersion(info.Latest)
-	ui.Stepf("Updating %s → v%s...", version.Version, latestVersion)
 
-	return ui.RunWithSpinnerErr(ctx, "Downloading update...", "Download complete", func(ctx context.Context) error {
+	// A single spinner spans the whole update: it starts as "Updating … → …"
+	// and resolves to "Updated to v…" on success. The action must not print to
+	// stdout/stderr directly while the spinner owns the terminal — a raw write
+	// desyncs bubbletea's line accounting, leaving orphaned spinner frames and
+	// swallowing the message. (The sudo-elevation path handles this by pausing
+	// the spinner around the prompt.)
+	spinnerTitle := fmt.Sprintf("Updating %s → v%s...", version.Version, latestVersion)
+	doneTitle := fmt.Sprintf("Updated to v%s.", latestVersion)
+
+	return ui.RunWithSpinnerErr(ctx, spinnerTitle, doneTitle, func(ctx context.Context) error {
 		assetName := expectedAssetName()
 		assetURL := cliArtifactURL(info.Latest, assetName)
 
@@ -121,7 +129,6 @@ func Update(ctx context.Context) error {
 				return fmt.Errorf("failed to replace binary: %w", err)
 			}
 
-			fmt.Printf("Updated to v%s.\n", latestVersion)
 			return nil
 		}
 
