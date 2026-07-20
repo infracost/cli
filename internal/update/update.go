@@ -341,8 +341,6 @@ var copyBinaryWithCommand = func(srcPath, dstPath string, mode os.FileMode) erro
 		return fmt.Errorf("permission denied replacing %s and sudo was not found; rerun as a user that can write to this path", dstPath)
 	}
 
-	fmt.Fprintf(os.Stderr, "Updating %s requires elevated permissions; you may be prompted for your password.\n", dstPath)
-
 	script := `set -e
 	tmp=$(mktemp "$1/.infracost-update-XXXXXX")
 	trap 'rm -f "$tmp"' EXIT
@@ -351,13 +349,23 @@ var copyBinaryWithCommand = func(srcPath, dstPath string, mode os.FileMode) erro
 	mv "$tmp" "$4"
 	trap - EXIT`
 	args := []string{"sh", "-c", script, "sh", filepath.Dir(dstPath), srcPath, fmt.Sprintf("%o", mode), dstPath}
-	cmd := exec.Command("sudo", args...) //nolint:gosec // paths are local filesystem paths for the running binary and downloaded update
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("copying updated binary with sudo: %w", err)
-	}
 
-	return nil
+	// sudo writes its password prompt to the terminal and reads the password back
+	// from it, so pause any active spinner for the whole exec - otherwise the notice
+	// and prompt get painted over by the spinner's redraws. WithSpinnerPaused is a
+	// no-op when no spinner is running (e.g. non-TTY / piped output).
+	return ui.WithSpinnerPaused(func() error {
+		// Leading newline separates the notice from whatever preceded it (the paused
+		// spinner line, or prior output) so the password prompt stands on its own.
+		fmt.Fprintf(os.Stderr, "\nUpdating %s requires elevated permissions; you may be prompted for your password.\n", dstPath)
+
+		cmd := exec.Command("sudo", args...) //nolint:gosec // paths are local filesystem paths for the running binary and downloaded update
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("copying updated binary with sudo: %w", err)
+		}
+		return nil
+	})
 }
