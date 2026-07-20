@@ -178,7 +178,7 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 	return finOpsPolicies, outputTagPolicies, nil
 }
 
-func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absolutePath, branchName string, tokenSource oauth2.TokenSource, pluginOpts map[string]map[string]any) (*format.Result, error) {
+func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absolutePath, branchName string, tokenSource oauth2.TokenSource, pluginOpts pkgscanner.PluginOpts) (*format.Result, error) {
 	var result format.Result
 
 	// Apply run-parameter feature flags (e.g. the Kubernetes plugin gate) before

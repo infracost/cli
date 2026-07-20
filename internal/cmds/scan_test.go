@@ -3,6 +3,7 @@ package cmds
 import (
 	"testing"
 
+	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -11,38 +12,38 @@ func TestParsePluginOptions(t *testing.T) {
 	tests := []struct {
 		name    string
 		options []string
-		want    map[string]map[string]any
+		want    pkgscanner.PluginOpts
 	}{
 		{
 			name:    "no options",
 			options: nil,
-			want:    map[string]map[string]any{},
+			want:    pkgscanner.PluginOpts{},
 		},
 		{
 			name:    "single nested key",
 			options: []string{"terraform.sourceMap.http=https"},
-			want: map[string]map[string]any{
+			want: pkgscanner.PluginOpts{
 				"terraform": {"sourceMap": map[string]any{"http": "https"}},
 			},
 		},
 		{
 			name:    "flat key",
 			options: []string{"terraform.foo=bar"},
-			want: map[string]map[string]any{
+			want: pkgscanner.PluginOpts{
 				"terraform": {"foo": "bar"},
 			},
 		},
 		{
 			name:    "missing value defaults to boolean true",
 			options: []string{"terraform.foo"},
-			want: map[string]map[string]any{
+			want: pkgscanner.PluginOpts{
 				"terraform": {"foo": true},
 			},
 		},
 		{
 			name:    "value containing an equals sign is preserved",
 			options: []string{"terraform.foo=a=b"},
-			want: map[string]map[string]any{
+			want: pkgscanner.PluginOpts{
 				"terraform": {"foo": "a=b"},
 			},
 		},
@@ -53,7 +54,7 @@ func TestParsePluginOptions(t *testing.T) {
 				"terraform.sourceMap.ssh=git",
 				"terraform.other=x",
 			},
-			want: map[string]map[string]any{
+			want: pkgscanner.PluginOpts{
 				"terraform": {
 					"sourceMap": map[string]any{"http": "https", "ssh": "git"},
 					"other":     "x",
@@ -66,7 +67,7 @@ func TestParsePluginOptions(t *testing.T) {
 				"terraform.foo=1",
 				"cloudformation.bar=2",
 			},
-			want: map[string]map[string]any{
+			want: pkgscanner.PluginOpts{
 				"terraform":      {"foo": "1"},
 				"cloudformation": {"bar": "2"},
 			},

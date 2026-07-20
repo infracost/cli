@@ -19,6 +19,7 @@ import (
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
 	"github.com/infracost/cli/pkg/logging"
+	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 )
@@ -56,7 +57,7 @@ type ScanResult = *format.Output
 // CLI text output from --json / --llm scrapes and from MCP tool
 // calls. It is deliberately a separate parameter, not a ScanInput
 // field, so MCP tool callers cannot impersonate the CLI.
-func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, store cache.Store, in ScanInput, outputFormat string, pluginOpts map[string]map[string]any) (ScanResult, error) {
+func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, store cache.Store, in ScanInput, outputFormat string, pluginOpts pkgscanner.PluginOpts) (ScanResult, error) {
 	target := in.Path
 	if target == "" {
 		target = "."
@@ -260,8 +261,8 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 // {"terraform": {"sourceMap": {"http": "https"}}}. Dots delimit nesting and an
 // option without "=" is treated as the boolean true (e.g. "-o terraform.foo").
 // The exact keys accepted are plugin-specific; see the relevant plugin's docs.
-func parsePluginOptions(options []string) (map[string]map[string]any, error) {
-	pluginOptionMap := make(map[string]map[string]any)
+func parsePluginOptions(options []string) (pkgscanner.PluginOpts, error) {
+	pluginOptionMap := make(pkgscanner.PluginOpts)
 	for _, option := range options {
 		var rawVal any = true
 		key, value, ok := strings.Cut(option, "=")

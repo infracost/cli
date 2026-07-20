@@ -32,6 +32,11 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// PluginOpts holds arbitrary plugin-specific parse options, keyed by plugin
+// name then option key (nested when the option key is dotted). The schema of
+// the inner map is owned by the plugin that matches the outer key.
+type PluginOpts map[string]map[string]any
+
 // ProjectResult holds the outputs for a single project scan.
 type ProjectResult struct {
 	Name              string
@@ -72,7 +77,7 @@ type ScanProjectOptions struct {
 
 	Plugins       *plugins.Config
 	Logging       logging.Config
-	PluginOptions map[string]map[string]any
+	PluginOptions PluginOpts
 }
 
 // ScanProject scans a single project and returns its resources, costs, and policy results.
@@ -126,6 +131,9 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	}
 
 	genericOptions := buildGenericOptions(opts)
+	// The overrides are merged into rawOptions here (not injected into the ParseRequest later) so they
+	// are folded into the fingerprint below - keep it that way, or the parser cache goes stale when
+	// only the -o options change.
 	rawOptions, err := buildIaCOptions(opts, projectType, genericOptions, overrides)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build parser plugin options: %w", err)
