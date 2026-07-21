@@ -271,7 +271,7 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 			if in.Currency == "" {
 				in.Currency = cfg.Currency
 			}
-			result, err := Scan(ctx, cfg, source, store, in, "mcp")
+			result, err := Scan(ctx, cfg, source, store, in, "mcp", nil)
 			if err != nil {
 				return nil, MCPScanOutput{}, err
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,6 +31,11 @@ import (
 	"github.com/infracost/proto/gen/go/infracost/usage"
 	"golang.org/x/oauth2"
 )
+
+// PluginOpts holds arbitrary plugin-specific parse options, keyed by plugin
+// name then option key (nested when the option key is dotted). The schema of
+// the inner map is owned by the plugin that matches the outer key.
+type PluginOpts map[string]map[string]any
 
 // ProjectResult holds the outputs for a single project scan.
 type ProjectResult struct {
@@ -69,8 +75,9 @@ type ScanProjectOptions struct {
 	RepoUsage                 *usage.Usage
 	PreviousResourceAddresses []string
 
-	Plugins *plugins.Config
-	Logging logging.Config
+	Plugins       *plugins.Config
+	Logging       logging.Config
+	PluginOptions PluginOpts
 }
 
 // ScanProject scans a single project and returns its resources, costs, and policy results.
@@ -114,11 +121,21 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		return nil, nil
 	}
 
+	overrides := make(map[string]any)
+	if opts.PluginOptions != nil {
+		for _, key := range []string{string(projectType), parserPlugin.Info.GetName(), strings.TrimPrefix(parserPlugin.Info.GetName(), "infracost/")} {
+			if values, ok := opts.PluginOptions[key]; ok {
+				maps.Copy(overrides, values)
+			}
+		}
+	}
+
 	genericOptions := buildGenericOptions(opts)
 	// The plugin blob is always forwarded verbatim, keyed by the project type, so every plugin
 	// (Terraform, CloudFormation, Kubernetes, ...) receives its persisted parse options - including
-	// per-environment options like a Helm chart's selected values files.
-	rawOptions, err := pluginBlobJSON(opts.Project, string(projectType))
+	// per-environment options like a Helm chart's selected values files. Overrides are also just
+	// always applied.
+	rawOptions, err := pluginBlobJSON(opts.Project, string(projectType), overrides)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build parser plugin options: %w", err)
 	}
@@ -321,11 +338,15 @@ func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
 
 // pluginBlobJSON marshals the project's persisted plugins.<key> blob (keyed by the consuming plugin)
 // as JSON, returning nil when there is no blob for that key.
-func pluginBlobJSON(project *repoconfig.Project, key string) ([]byte, error) {
+func pluginBlobJSON(project *repoconfig.Project, key string, overrides map[string]any) ([]byte, error) {
 	blob := project.Plugins[key]
-	if len(blob) == 0 {
-		return nil, nil
+	if blob == nil {
+		if len(overrides) == 0 {
+			return nil, nil
+		}
+		return json.Marshal(overrides)
 	}
+	maps.Copy(blob, overrides)
 	return json.Marshal(blob)
 }
 

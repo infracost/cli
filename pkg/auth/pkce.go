@@ -19,6 +19,8 @@ import (
 	"golang.org/x/oauth2"
 )
 
+const callbackServerShutdownDelay = time.Second
+
 func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, error) {
 	caller, _ := events.GetMetadata[string]("caller")
 
@@ -75,8 +77,12 @@ func (c *Config) PKCE(ctx context.Context) (oauth2.TokenSource, *oauth2.Token, e
 		}
 
 		// We got the code (or at least a request), so we can stop the server.
-		// Using a goroutine to avoid deadlocking the handler.
+		// Use a short delay to give browsers time to finish rendering the
+		// localhost response before the listener closes; Firefox can otherwise
+		// report "Problem loading localhost" even though authentication succeeded.
+		// Using a goroutine avoids deadlocking the handler.
 		go func() {
+			time.Sleep(callbackServerShutdownDelay)
 			_ = server.Shutdown(context.Background())
 		}()
 	})

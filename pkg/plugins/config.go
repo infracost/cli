@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/infracost/cli/pkg/config/process"
@@ -74,8 +75,10 @@ func (c *Config) PluginDir() string {
 }
 
 // EnsurePlugins installs any required plugins (when AutoUpdate is enabled and
-// Dir is not set as a developer override), then returns the Manager.
-func (c *Config) EnsurePlugins() (*Manager, error) {
+// Dir is not set as a developer override), then returns the Manager. The
+// install runs once and is memoized, so only the first caller's context bounds
+// the downloads.
+func (c *Config) EnsurePlugins(ctx context.Context) (*Manager, error) {
 	c.managerMu.Lock()
 	defer c.managerMu.Unlock()
 
@@ -87,9 +90,35 @@ func (c *Config) EnsurePlugins() (*Manager, error) {
 			AutoUpdate:  c.AutoUpdate,
 			SkipInstall: c.Dir != "",
 		})
-		c.ensureErr = c.manager.EnsureInstalled()
+		c.ensureErr = c.manager.EnsureInstalled(ctx)
 	})
 	return c.manager, c.ensureErr
+}
+
+// UpdatePlugins forces every required plugin to be re-checked against the
+// release host and updated to its latest (or user-pinned) version. Unlike
+// EnsurePlugins, it ignores the AutoUpdate setting — an explicit update always
+// installs the newest available version, whether or not auto-update is enabled.
+// It uses a throwaway Manager so it doesn't disturb the memoized one used for
+// scanning.
+//
+// Updates are a no-op when a local plugin directory override (Dir) is in effect,
+// since managed downloads are skipped in that mode; an error is returned so the
+// caller can tell the user their plugins are being loaded from a dev override.
+func (c *Config) UpdatePlugins(ctx context.Context) error {
+	if c.Dir != "" {
+		return fmt.Errorf("plugin updates are disabled while INFRACOST_CLI_PLUGIN_DIR is set (%s) — plugins are loaded from that directory; unset it to manage plugins automatically", c.Dir)
+	}
+
+	mgr := NewManager(ManagerOptions{
+		Dir:        c.PluginDir(),
+		Cache:      c.Cache,
+		BaseURL:    c.BaseURL,
+		AutoUpdate: true,
+	})
+	defer mgr.Close()
+
+	return mgr.EnsureInstalled(ctx)
 }
 
 // ParserPluginForProject returns the parser plugin that handles the given
@@ -98,7 +127,7 @@ func (c *Config) ParserPluginForProject(ctx context.Context, projectTypeOrPlugin
 	if c.LoadParserPluginForProject != nil {
 		return c.LoadParserPluginForProject(ctx, projectTypeOrPluginName)
 	}
-	manager, err := c.EnsurePlugins()
+	manager, err := c.EnsurePlugins(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +145,7 @@ func (c *Config) ProviderPlugins(ctx context.Context) ([]*ProviderPlugin, error)
 			return nil, err
 		}
 	} else {
-		manager, err := c.EnsurePlugins()
+		manager, err := c.EnsurePlugins(ctx)
 		if err != nil {
 			return nil, err
 		}

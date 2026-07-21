@@ -179,3 +179,42 @@ func RunWithSpinnerErr(ctx context.Context, title, doneTitle string, action func
 
 	return nil
 }
+
+// PauseSpinner suspends the active spinner (if any) and hands the terminal back
+// to the caller, so code that must drive the terminal directly - most importantly
+// an interactive subprocess like a `sudo` password prompt - isn't clobbered by
+// the spinner's frame redraws. It is a no-op when no spinner is running. Every
+// PauseSpinner must be paired with a ResumeSpinner; WithSpinnerPaused does that
+// safely.
+//
+// Routine log/output lines do NOT need this: RunWithSpinnerErr already routes
+// logging through the program so it paints above the spinner. Reserve pause/resume
+// for spanning an external process that takes over the terminal.
+func PauseSpinner() {
+	activeProgramMu.Lock()
+	p := activeProgram
+	activeProgramMu.Unlock()
+	if p != nil {
+		_ = p.ReleaseTerminal()
+	}
+}
+
+// ResumeSpinner resumes a spinner previously paused with PauseSpinner, repainting
+// its current frame. It is a no-op when no spinner is active.
+func ResumeSpinner() {
+	activeProgramMu.Lock()
+	p := activeProgram
+	activeProgramMu.Unlock()
+	if p != nil {
+		_ = p.RestoreTerminal()
+	}
+}
+
+// WithSpinnerPaused pauses the active spinner (if any), runs fn, then resumes it -
+// even if fn panics or returns an error. Use it to bracket any interactive
+// subprocess or direct-to-terminal output while a spinner may be running.
+func WithSpinnerPaused(fn func() error) error {
+	PauseSpinner()
+	defer ResumeSpinner()
+	return fn()
+}
