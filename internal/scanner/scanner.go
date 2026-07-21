@@ -211,7 +211,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	// config — autodetection delegates to plugin identifiers, so a missing
 	// binary means its file types (e.g. terraform plan JSON) won't be
 	// recognized.
-	if _, err := s.Plugins.EnsurePlugins(); err != nil {
+	if _, err := s.Plugins.EnsurePlugins(ctx); err != nil {
 		return nil, fmt.Errorf("failed to install plugins: %w", err)
 	}
 

@@ -34,10 +34,16 @@ const devPluginVersion = "dev"
 // respond to GetPluginInfo when checking its current version during install.
 const queryPluginInfoTimeout = 30 * time.Second
 
+// pluginHTTPClient is used for all plugin metadata and archive downloads. It
+// caps a single request (including the archive body read) so a stalled release
+// host can't hang the CLI indefinitely; cancellation still flows through the
+// per-request context.
+var pluginHTTPClient = &http.Client{Timeout: 5 * time.Minute}
+
 // Install ensures the named plugin is present in the cache directory at the
 // requested version. wantVersion may be empty to mean "latest". Returns the
 // path to the installed binary.
-func (m *Manager) Install(pluginName, wantVersion string) (string, error) {
+func (m *Manager) Install(ctx context.Context, pluginName, wantVersion string) (string, error) {
 	logging.Debugf("ensuring plugin %q is available", pluginName)
 
 	binaryName := pluginBinaryName(pluginName)
@@ -77,7 +83,7 @@ func (m *Manager) Install(pluginName, wantVersion string) (string, error) {
 
 	resolvedVersion := downloadVersion
 	if downloadVersion == "latest" {
-		v, err := fetchPluginVersion(m.pluginVersionURL(pluginName, runtime.GOOS, runtime.GOARCH, downloadVersion))
+		v, err := fetchPluginVersion(ctx, m.pluginVersionURL(pluginName, runtime.GOOS, runtime.GOARCH, downloadVersion))
 		if err != nil {
 			return "", fmt.Errorf("failed to fetch plugin version: %w", err)
 		}
@@ -92,16 +98,16 @@ func (m *Manager) Install(pluginName, wantVersion string) (string, error) {
 	artifactName := pluginArchiveName()
 	artifactURL := m.pluginArtifactURL(pluginName, runtime.GOOS, runtime.GOARCH, downloadVersion, artifactName)
 
-	artifactSHA, err := fetchSHA256(artifactURL + ".sha256")
+	artifactSHA, err := fetchSHA256(ctx, artifactURL+".sha256")
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch plugin checksum: %w", err)
 	}
 
 	logging.Infof("downloading plugin %q version %s for %s/%s", pluginName, resolvedVersion, runtime.GOOS, runtime.GOARCH)
 
-	if err := ui.RunWithSpinnerErr(context.Background(), fmt.Sprintf("Downloading %s %s...", pluginName, resolvedVersion), fmt.Sprintf("Downloaded %s %s", pluginName, resolvedVersion), func(_ context.Context) error {
+	if err := ui.RunWithSpinnerErr(ctx, fmt.Sprintf("Downloading %s %s...", pluginName, resolvedVersion), fmt.Sprintf("Downloaded %s %s", pluginName, resolvedVersion), func(ctx context.Context) error {
 		logging.Debugf("downloading plugin archive from %s", artifactURL)
-		archivePath, err := downloadAndVerify(artifactURL, artifactSHA)
+		archivePath, err := downloadAndVerify(ctx, artifactURL, artifactSHA)
 		if err != nil {
 			return fmt.Errorf("failed to download plugin %q: %w", pluginName, err)
 		}
@@ -198,15 +204,15 @@ func removeExistingPluginPath(binaryPath string) error {
 	return nil
 }
 
-func fetchPluginVersion(rawURL string) (string, error) {
+func fetchPluginVersion(ctx context.Context, rawURL string) (string, error) {
 	logging.Debugf("fetching plugin version from %s", rawURL)
 
-	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
 	if err != nil {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
+	resp, err := pluginHTTPClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -230,15 +236,15 @@ func fetchPluginVersion(rawURL string) (string, error) {
 	return fields[0], nil
 }
 
-func fetchSHA256(rawURL string) (string, error) {
+func fetchSHA256(ctx context.Context, rawURL string) (string, error) {
 	logging.Debugf("fetching plugin checksum from %s", rawURL)
 
-	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
 	if err != nil {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
+	resp, err := pluginHTTPClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -262,13 +268,13 @@ func fetchSHA256(rawURL string) (string, error) {
 	return fields[0], nil
 }
 
-func downloadAndVerify(rawURL, expectedSHA string) (string, error) {
-	req, err := http.NewRequest("GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
+func downloadAndVerify(ctx context.Context, rawURL, expectedSHA string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil) //nolint:gosec // G107: URL is from the trusted plugin base URL
 	if err != nil {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
+	resp, err := pluginHTTPClient.Do(req) //nolint:gosec // G704: request originates from the plugin base URL
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
