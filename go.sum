@@ -109,6 +109,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/infracost/config v0.12.1-0.20260720154204-f44002e58949 h1:h6sXDuGE/Gh121jpxa+6/3KP4AxxOpcTUvIgL4UL/nY=
 github.com/infracost/config v0.12.1-0.20260720154204-f44002e58949/go.mod h1:SBUzeK5+gj0mAukviMRxeqDIlmAbjukfdMDjTT3GjYY=
+github.com/infracost/config v0.13.0 h1:mfzMxh3vJ8++uAbANLAWSkE+AavzOw1Exh1O0km/ZG4=
+github.com/infracost/config v0.13.0/go.mod h1:SBUzeK5+gj0mAukviMRxeqDIlmAbjukfdMDjTT3GjYY=
 github.com/infracost/go-proto v1.26.0 h1:DkvnNA3jbYp/i6PALl59JHO552W5Hw+bEhfhg5JH7e0=
 github.com/infracost/go-proto v1.26.0/go.mod h1:9m9zdHPl6mME24y3J0CdTBWXr+d03mfgXuy+9JzA/wU=
 github.com/infracost/proto v1.159.0 h1:fcgE4AApNvK8M4cbumOpRpAq+HlbVXzGaCdqCPkl6kA=
