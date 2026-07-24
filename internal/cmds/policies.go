@@ -178,6 +178,7 @@ func Policies(ctx context.Context, cfg *config.Config, source oauth2.TokenSource
 		Dashboard:       cfg.Dashboard,
 		Currency:        cfg.Currency,
 		PricingEndpoint: cfg.PricingEndpoint,
+		FetchAuth:       scanner.SSHFetchAuthFromValue(cfg.SSHKeyFile),
 	}
 	finops, tagging, err := s.ListPolicies(ctx, runParameters, providers)
 	if err != nil {
@@ -238,6 +239,7 @@ func PoliciesCmd(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVarP(&in.FinOpsOnly, "finops-only", "f", false, "Only list FinOps policies")
 	cmd.Flags().BoolVarP(&in.TaggingOnly, "tagging-only", "t", false, "Only list tagging policies")
 	cmd.Flags().StringSliceVarP(&in.Providers, "providers", "p", nil, "Limit FinOps policy lookup to the given providers (aws, azure, google); reduces which provider plugins are downloaded")
+	cmd.Flags().StringVar(&cfg.SSHKeyFile, "ssh-key-file", "", "Comma-separated SSH private key file(s) to use for fetching private modules over SSH (defaults to the standard ~/.ssh keys)")
 
 	return cmd
 }

@@ -78,6 +78,9 @@ type ScanProjectOptions struct {
 	Plugins       *plugins.Config
 	Logging       logging.Config
 	PluginOptions PluginOpts
+	// FetchAuth carries transport-level auth for remote fetches (the developer's
+	// on-disk SSH keys), passed to the plugin's in-process getter.
+	FetchAuth *options.FetchAuth
 }
 
 // ScanProject scans a single project and returns its resources, costs, and policy results.
@@ -323,6 +326,7 @@ func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
 		Env:                opts.Project.Env,
 		RequiredAttributes: protoAttributeRequirements(namingPolicyAttributeRequirements(opts.FinopsPolicies)),
 		Workspace:          opts.Project.Terraform.Workspace,
+		FetchAuth:          opts.FetchAuth,
 	}
 
 	if c := opts.Project.Terraform.Cloud; c.Org != "" || c.Workspace != "" || c.Host != "" {
