@@ -17,7 +17,7 @@ require (
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/infracost/config v0.13.0
 	github.com/infracost/go-proto v1.26.0
-	github.com/infracost/proto v1.161.1-0.20260723123650-c51b0ccb4bfe
+	github.com/infracost/proto v1.162.0
 	github.com/liamg/tml v0.7.1
 	github.com/maruel/panicparse/v2 v2.5.0
 	github.com/mattn/go-runewidth v0.0.16
