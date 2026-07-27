@@ -22,7 +22,7 @@ import (
 type FindingsListInput struct {
 	Status string `json:"status,omitempty" jsonschema:"Filter by finding status (open, in_progress, resolved, dismissed, duplicate). Single value; the Agents API does not accept multiples. \"open\" matches both open and in_progress."`
 	Effort string `json:"effort,omitempty" jsonschema:"Filter by effort level (trivial, small, medium, large). Single value."`
-	Cursor string `json:"cursor,omitempty" jsonschema:"Opaque pagination cursor returned by a previous call. Empty starts at the first page."`
+	Page   int    `json:"page,omitempty" jsonschema:"1-based page to fetch. Empty or 0 starts at the first page; the response's next_page tells you what to pass next."`
 	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of findings to return per page (server caps at 200, default 50)."`
 }
 
@@ -33,8 +33,13 @@ type FindingsListResult struct {
 	// the human and LLM renderers don't have to recompute it. It's a page
 	// total, not an org total — paging would accumulate independently.
 	TotalSavings float64 `json:"total_savings"`
-	NextCursor   string  `json:"next_cursor,omitempty"`
-	HasNextPage  bool    `json:"has_next_page,omitempty"`
+	// Page / TotalFindings / TotalPages echo the server-applied paging so a
+	// caller can tell a single-page org from a truncated first page.
+	Page          int  `json:"page,omitempty"`
+	TotalFindings int  `json:"total_findings,omitempty"`
+	TotalPages    int  `json:"total_pages,omitempty"`
+	NextPage      int  `json:"next_page,omitempty"`
+	HasNextPage   bool `json:"has_next_page,omitempty"`
 }
 
 // FindingsGetInput is the parsed input for `findings get`.
@@ -50,8 +55,7 @@ type FindingsGetResult struct {
 
 // ListFindings calls the Agents API. The pure function returns the
 // raw Finding rows the API emitted, plus a TotalSavings convenience
-// roll-up — clean projections aren't needed because the Agents types
-// already use snake_case JSON tags the agent / consumer can read.
+// roll-up and the server-applied paging.
 func ListFindings(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, in FindingsListInput) (FindingsListResult, error) {
 	if cfg.OrgID == "" {
 		return FindingsListResult{}, fmt.Errorf("no organization selected")
@@ -63,10 +67,10 @@ func ListFindings(ctx context.Context, cfg *config.Config, source oauth2.TokenSo
 	events.RegisterMetadata("orgId", cfg.OrgID)
 
 	page, err := client.ListFindings(ctx, cfg.OrgID, agents.ListFindingsParams{
-		Status: in.Status,
-		Effort: in.Effort,
-		Cursor: in.Cursor,
-		Limit:  in.Limit,
+		Status:  in.Status,
+		Effort:  in.Effort,
+		Page:    in.Page,
+		PerPage: in.Limit,
 	})
 	if err != nil {
 		return FindingsListResult{}, fmt.Errorf("listing findings: %w", err)
@@ -76,9 +80,14 @@ func ListFindings(ctx context.Context, cfg *config.Config, source oauth2.TokenSo
 		page.Items = []agents.Finding{}
 	}
 	result := FindingsListResult{
-		Findings:    page.Items,
-		NextCursor:  page.NextCursor,
-		HasNextPage: page.NextCursor != "",
+		Findings:      page.Items,
+		Page:          page.Pagination.Page,
+		TotalFindings: page.Pagination.Total,
+		TotalPages:    page.Pagination.TotalPages,
+		HasNextPage:   page.Pagination.HasNextPage(),
+	}
+	if result.HasNextPage {
+		result.NextPage = page.Pagination.Page + 1
 	}
 	for _, f := range page.Items {
 		result.TotalSavings += f.EstimatedMonthlySavings
@@ -274,7 +283,7 @@ func findingsListCmd(cfg *config.Config) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&in.Status, "status", "", "Filter by status (open, in_progress, resolved, dismissed, duplicate)")
 	cmd.Flags().StringVar(&in.Effort, "effort", "", "Filter by effort (trivial, small, medium, large)")
-	cmd.Flags().StringVar(&in.Cursor, "cursor", "", "Opaque pagination cursor returned by a previous call")
+	cmd.Flags().IntVar(&in.Page, "page", 0, "1-based page to fetch (default the first page)")
 	cmd.Flags().IntVar(&in.Limit, "limit", 0, "Maximum number of findings to return per page (server caps at 200, default 50)")
 	return cmd
 }
@@ -347,8 +356,8 @@ func renderFindingsListHuman(w io.Writer, r FindingsListResult) error {
 	}
 	if r.HasNextPage {
 		_, _ = fmt.Fprintf(w, "%s pass %s to see the next page.\n",
-			ui.Muted("More findings available —"),
-			ui.Codef("--cursor %s", r.NextCursor),
+			ui.Mutedf("Showing %d of %d findings —", len(r.Findings), r.TotalFindings),
+			ui.Codef("--page %d", r.NextPage),
 		)
 	}
 	_, _ = fmt.Fprintln(w)

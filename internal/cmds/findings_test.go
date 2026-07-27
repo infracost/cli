@@ -51,7 +51,7 @@ func TestListFindings(t *testing.T) {
 					EstimatedMonthlySavings: 80.25,
 				},
 			},
-			NextCursor: "next-cursor",
+			Pagination: agents.PageMeta{Page: 1, PerPage: 2, Total: 5, TotalPages: 3},
 		}, nil)
 
 	cfg := agentsConfig(mockClient)
@@ -65,7 +65,36 @@ func TestListFindings(t *testing.T) {
 	assert.Equal(t, 2, result.Findings[0].TaskTotal)
 	assert.InDelta(t, 200.75, result.TotalSavings, 0.001)
 	assert.True(t, result.HasNextPage)
-	assert.Equal(t, "next-cursor", result.NextCursor)
+	assert.Equal(t, 1, result.Page)
+	assert.Equal(t, 2, result.NextPage)
+	assert.Equal(t, 5, result.TotalFindings)
+	assert.Equal(t, 3, result.TotalPages)
+}
+
+// The caller passes a page number through to the client as page / per_page —
+// the findings list is offset-paginated, not cursor-paginated.
+func TestListFindings_ForwardsPaging(t *testing.T) {
+	mockClient := agentsmocks.NewMockClient(t)
+	mockClient.EXPECT().
+		ListFindings(mock.Anything, "org-1", agents.ListFindingsParams{
+			Status:  "open",
+			Page:    3,
+			PerPage: 10,
+		}).
+		Return(agents.FindingsPage{
+			Items:      []agents.Finding{{ID: "f-1", Title: "x"}},
+			Pagination: agents.PageMeta{Page: 3, PerPage: 10, Total: 30, TotalPages: 3},
+		}, nil)
+
+	cfg := agentsConfig(mockClient)
+	result, err := cmds.ListFindings(context.Background(), cfg, nil, cmds.FindingsListInput{
+		Status: "open",
+		Page:   3,
+		Limit:  10,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.Page)
+	assert.False(t, result.HasNextPage)
 }
 
 func TestListFindings_LastPage(t *testing.T) {
@@ -74,14 +103,15 @@ func TestListFindings_LastPage(t *testing.T) {
 		ListFindings(mock.Anything, "org-1", mock.Anything).
 		Return(agents.FindingsPage{
 			Items: []agents.Finding{{ID: "f-1", Title: "x"}},
-			// No NextCursor — caller should see HasNextPage=false.
+			// Final page — caller should see HasNextPage=false.
+			Pagination: agents.PageMeta{Page: 2, PerPage: 50, Total: 51, TotalPages: 2},
 		}, nil)
 
 	cfg := agentsConfig(mockClient)
 	result, err := cmds.ListFindings(context.Background(), cfg, nil, cmds.FindingsListInput{})
 	require.NoError(t, err)
 	assert.False(t, result.HasNextPage)
-	assert.Empty(t, result.NextCursor)
+	assert.Zero(t, result.NextPage)
 }
 
 func TestListFindings_NoOrg(t *testing.T) {
@@ -145,8 +175,25 @@ func TestGetFinding_MissingID(t *testing.T) {
 	assert.Contains(t, err.Error(), "finding id is required")
 }
 
+// findingWithTask builds the GetFinding payload the type resolver reads,
+// carrying one task with the given suggested action.
+func findingWithTask(taskID, suggestedAction string) agents.Finding {
+	return agents.Finding{
+		ID:     "f-1",
+		Title:  "Idle EBS volumes",
+		Status: "open",
+		Tasks: []agents.Task{
+			{ID: "other", FindingID: "f-1", SuggestedAction: "manual"},
+			{ID: taskID, FindingID: "f-1", SuggestedAction: suggestedAction},
+		},
+	}
+}
+
 func TestPreviewFix(t *testing.T) {
 	mockClient := agentsmocks.NewMockClient(t)
+	mockClient.EXPECT().
+		GetFinding(mock.Anything, "org-1", "f-1").
+		Return(findingWithTask("t-1", "open_pr"), nil)
 	mockClient.EXPECT().
 		GenerateAction(mock.Anything, "org-1", "f-1", agents.GenerateActionRequest{
 			TaskIDs:    []string{"t-1"},
@@ -165,6 +212,111 @@ func TestPreviewFix(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "open_pr", result.Type)
 	assert.JSONEq(t, `{"branch":"finops/idle-ebs"}`, string(result.Config))
+}
+
+// The whole point of the default: a tagging task Agents downgraded to
+// create_ticket must be drafted as a ticket, not as the PR the old
+// hardcoded default would have asked for (which 500s server-side because
+// the config LLM has no repo to name).
+func TestPreviewFix_DefaultsToTaskSuggestedAction(t *testing.T) {
+	mockClient := agentsmocks.NewMockClient(t)
+	mockClient.EXPECT().
+		GetFinding(mock.Anything, "org-1", "f-1").
+		Return(findingWithTask("t-1", "create_ticket"), nil)
+	mockClient.EXPECT().
+		GenerateAction(mock.Anything, "org-1", "f-1", agents.GenerateActionRequest{
+			TaskIDs:    []string{"t-1"},
+			ActionType: agents.ActionTypeCreateTicket,
+		}).
+		Return(agents.GenerateActionResponse{
+			Type:   agents.ActionTypeCreateTicket,
+			Config: json.RawMessage(`{"title":"Tag the bucket"}`),
+		}, nil)
+
+	cfg := agentsConfig(mockClient)
+	result, err := cmds.PreviewFix(context.Background(), cfg, nil, cmds.PreviewFixInput{
+		FindingID: "f-1",
+		TaskID:    "t-1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "create_ticket", result.Type)
+}
+
+// An explicit type is the user overriding Agents on purpose — don't spend a
+// round-trip second-guessing it. The mock has no GetFinding expectation, so
+// the test fails if the resolver looks the finding up anyway.
+func TestPreviewFix_ExplicitTypeSkipsLookup(t *testing.T) {
+	mockClient := agentsmocks.NewMockClient(t)
+	mockClient.EXPECT().
+		GenerateAction(mock.Anything, "org-1", "f-1", agents.GenerateActionRequest{
+			TaskIDs:    []string{"t-1"},
+			ActionType: agents.ActionTypeOpenPR,
+		}).
+		Return(agents.GenerateActionResponse{Type: agents.ActionTypeOpenPR}, nil)
+
+	cfg := agentsConfig(mockClient)
+	_, err := cmds.PreviewFix(context.Background(), cfg, nil, cmds.PreviewFixInput{
+		FindingID: "f-1",
+		TaskID:    "t-1",
+		Type:      "open_pr",
+	})
+	require.NoError(t, err)
+}
+
+// A manual suggestion can't be drafted at all, so say so instead of
+// silently drafting a PR the user didn't ask for.
+func TestPreviewFix_RejectsManualSuggestion(t *testing.T) {
+	mockClient := agentsmocks.NewMockClient(t)
+	mockClient.EXPECT().
+		GetFinding(mock.Anything, "org-1", "f-1").
+		Return(findingWithTask("t-1", "manual"), nil)
+
+	cfg := agentsConfig(mockClient)
+	_, err := cmds.PreviewFix(context.Background(), cfg, nil, cmds.PreviewFixInput{
+		FindingID: "f-1",
+		TaskID:    "t-1",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "suggested action is manual")
+}
+
+// The lookup is a convenience, not a precondition: a read failure (or a
+// task that carries no suggestion at all) falls back to the historical
+// open_pr default rather than failing the command.
+func TestPreviewFix_FallsBackWhenSuggestionUnavailable(t *testing.T) {
+	for name, setup := range map[string]func(*agentsmocks.MockClient){
+		"lookup fails": func(m *agentsmocks.MockClient) {
+			m.EXPECT().GetFinding(mock.Anything, "org-1", "f-1").
+				Return(agents.Finding{}, assert.AnError)
+		},
+		"no suggestion on task": func(m *agentsmocks.MockClient) {
+			m.EXPECT().GetFinding(mock.Anything, "org-1", "f-1").
+				Return(findingWithTask("t-1", ""), nil)
+		},
+		"task not in finding": func(m *agentsmocks.MockClient) {
+			m.EXPECT().GetFinding(mock.Anything, "org-1", "f-1").
+				Return(findingWithTask("t-other", "create_ticket"), nil)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mockClient := agentsmocks.NewMockClient(t)
+			setup(mockClient)
+			mockClient.EXPECT().
+				GenerateAction(mock.Anything, "org-1", "f-1", agents.GenerateActionRequest{
+					TaskIDs:    []string{"t-1"},
+					ActionType: agents.ActionTypeOpenPR,
+				}).
+				Return(agents.GenerateActionResponse{Type: agents.ActionTypeOpenPR}, nil)
+
+			cfg := agentsConfig(mockClient)
+			result, err := cmds.PreviewFix(context.Background(), cfg, nil, cmds.PreviewFixInput{
+				FindingID: "f-1",
+				TaskID:    "t-1",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "open_pr", result.Type)
+		})
+	}
 }
 
 func TestPreviewFix_RejectsManual(t *testing.T) {

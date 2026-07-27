@@ -327,10 +327,10 @@ func TestFindingsListToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 
-	// Even on list rows, Agents may include `trigger_detail` (it's omitempty
+	// Even on list rows, Agents may include `triggerDetail` (it's omitempty
 	// on the Go side but the API does emit it on some rows). The schema
 	// must accept any JSON value rather than the byte-slice default.
-	assertOpenJSONSchema(t, schema, "findings", "items", "trigger_detail")
+	assertOpenJSONSchema(t, schema, "findings", "items", "triggerDetail")
 }
 
 // TestFindingsGetToolOutputSchema asserts the schema's object-ness and
@@ -346,8 +346,8 @@ func TestFindingsGetToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 
-	assertOpenJSONSchema(t, schema, "finding", "trigger_detail")
-	assertOpenJSONSchema(t, schema, "finding", "tasks", "items", "action_context")
+	assertOpenJSONSchema(t, schema, "finding", "triggerDetail")
+	assertOpenJSONSchema(t, schema, "finding", "tasks", "items", "actionContext")
 	assertOpenJSONSchema(t, schema, "finding", "tasks", "items", "events", "items", "detail")
 	assertOpenJSONSchema(t, schema, "finding", "actions", "items", "config")
 	assertOpenJSONSchema(t, schema, "finding", "actions", "items", "result")
@@ -395,7 +395,7 @@ func TestUpdateFindingStatusToolOutputSchema(t *testing.T) {
 
 	// The wrapped Finding carries the same RawMessage fields findings_get
 	// does — make sure the override carried through this schema too.
-	assertOpenJSONSchema(t, schema, "finding", "trigger_detail")
+	assertOpenJSONSchema(t, schema, "finding", "triggerDetail")
 	assertOpenJSONSchema(t, schema, "finding", "actions", "items", "config")
 }
 
@@ -405,10 +405,10 @@ func TestUpdateTaskStatusToolOutputSchema(t *testing.T) {
 	require.NotNil(t, schema)
 	assert.Equal(t, "object", schema.Type)
 
-	// The nested Task carries action_context + event detail as
+	// The nested Task carries actionContext + event detail as
 	// RawMessage; the open-schema treatment is required for the same
 	// reason findings_get needs it.
-	assertOpenJSONSchema(t, schema, "task", "action_context")
+	assertOpenJSONSchema(t, schema, "task", "actionContext")
 	assertOpenJSONSchema(t, schema, "task", "events", "items", "detail")
 }
 
