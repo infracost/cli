@@ -17,6 +17,7 @@ import (
 	repoconfig "github.com/infracost/config"
 	goprotoevent "github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
+	"github.com/infracost/proto/gen/go/infracost/parser/options"
 	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"github.com/infracost/proto/gen/go/infracost/provider"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -38,6 +39,9 @@ type Scanner struct {
 	Dashboard       dashboard.Config
 	Currency        string
 	PricingEndpoint string
+	// FetchAuth carries transport-level auth for remote fetches (the developer's
+	// on-disk SSH keys). Passed through to every project's GenericOptions.
+	FetchAuth *options.FetchAuth
 }
 
 type FinOpsPolicy struct {
@@ -335,6 +339,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			Plugins:           s.Plugins,
 			Logging:           s.Logging,
 			PluginOptions:     pluginOpts,
+			FetchAuth:         s.FetchAuth,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan project %q: %w", project.Name, err)

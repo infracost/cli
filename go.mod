@@ -17,7 +17,7 @@ require (
 	github.com/hashicorp/go-plugin v1.8.0
 	github.com/infracost/config v0.13.0
 	github.com/infracost/go-proto v1.26.0
-	github.com/infracost/proto v1.159.0
+	github.com/infracost/proto v1.162.0
 	github.com/liamg/tml v0.7.1
 	github.com/maruel/panicparse/v2 v2.5.0
 	github.com/mattn/go-runewidth v0.0.16
@@ -27,6 +27,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/crypto v0.53.0
 	golang.org/x/image v0.39.0
 	golang.org/x/oauth2 v0.35.0
 	golang.org/x/term v0.44.0

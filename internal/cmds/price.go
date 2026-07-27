@@ -91,6 +91,7 @@ func Price(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, s
 		Dashboard:       cfg.Dashboard,
 		Currency:        in.Currency,
 		PricingEndpoint: cfg.PricingEndpoint,
+		FetchAuth:       scanner.SSHFetchAuthFromValue(cfg.SSHKeyFile),
 	}
 	startTime := time.Now()
 	result, err := s.Scan(ctx, runParameters, dir, branchName, source, nil)
@@ -168,6 +169,7 @@ func PriceCmd(cfg *config.Config) *cobra.Command {
 	}
 	cmd.Hidden = true
 	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
+	cmd.Flags().StringVar(&cfg.SSHKeyFile, "ssh-key-file", "", "Comma-separated SSH private key file(s) to use for fetching private modules over SSH (defaults to the standard ~/.ssh keys)")
 	cmd.Flags().BoolVar(&includeWarnings, "include-warnings", false, "Also show warning-severity diagnostics in the summary")
 	return cmd
 }

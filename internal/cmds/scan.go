@@ -116,6 +116,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		Dashboard:       cfg.Dashboard,
 		Currency:        in.Currency,
 		PricingEndpoint: cfg.PricingEndpoint,
+		FetchAuth:       scanner.SSHFetchAuthFromValue(cfg.SSHKeyFile),
 	}
 	startTime := time.Now()
 	result, err := s.Scan(ctx, runParameters, absolutePath, branchName, source, pluginOpts)
@@ -250,6 +251,7 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
+	cmd.Flags().StringVar(&cfg.SSHKeyFile, "ssh-key-file", "", "Comma-separated SSH private key file(s) to use for fetching private modules over SSH (defaults to the standard ~/.ssh keys)")
 	cmd.Flags().BoolVar(&includeWarnings, "include-warnings", false, "Also show warning-severity diagnostics in the summary")
 	cmd.Flags().StringArrayVarP(&options, "option", "o", options, "Specify a plugin-specific option e.g. -o infracost/terraform.option=yes")
 
