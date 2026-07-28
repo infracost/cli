@@ -458,8 +458,11 @@ func registerAgentsMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.T
 			Description: "Ask Agents to draft a PR or ticket for a task without creating it. No side effects — the LLM produces " +
 				"a {type, config} blob the agent can show to the user. To actually open the PR / create the ticket the agent " +
 				"must then call create_fix with the same finding_id / task_id, the type, and the config returned here " +
-				"(possibly edited by the user). type defaults to open_pr and accepts open_pr or create_ticket only — manual " +
-				"actions aren't draftable by the LLM and must go through create_fix directly.",
+				"(possibly edited by the user). Omit type unless the user asked for a specific one: it then follows the " +
+				"task's own suggested_action, which is what Agents decided is safe for that task — many fixes (tagging " +
+				"violations on resources that aren't managed by Terraform, for example) can only be a ticket, and asking " +
+				"for open_pr anyway fails. type accepts open_pr or create_ticket only — manual actions aren't draftable by " +
+				"the LLM and must go through create_fix directly.",
 			OutputSchema: previewFixSchema,
 			Annotations: &mcp.ToolAnnotations{
 				ReadOnlyHint: true,

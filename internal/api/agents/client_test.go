@@ -37,23 +37,85 @@ func TestClientListFindings(t *testing.T) {
 		// forward exactly what the caller passed.
 		assert.Equal(t, "open", r.URL.Query().Get("status"))
 		assert.Equal(t, "small", r.URL.Query().Get("effort"))
-		assert.Equal(t, "abc", r.URL.Query().Get("cursor"))
-		assert.Equal(t, "25", r.URL.Query().Get("limit"))
+		// Findings are offset-paginated: page / per_page, not a cursor.
+		assert.Equal(t, "2", r.URL.Query().Get("page"))
+		assert.Equal(t, "25", r.URL.Query().Get("per_page"))
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"items":[{"id":"f-1","title":"Hello","status":"open"}],"next_cursor":"next"}`)
+		_, _ = io.WriteString(w, `{"items":[{"id":"f-1","title":"Hello","status":"open"}],`+
+			`"pagination":{"page":2,"perPage":25,"total":60,"totalPages":3}}`)
 	})
 
 	page, err := client.ListFindings(context.Background(), "org-1", agents.ListFindingsParams{
-		Status: "open",
-		Effort: "small",
-		Cursor: "abc",
-		Limit:  25,
+		Status:  "open",
+		Effort:  "small",
+		Page:    2,
+		PerPage: 25,
 	})
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, "f-1", page.Items[0].ID)
-	assert.Equal(t, "next", page.NextCursor)
+	assert.Equal(t, 2, page.Pagination.Page)
+	assert.Equal(t, 60, page.Pagination.Total)
+	assert.True(t, page.Pagination.HasNextPage())
+}
+
+// The Agents API serializes its domain types straight to JSON, so every
+// multi-word response field is camelCase. A Go tag that says snake_case
+// decodes to the zero value in silence, so pin the casing here: this
+// payload is the shape coast's FindingDetail actually emits.
+func TestClientGetFindingDecodesCamelCaseFields(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"id":"f-1","title":"x","status":"open","estimatedMonthlySavings":12.5,
+			"taskTotal":3,"topTaskTitle":"Tag the bucket","accountId":"1234",
+			"lifecycleState":"ready","createdAt":"2026-07-01T00:00:00Z",
+			"tasks":[{"id":"t-1","findingId":"f-1","title":"t","status":"open",
+				"suggestedAction":"create_ticket","actionDescription":"Add tags",
+				"actionContext":{"repo_url":"https://github.com/acme/infra"},
+				"effortNote":"quick","createdAt":"2026-07-01T00:00:00Z",
+				"events":[{"id":"e-1","taskId":"t-1","eventType":"detected",
+					"occurredAt":"2026-07-01T00:00:00Z"}]}],
+			"actions":[{"id":"a-1","findingId":"f-1","type":"open_pr",
+				"actionStatus":"open","actionJobStatus":"pending",
+				"prUrl":"https://github.com/acme/infra/pull/1","taskIds":["t-1"]}],
+			"events":[{"id":"fe-1","findingId":"f-1","eventType":"detected",
+				"occurredAt":"2026-07-01T00:00:00Z"}]
+		}`)
+	})
+
+	f, err := client.GetFinding(context.Background(), "org-1", "f-1")
+	require.NoError(t, err)
+	assert.Equal(t, 12.5, f.EstimatedMonthlySavings)
+	assert.Equal(t, 3, f.TaskTotal)
+	assert.Equal(t, "Tag the bucket", f.TopTaskTitle)
+	assert.Equal(t, "1234", f.AccountID)
+	assert.Equal(t, "ready", f.LifecycleState)
+	assert.Equal(t, "2026-07-01T00:00:00Z", f.CreatedAt)
+
+	require.Len(t, f.Tasks, 1)
+	task := f.Tasks[0]
+	assert.Equal(t, "f-1", task.FindingID)
+	assert.Equal(t, "create_ticket", task.SuggestedAction)
+	assert.Equal(t, "Add tags", task.ActionDescription)
+	assert.JSONEq(t, `{"repo_url":"https://github.com/acme/infra"}`, string(task.ActionContext))
+	assert.Equal(t, "quick", task.EffortNote)
+	require.Len(t, task.Events, 1)
+	assert.Equal(t, "t-1", task.Events[0].TaskID)
+	assert.Equal(t, "detected", task.Events[0].EventType)
+	assert.Equal(t, "2026-07-01T00:00:00Z", task.Events[0].OccurredAt)
+
+	require.Len(t, f.Actions, 1)
+	assert.Equal(t, "f-1", f.Actions[0].FindingID)
+	assert.Equal(t, "open", f.Actions[0].ActionStatus)
+	assert.Equal(t, "pending", f.Actions[0].ActionJobStatus)
+	assert.Equal(t, "https://github.com/acme/infra/pull/1", f.Actions[0].PrURL)
+	assert.Equal(t, []string{"t-1"}, f.Actions[0].TaskIDs)
+
+	require.Len(t, f.Events, 1)
+	assert.Equal(t, "f-1", f.Events[0].FindingID)
+	assert.Equal(t, "detected", f.Events[0].EventType)
+	assert.Equal(t, "2026-07-01T00:00:00Z", f.Events[0].OccurredAt)
 }
 
 func TestClientGetFindingURLEncoding(t *testing.T) {
@@ -77,7 +139,7 @@ func TestClientGenerateAction(t *testing.T) {
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		body, _ := io.ReadAll(r.Body)
-		assert.JSONEq(t, `{"task_ids":["t-1","t-2"],"action_type":"open_pr"}`, string(body))
+		assert.JSONEq(t, `{"taskIds":["t-1","t-2"],"actionType":"open_pr"}`, string(body))
 
 		_, _ = io.WriteString(w, `{"type":"open_pr","config":{"branch":"x"}}`)
 	})
@@ -97,7 +159,7 @@ func TestClientCreateAction(t *testing.T) {
 		assert.Equal(t, "/org/org-1/findings/f-1/create-action", r.URL.Path)
 
 		body, _ := io.ReadAll(r.Body)
-		assert.JSONEq(t, `{"type":"open_pr","config":{"branch":"x"},"task_ids":["t-1"]}`, string(body))
+		assert.JSONEq(t, `{"type":"open_pr","config":{"branch":"x"},"taskIds":["t-1"]}`, string(body))
 
 		_, _ = io.WriteString(w, `{"ok":true,"action_id":"a-1"}`)
 	})
@@ -159,7 +221,7 @@ func TestClientReportTaskConfirmation(t *testing.T) {
 		// Content is omitempty: a confirmation report doesn't carry it.
 		assert.JSONEq(t, `{"type":"confirmation"}`, string(body))
 
-		_, _ = io.WriteString(w, `{"ok":true,"task":{"id":"t-1","finding_id":"f-1","index":0,"title":"x","status":"awaiting_resolution"},"confirmed_action_ids":["a-1"]}`)
+		_, _ = io.WriteString(w, `{"ok":true,"task":{"id":"t-1","findingId":"f-1","index":0,"title":"x","status":"awaiting_resolution"},"confirmed_action_ids":["a-1"]}`)
 	})
 
 	resp, err := client.ReportTask(context.Background(), "org-1", "t-1", agents.ReportTaskRequest{
@@ -176,7 +238,7 @@ func TestClientReportTaskCorrection(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		assert.JSONEq(t, `{"type":"correction","content":"not relevant"}`, string(body))
 
-		_, _ = io.WriteString(w, `{"ok":true,"task":{"id":"t-1","finding_id":"f-1","index":0,"title":"x","status":"dismissed"},"learning_id":"l-1","dismissed_action_ids":["a-1","a-2"]}`)
+		_, _ = io.WriteString(w, `{"ok":true,"task":{"id":"t-1","findingId":"f-1","index":0,"title":"x","status":"dismissed"},"learning_id":"l-1","dismissed_action_ids":["a-1","a-2"]}`)
 	})
 
 	resp, err := client.ReportTask(context.Background(), "org-1", "t-1", agents.ReportTaskRequest{
@@ -194,9 +256,9 @@ func TestClientUpdateTaskStatus(t *testing.T) {
 		assert.Equal(t, "/org/org-1/findings/tasks/t-1", r.URL.Path)
 
 		body, _ := io.ReadAll(r.Body)
-		assert.JSONEq(t, `{"status":"dismissed","dismissed_reason":"not applicable to this account"}`, string(body))
+		assert.JSONEq(t, `{"status":"dismissed","dismissedReason":"not applicable to this account"}`, string(body))
 
-		_, _ = io.WriteString(w, `{"id":"t-1","finding_id":"f-1","index":0,"title":"x","status":"dismissed","dismissed_reason":"not applicable to this account"}`)
+		_, _ = io.WriteString(w, `{"id":"t-1","findingId":"f-1","index":0,"title":"x","status":"dismissed","dismissedReason":"not applicable to this account"}`)
 	})
 
 	task, err := client.UpdateTaskStatus(context.Background(), "org-1", "t-1", agents.UpdateTaskStatusRequest{
@@ -214,7 +276,7 @@ func TestClientUpdateTaskStatusOmitsEmptyReason(t *testing.T) {
 		// omitempty on DismissedReason: a plain reopen ships just {status}.
 		assert.JSONEq(t, `{"status":"open"}`, string(body))
 
-		_, _ = io.WriteString(w, `{"id":"t-1","finding_id":"f-1","index":0,"title":"x","status":"open"}`)
+		_, _ = io.WriteString(w, `{"id":"t-1","findingId":"f-1","index":0,"title":"x","status":"open"}`)
 	})
 
 	_, err := client.UpdateTaskStatus(context.Background(), "org-1", "t-1", agents.UpdateTaskStatusRequest{

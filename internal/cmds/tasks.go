@@ -24,7 +24,7 @@ import (
 type PreviewFixInput struct {
 	FindingID string `json:"finding_id" jsonschema:"Finding ID the task belongs to. Required."`
 	TaskID    string `json:"task_id" jsonschema:"Task ID to draft a fix for. Required."`
-	Type      string `json:"type,omitempty" jsonschema:"Action type to draft (open_pr or create_ticket). Defaults to open_pr. The 'manual' type is not supported by generate-action — the LLM can't draft a manual action."`
+	Type      string `json:"type,omitempty" jsonschema:"Action type to draft (open_pr or create_ticket). Omit to use the task's own suggested_action, which is what you normally want — Agents already decided which action is safe for the task. The 'manual' type is not supported by generate-action — the LLM can't draft a manual action."`
 }
 
 // PreviewFixResult wraps the LLM's drafted action so the JSON / LLM
@@ -41,7 +41,7 @@ type PreviewFixResult struct {
 type CreateFixInput struct {
 	FindingID  string          `json:"finding_id" jsonschema:"Finding ID the task belongs to. Required."`
 	TaskID     string          `json:"task_id" jsonschema:"Task ID to create the action for. Required."`
-	Type       string          `json:"type,omitempty" jsonschema:"Action type to create (open_pr, create_ticket, manual). Defaults to open_pr. Should match the type returned by preview_fix unless the user explicitly switched it."`
+	Type       string          `json:"type,omitempty" jsonschema:"Action type to create (open_pr, create_ticket, manual). Pass the type preview_fix returned, unless the user explicitly switched it."`
 	ConfigJSON json.RawMessage `json:"config" jsonschema:"The opaque action config blob returned by preview_fix, possibly edited by the user. Required."`
 }
 
@@ -71,13 +71,14 @@ func PreviewFix(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	if err := ensureAgentsEnabled(cfg); err != nil {
 		return PreviewFixResult{}, err
 	}
-	actionType, err := resolveAutomatableActionType(in.Type)
-	if err != nil {
-		return PreviewFixResult{}, err
-	}
 
 	client := cfg.Agents.Client(api.Client(ctx, source, cfg.OrgID))
 	events.RegisterMetadata("orgId", cfg.OrgID)
+
+	actionType, err := resolvePreviewActionType(ctx, client, cfg.OrgID, in)
+	if err != nil {
+		return PreviewFixResult{}, err
+	}
 
 	resp, err := client.GenerateAction(ctx, cfg.OrgID, in.FindingID, agents.GenerateActionRequest{
 		TaskIDs:    []string{in.TaskID},
@@ -93,8 +94,10 @@ func PreviewFix(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 }
 
 // CreateFix submits the (possibly-edited) draft config to Agents and
-// creates the PR / ticket / manual action. Type defaults to open_pr
-// (the common case) when the caller doesn't pass one.
+// creates the PR / ticket / manual action. Callers are expected to pass
+// the type the draft was generated as — the CLI reads it back off the
+// piped envelope, and the MCP tool asks the agent for it — with open_pr
+// as the last-resort default for a bare config that names none.
 func CreateFix(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, in CreateFixInput) (CreateFixResult, error) {
 	if in.FindingID == "" {
 		return CreateFixResult{}, fmt.Errorf("finding id is required")
@@ -165,9 +168,9 @@ type UpdateTaskStatusInput struct {
 // per-verb behavior on UpdateTaskStatus.
 type UpdateTaskStatusResult struct {
 	Task               agents.Task `json:"task"`
-	LearningID         string     `json:"learning_id,omitempty"`
-	DismissedActionIDs []string   `json:"dismissed_action_ids,omitempty"`
-	ConfirmedActionIDs []string   `json:"confirmed_action_ids,omitempty"`
+	LearningID         string      `json:"learning_id,omitempty"`
+	DismissedActionIDs []string    `json:"dismissed_action_ids,omitempty"`
+	ConfirmedActionIDs []string    `json:"confirmed_action_ids,omitempty"`
 }
 
 // taskUpdateVerb is the internal discriminator. Kept distinct from
@@ -381,6 +384,11 @@ func tasksPreviewFixCmd(cfg *config.Config) *cobra.Command {
 		Short: "Draft a PR or ticket for a task without creating it",
 		Long: `Ask Agents to draft a PR or ticket for a task and print the result to stdout.
 
+Without --type the draft matches the task's own suggested action: Agents only
+suggests a PR where the code location and the change are both trustworthy, and
+suggests a ticket otherwise (e.g. a tagging fix on resources that aren't managed
+by Terraform). Passing --type open_pr for such a task will fail.
+
 No side effects — the draft can be reviewed (and edited) before submission.
 Pipe the output into ` + "`tasks create-fix --config -`" + ` to actually create it:
 
@@ -413,7 +421,7 @@ Pipe the output into ` + "`tasks create-fix --config -`" + ` to actually create 
 		},
 	}
 	cmd.Flags().StringVar(&in.FindingID, "finding-id", "", "Finding ID the task belongs to (required)")
-	cmd.Flags().StringVar(&in.Type, "type", "open_pr", "Action type to draft (open_pr or create_ticket)")
+	cmd.Flags().StringVar(&in.Type, "type", "", "Action type to draft (open_pr or create_ticket); defaults to the task's own suggested action")
 	_ = cmd.MarkFlagRequired("finding-id")
 	return cmd
 }
@@ -436,11 +444,16 @@ exactly what's being submitted.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			in.TaskID = args[0]
 
-			raw, err := readConfigBlob(configPath, cmd.InOrStdin())
+			raw, draftedType, err := readConfigBlob(configPath, cmd.InOrStdin())
 			if err != nil {
 				return err
 			}
 			in.ConfigJSON = raw
+			// An explicit --type wins; otherwise take the type the draft was
+			// generated as, so a ticket draft isn't submitted as a PR.
+			if in.Type == "" {
+				in.Type = draftedType
+			}
 
 			source, err := cfg.Auth.Token(cmd.Context())
 			if err != nil {
@@ -462,7 +475,7 @@ exactly what's being submitted.`,
 		},
 	}
 	cmd.Flags().StringVar(&in.FindingID, "finding-id", "", "Finding ID the task belongs to (required)")
-	cmd.Flags().StringVar(&in.Type, "type", "open_pr", "Action type being created (open_pr, create_ticket, manual)")
+	cmd.Flags().StringVar(&in.Type, "type", "", "Action type being created (open_pr, create_ticket, manual); defaults to the drafted config's own type")
 	cmd.Flags().StringVar(&configPath, "config", "-", `Path to the drafted config JSON ("-" for stdin)`)
 	_ = cmd.MarkFlagRequired("finding-id")
 	return cmd
@@ -472,26 +485,29 @@ exactly what's being submitted.`,
 // source. "-" / "" means stdin; otherwise the path is read whole and
 // returned verbatim. The bytes are JSON-validated so a malformed file
 // fails fast with a clear error rather than a server-side 400.
-func readConfigBlob(path string, stdin io.Reader) (json.RawMessage, error) {
+// The envelope's own `type` is returned alongside the config so the caller
+// can honor the drafted type when the user didn't name one — piping a
+// create_ticket draft into create-fix must not silently create an open_pr.
+func readConfigBlob(path string, stdin io.Reader) (json.RawMessage, string, error) {
 	var raw []byte
 	var err error
 	switch path {
 	case "", "-":
 		raw, err = io.ReadAll(stdin)
 		if err != nil {
-			return nil, fmt.Errorf("reading config from stdin: %w", err)
+			return nil, "", fmt.Errorf("reading config from stdin: %w", err)
 		}
 	default:
 		raw, err = os.ReadFile(path) // #nosec G304 -- user-supplied config path
 		if err != nil {
-			return nil, fmt.Errorf("reading config from %s: %w", path, err)
+			return nil, "", fmt.Errorf("reading config from %s: %w", path, err)
 		}
 	}
 	if len(raw) == 0 {
-		return nil, fmt.Errorf("config is empty — pipe `tasks preview-fix` output or pass --config <file>")
+		return nil, "", fmt.Errorf("config is empty — pipe `tasks preview-fix` output or pass --config <file>")
 	}
 	if !json.Valid(raw) {
-		return nil, fmt.Errorf("config is not valid JSON")
+		return nil, "", fmt.Errorf("config is not valid JSON")
 	}
 	// Unwrap a preview-fix-shaped envelope: that command writes
 	// {"type": ..., "config": {...}} so the user can pipe directly. The
@@ -501,12 +517,47 @@ func readConfigBlob(path string, stdin io.Reader) (json.RawMessage, error) {
 		Config json.RawMessage `json:"config"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err == nil && len(envelope.Config) > 0 {
-		return envelope.Config, nil
+		return envelope.Config, envelope.Type, nil
 	}
-	return raw, nil
+	return raw, "", nil
 }
 
-// resolveAutomatableActionType validates the --type string for the
+// resolvePreviewActionType decides which action type preview-fix should
+// ask Agents to draft. An explicit --type always wins; otherwise we take
+// the task's own SuggestedAction, because Agents has already decided what
+// is safe for that task — a tagging fix on resources with no trustworthy
+// IaC location is deliberately downgraded to create_ticket server-side,
+// and asking for open_pr anyway just fails (the config LLM has no repo to
+// name). Only when the task carries no suggestion do we fall back to
+// open_pr, preserving the historical default.
+func resolvePreviewActionType(ctx context.Context, client agents.Client, orgID string, in PreviewFixInput) (agents.ActionType, error) {
+	if in.Type != "" {
+		return resolveAutomatableActionType(in.Type)
+	}
+
+	// A lookup failure is not fatal: the caller asked to draft a fix, not to
+	// read the finding, so fall back to the historical default rather than
+	// failing the whole command on a transient read error.
+	finding, err := client.GetFinding(ctx, orgID, in.FindingID)
+	if err != nil {
+		return agents.ActionTypeOpenPR, nil
+	}
+	for _, t := range finding.Tasks {
+		if t.ID != in.TaskID {
+			continue
+		}
+		switch agents.ActionType(t.SuggestedAction) {
+		case agents.ActionTypeOpenPR, agents.ActionTypeCreateTicket:
+			return agents.ActionType(t.SuggestedAction), nil
+		case agents.ActionTypeManual:
+			return "", fmt.Errorf("this task's suggested action is manual, which the LLM can't draft — apply it yourself and record it with `infracost tasks update %s --status confirm`, or pass --type create_ticket to raise a ticket instead", in.TaskID)
+		}
+		break
+	}
+	return agents.ActionTypeOpenPR, nil
+}
+
+// resolveAutomatableActionType validates an explicit --type string for the
 // generate-action endpoint, which only accepts the automatable types
 // (open_pr, create_ticket). Manual actions can't be drafted by the LLM.
 func resolveAutomatableActionType(s string) (agents.ActionType, error) {

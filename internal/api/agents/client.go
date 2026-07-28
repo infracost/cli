@@ -4,10 +4,16 @@
 // on the dashboard's Auth0 JWT, so callers thread the same
 // `cfg.Auth.Token()` source they use for the dashboard client.
 //
-// Shapes mirror coast/packages/types/index.ts. Where Agents emits
-// snake_case JSON, the Go fields use the canonical Go casing with
-// explicit json tags; numeric money fields are float64s because the
-// underlying TS API serializes them that way.
+// Shapes mirror coast/packages/types. Agents serializes its domain types
+// straight to JSON, so response fields are camelCase — the casing the TS
+// types declare (coast#515 renamed them from snake_case; a Go tag that
+// still says snake_case decodes to the zero value silently, which is how
+// suggestedAction / estimatedMonthlySavings went missing for a release).
+// Request bodies are the exception: Agents' Zod schemas accept the CLI's
+// historical snake_case keys, so those tags stay as they are.
+//
+// Numeric money fields are float64s because the underlying TS API
+// serializes them that way.
 package agents
 
 import (
@@ -28,34 +34,34 @@ import (
 // struct round-trips both.
 type Finding struct {
 	ID                      string  `json:"id"`
-	OrgID                   string  `json:"org_id,omitempty"`
-	AgentID                 string  `json:"agent_id,omitempty"`
-	AgentName               string  `json:"agent_name,omitempty"`
-	AgentIcon               string  `json:"agent_icon,omitempty"`
+	OrgID                   string  `json:"orgId,omitempty"`
+	AgentID                 string  `json:"agentId,omitempty"`
+	AgentName               string  `json:"agentName,omitempty"`
+	AgentIcon               string  `json:"agentIcon,omitempty"`
 	Title                   string  `json:"title"`
 	Summary                 string  `json:"summary,omitempty"`
-	EstimatedMonthlySavings float64 `json:"estimated_monthly_savings,omitempty"`
+	EstimatedMonthlySavings float64 `json:"estimatedMonthlySavings,omitempty"`
 	Effort                  string  `json:"effort,omitempty"`
-	TaskTotal               int     `json:"task_total,omitempty"`
-	TaskResolved            int     `json:"task_resolved,omitempty"`
-	TaskInProgress          int     `json:"task_in_progress,omitempty"`
+	TaskTotal               int     `json:"taskTotal,omitempty"`
+	TaskResolved            int     `json:"taskResolved,omitempty"`
+	TaskInProgress          int     `json:"taskInProgress,omitempty"`
 	Status                  string  `json:"status"`
-	InvestigationStatus     string  `json:"investigation_status,omitempty"`
-	HasRunningActions       bool    `json:"has_running_actions,omitempty"`
-	TopTaskTitle            string  `json:"top_task_title,omitempty"`
-	AccountID               string  `json:"account_id,omitempty"`
-	AccountAlias            string  `json:"account_alias,omitempty"`
-	CreatedAt               string  `json:"created_at,omitempty"`
-	UpdatedAt               string  `json:"updated_at,omitempty"`
+	InvestigationStatus     string  `json:"investigationStatus,omitempty"`
+	LifecycleState          string  `json:"lifecycleState,omitempty"`
+	RemediationState        string  `json:"remediationState,omitempty"`
+	TopTaskTitle            string  `json:"topTaskTitle,omitempty"`
+	AccountID               string  `json:"accountId,omitempty"`
+	AccountAlias            string  `json:"accountAlias,omitempty"`
+	CreatedAt               string  `json:"createdAt,omitempty"`
+	UpdatedAt               string  `json:"updatedAt,omitempty"`
 
 	// Detail-only fields. The list endpoint leaves these unset.
-	IntegrationID   string          `json:"integration_id,omitempty"`
-	DuplicateOfID   string          `json:"duplicate_of_id,omitempty"`
-	TriggerDetail   json.RawMessage `json:"trigger_detail,omitempty"`
-	Tasks           []Task          `json:"tasks,omitempty"`
-	Events          []FindingEvent  `json:"events,omitempty"`
-	Actions         []Action        `json:"actions,omitempty"`
-	ResolvedAt      string          `json:"resolved_at,omitempty"`
+	DuplicateOfID string          `json:"duplicateOfId,omitempty"`
+	TriggerDetail json.RawMessage `json:"triggerDetail,omitempty"`
+	Tasks         []Task          `json:"tasks,omitempty"`
+	Events        []FindingEvent  `json:"events,omitempty"`
+	Actions       []Action        `json:"actions,omitempty"`
+	ResolvedAt    string          `json:"resolvedAt,omitempty"`
 }
 
 // Task is the unit users interact with when working on a finding. A
@@ -64,23 +70,23 @@ type Finding struct {
 // (open_pr | create_ticket | manual).
 type Task struct {
 	ID                string             `json:"id"`
-	FindingID         string             `json:"finding_id"`
+	FindingID         string             `json:"findingId"`
 	Index             int                `json:"index"`
 	Title             string             `json:"title"`
 	Detail            string             `json:"detail,omitempty"`
-	ActionDescription string             `json:"action_description,omitempty"`
+	ActionDescription string             `json:"actionDescription,omitempty"`
 	Savings           float64            `json:"savings,omitempty"`
 	Code              string             `json:"code,omitempty"`
 	Warnings          []string           `json:"warnings,omitempty"`
-	SuggestedAction   string             `json:"suggested_action,omitempty"`
-	ActionContext     json.RawMessage    `json:"action_context,omitempty"`
+	SuggestedAction   string             `json:"suggestedAction,omitempty"`
+	ActionContext     json.RawMessage    `json:"actionContext,omitempty"`
 	Effort            string             `json:"effort,omitempty"`
-	EffortNote        string             `json:"effort_note,omitempty"`
+	EffortNote        string             `json:"effortNote,omitempty"`
 	Status            string             `json:"status"`
-	DismissedReason   string             `json:"dismissed_reason,omitempty"`
+	DismissedReason   string             `json:"dismissedReason,omitempty"`
 	Events            []FindingTaskEvent `json:"events,omitempty"`
-	CreatedAt         string             `json:"created_at,omitempty"`
-	UpdatedAt         string             `json:"updated_at,omitempty"`
+	CreatedAt         string             `json:"createdAt,omitempty"`
+	UpdatedAt         string             `json:"updatedAt,omitempty"`
 }
 
 // Action is a PR or ticket associated with a finding. The Config blob is
@@ -89,15 +95,16 @@ type Task struct {
 // ticketing integration needs.
 type Action struct {
 	ID              string          `json:"id"`
-	FindingID       string          `json:"finding_id"`
+	FindingID       string          `json:"findingId"`
 	Type            string          `json:"type"`
-	ActionStatus    string          `json:"action_status"`
-	ActionJobStatus string          `json:"action_job_status,omitempty"`
+	ActionStatus    string          `json:"actionStatus"`
+	ActionJobStatus string          `json:"actionJobStatus,omitempty"`
 	Config          json.RawMessage `json:"config,omitempty"`
 	Result          json.RawMessage `json:"result,omitempty"`
-	TaskIDs         []string        `json:"task_ids,omitempty"`
-	CreatedAt       string          `json:"created_at,omitempty"`
-	UpdatedAt       string          `json:"updated_at,omitempty"`
+	PrURL           string          `json:"prUrl,omitempty"`
+	TaskIDs         []string        `json:"taskIds,omitempty"`
+	CreatedAt       string          `json:"createdAt,omitempty"`
+	UpdatedAt       string          `json:"updatedAt,omitempty"`
 }
 
 // FindingEvent is one timeline entry on a finding (detected, investigated,
@@ -105,38 +112,55 @@ type Action struct {
 // type + timestamp without parsing the per-event payload.
 type FindingEvent struct {
 	ID         string          `json:"id"`
-	FindingID  string          `json:"finding_id"`
-	EventType  string          `json:"event_type"`
+	FindingID  string          `json:"findingId"`
+	EventType  string          `json:"eventType"`
 	Detail     json.RawMessage `json:"detail,omitempty"`
-	OccurredAt string          `json:"occurred_at"`
+	OccurredAt string          `json:"occurredAt"`
 }
 
 // FindingTaskEvent is a per-task timeline entry. Same opacity story as
 // FindingEvent.
 type FindingTaskEvent struct {
 	ID         string          `json:"id"`
-	TaskID     string          `json:"task_id"`
-	EventType  string          `json:"event_type"`
+	TaskID     string          `json:"taskId"`
+	EventType  string          `json:"eventType"`
 	Detail     json.RawMessage `json:"detail,omitempty"`
-	OccurredAt string          `json:"occurred_at"`
+	OccurredAt string          `json:"occurredAt"`
 }
 
-// FindingsPage is the response shape for ListFindings. NextCursor is the
-// opaque cursor to pass on the next call; nil / empty means no more
-// pages.
+// FindingsPage is the response shape for ListFindings. Findings are
+// offset-paginated: the server echoes the page it actually applied plus
+// the totals, and the caller asks for the next page by number.
 type FindingsPage struct {
 	Items      []Finding `json:"items"`
-	NextCursor string    `json:"next_cursor,omitempty"`
+	Pagination PageMeta  `json:"pagination"`
+}
+
+// PageMeta is the server-applied pagination echoed on a page response.
+// Page is 1-based; TotalPages is 0 when there are no items at all, so
+// callers should compare against Page rather than assume a floor of 1.
+type PageMeta struct {
+	Page       int `json:"page"`
+	PerPage    int `json:"perPage"`
+	Total      int `json:"total"`
+	TotalPages int `json:"totalPages"`
+}
+
+// HasNextPage reports whether another page follows the one described by
+// this meta.
+func (p PageMeta) HasNextPage() bool {
+	return p.Page > 0 && p.Page < p.TotalPages
 }
 
 // ListFindingsParams scopes a ListFindings call. The Agents API accepts
 // single values (not arrays) for status / effort, so the CLI's slice-
-// shaped flags must collapse to one before calling.
+// shaped flags must collapse to one before calling. Page / PerPage are
+// sent only when non-zero, letting the server apply its own defaults.
 type ListFindingsParams struct {
-	Status string
-	Effort string
-	Cursor string
-	Limit  int
+	Status  string
+	Effort  string
+	Page    int
+	PerPage int
 }
 
 // ActionType is the discriminator for GenerateAction / CreateAction. The
@@ -156,8 +180,8 @@ const (
 // multiple related tasks; the CLI's preview-fix command wraps a single
 // task id in a one-element slice.
 type GenerateActionRequest struct {
-	TaskIDs    []string   `json:"task_ids"`
-	ActionType ActionType `json:"action_type"`
+	TaskIDs    []string   `json:"taskIds"`
+	ActionType ActionType `json:"actionType"`
 }
 
 // GenerateActionResponse is the drafted action the LLM produced. The
@@ -175,7 +199,7 @@ type GenerateActionResponse struct {
 type CreateActionRequest struct {
 	Type    ActionType      `json:"type"`
 	Config  json.RawMessage `json:"config"`
-	TaskIDs []string        `json:"task_ids"`
+	TaskIDs []string        `json:"taskIds"`
 }
 
 // CreateActionResponse is the lightweight response from POST
@@ -246,8 +270,8 @@ const (
 // honored by Agents when status is `dismissed` — for other targets the
 // field is ignored server-side, so omitempty keeps the wire shape clean.
 type UpdateTaskStatusRequest struct {
-	Status           TaskStatus `json:"status"`
-	DismissedReason  string     `json:"dismissed_reason,omitempty"`
+	Status          TaskStatus `json:"status"`
+	DismissedReason string     `json:"dismissedReason,omitempty"`
 }
 
 // ReportTaskResponse is the response shape for both report types. The
@@ -255,12 +279,18 @@ type UpdateTaskStatusRequest struct {
 // type-specific — correction populates the first two, confirmation
 // populates the last — and omitempty keeps the wire shape tight on the
 // branch that didn't apply.
+//
+// The snake_case tags here are deliberate: this endpoint hand-builds its
+// response literal rather than serializing a domain type, so it kept the
+// original casing when coast#515 renamed the types. Same for
+// CreateActionResponse.ActionID. The nested Task IS a domain type, so its
+// fields are camelCase.
 type ReportTaskResponse struct {
-	OK                  bool     `json:"ok"`
-	Task                Task     `json:"task"`
-	LearningID          string   `json:"learning_id,omitempty"`
-	DismissedActionIDs  []string `json:"dismissed_action_ids,omitempty"`
-	ConfirmedActionIDs  []string `json:"confirmed_action_ids,omitempty"`
+	OK                 bool     `json:"ok"`
+	Task               Task     `json:"task"`
+	LearningID         string   `json:"learning_id,omitempty"`
+	DismissedActionIDs []string `json:"dismissed_action_ids,omitempty"`
+	ConfirmedActionIDs []string `json:"confirmed_action_ids,omitempty"`
 }
 
 // RetryActionResponse is the OK-only shape from POST
@@ -299,11 +329,11 @@ func (c *client) ListFindings(ctx context.Context, orgID string, params ListFind
 	if params.Effort != "" {
 		q.Set("effort", params.Effort)
 	}
-	if params.Cursor != "" {
-		q.Set("cursor", params.Cursor)
+	if params.Page > 0 {
+		q.Set("page", strconv.Itoa(params.Page))
 	}
-	if params.Limit > 0 {
-		q.Set("limit", strconv.Itoa(params.Limit))
+	if params.PerPage > 0 {
+		q.Set("per_page", strconv.Itoa(params.PerPage))
 	}
 
 	path := fmt.Sprintf("/org/%s/findings", url.PathEscape(orgID))
