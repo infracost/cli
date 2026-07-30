@@ -87,6 +87,9 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 	// defaults or config templates apply.
 	var runParameters dashboard.RunParameters
 	if cfg.SelfHostedPricing() {
+		if err := cfg.ValidateSelfHostedPricing(); err != nil {
+			return nil, err
+		}
 		logging.Infof("INFRACOST_CLI_PRICING_API_KEY is set: scanning against the self-hosted pricing API only; Infracost Cloud features (policies, guardrails, budgets, usage defaults) are disabled")
 	} else {
 		client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))

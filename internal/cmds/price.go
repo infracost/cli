@@ -77,6 +77,9 @@ func Price(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, s
 	// stay zero-valued, so no policies or usage defaults apply.
 	var runParameters dashboard.RunParameters
 	if cfg.SelfHostedPricing() {
+		if err := cfg.ValidateSelfHostedPricing(); err != nil {
+			return nil, err
+		}
 		logging.Infof("INFRACOST_CLI_PRICING_API_KEY is set: pricing against the self-hosted pricing API only; Infracost Cloud features are disabled")
 	} else {
 		client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
