@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/infracost/cli/internal/api"
+	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/config"
@@ -81,26 +82,38 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 	repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
 	branchName := vcs.GetCurrentBranch(absoluteDirectory)
 
-	client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
+	// Self-hosted pricing mode runs the scan without Infracost Cloud: run
+	// parameters stay zero-valued, so no policies, guardrails, budgets, usage
+	// defaults or config templates apply.
+	var runParameters dashboard.RunParameters
+	if cfg.SelfHostedPricing() {
+		if err := cfg.ValidateSelfHostedPricing(); err != nil {
+			return nil, err
+		}
+		logging.Infof("INFRACOST_CLI_PRICING_API_KEY is set: scanning against the self-hosted pricing API only; Infracost Cloud features (policies, guardrails, budgets, usage defaults) are disabled")
+	} else {
+		client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
 
-	runParameters, err := client.RunParameters(ctx, repositoryURL, branchName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve run parameters: %w", err)
-	}
+		var err error
+		runParameters, err = client.RunParameters(ctx, repositoryURL, branchName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve run parameters: %w", err)
+		}
 
-	// If --org was not provided, use the org from RunParameters.
-	// If --org was provided, log when it overrides what the API reports
-	// as the repo's default org.
-	if cfg.Org == "" {
-		cfg.OrgID = runParameters.OrganizationID
-	} else if runParameters.OrganizationID != "" && cfg.OrgID != runParameters.OrganizationID {
-		if uc, ucErr := cfg.Auth.LoadUserCache(); ucErr != nil {
-			logging.WithError(ucErr).Msg("failed to load user cache for override message")
-		} else if uc != nil {
-			for _, org := range uc.Organizations {
-				if org.ID == cfg.OrgID {
-					logging.Infof("using --org %s; overriding repository default", org.Slug)
-					break
+		// If --org was not provided, use the org from RunParameters.
+		// If --org was provided, log when it overrides what the API reports
+		// as the repo's default org.
+		if cfg.Org == "" {
+			cfg.OrgID = runParameters.OrganizationID
+		} else if runParameters.OrganizationID != "" && cfg.OrgID != runParameters.OrganizationID {
+			if uc, ucErr := cfg.Auth.LoadUserCache(); ucErr != nil {
+				logging.WithError(ucErr).Msg("failed to load user cache for override message")
+			} else if uc != nil {
+				for _, org := range uc.Organizations {
+					if org.ID == cfg.OrgID {
+						logging.Infof("using --org %s; overriding repository default", org.Slug)
+						break
+					}
 				}
 			}
 		}
@@ -116,6 +129,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		Dashboard:       cfg.Dashboard,
 		Currency:        in.Currency,
 		PricingEndpoint: cfg.PricingEndpoint,
+		PricingAPIKey:   cfg.PricingAPIKey,
 		FetchAuth:       scanner.SSHFetchAuthFromValue(cfg.SSHKeyFile),
 	}
 	startTime := time.Now()
@@ -218,12 +232,18 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 				}
 			}()
 
-			source, err := cfg.Auth.Token(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("failed to log in: %w", err)
-			}
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
-				return err
+			// Self-hosted pricing mode needs no login or org: the static
+			// pricing API key is the only credential used, and no Infracost
+			// Cloud API is contacted.
+			var source oauth2.TokenSource
+			if !cfg.SelfHostedPricing() {
+				source, err = cfg.Auth.Token(cmd.Context())
+				if err != nil {
+					return fmt.Errorf("failed to log in: %w", err)
+				}
+				if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+					return err
+				}
 			}
 
 			// Ensure plugins are present/updated as a distinct phase so the

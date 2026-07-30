@@ -6,13 +6,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/infracost/cli/pkg/logging"
 )
 
 var (
 	_ Client = (*client)(nil)
+	_ Client = noopClient{}
 )
+
+// noopClient drops every event. Returned by Config.Client when telemetry is
+// disabled (self-hosted pricing mode).
+type noopClient struct{}
+
+func (noopClient) Push(context.Context, string, ...interface{}) {}
 
 type Client interface {
 	Push(ctx context.Context, event string, extra ...interface{})
@@ -57,6 +65,12 @@ func (c *client) Push(ctx context.Context, event string, extra ...interface{}) {
 		logging.WithError(err).Msg("events: failed to marshal event")
 		return
 	}
+
+	// Telemetry is fire-and-forget (errors are only logged), and the shared
+	// http.Client has no timeout — bound the request so a blocked or blackholed
+	// network fails fast instead of hanging the command.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/event", c.config.Endpoint), bytes.NewReader(buf))
 	if err != nil {

@@ -157,15 +157,22 @@ func Policies(ctx context.Context, cfg *config.Config, source oauth2.TokenSource
 	repositoryURL := vcs.GetRemoteURL(absoluteDirectory)
 	branchName := vcs.GetCurrentBranch(absoluteDirectory)
 
-	client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
+	// Self-hosted pricing mode never contacts Infracost Cloud; with nil run
+	// parameters the provider plugins list their built-in policies locally
+	// (none of which are evaluated at scan time in this mode).
 	var runParameters *dashboard.RunParameters
-	if rp, err := client.RunParameters(ctx, repositoryURL, branchName); err != nil {
-		logging.Warnf("Failed to fetch runParameters, gathering policies without them: %s", err.Error())
+	if cfg.SelfHostedPricing() {
+		logging.Infof("INFRACOST_CLI_PRICING_API_KEY is set: listing locally-available policies without Infracost Cloud")
 	} else {
-		if cfg.Org == "" {
-			cfg.OrgID = rp.OrganizationID
+		client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
+		if rp, err := client.RunParameters(ctx, repositoryURL, branchName); err != nil {
+			logging.Warnf("Failed to fetch runParameters, gathering policies without them: %s", err.Error())
+		} else {
+			if cfg.Org == "" {
+				cfg.OrgID = rp.OrganizationID
+			}
+			runParameters = &rp
 		}
-		runParameters = &rp
 	}
 
 	events.RegisterMetadata("orgId", cfg.OrgID)
@@ -216,12 +223,18 @@ func PoliciesCmd(cfg *config.Config) *cobra.Command {
 				in.Path = args[0]
 			}
 
-			source, err := cfg.Auth.Token(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("failed to log in: %w", err)
-			}
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
-				return err
+			// Self-hosted pricing mode needs no login or org: no Infracost
+			// Cloud API is contacted.
+			var source oauth2.TokenSource
+			if !cfg.SelfHostedPricing() {
+				var err error
+				source, err = cfg.Auth.Token(cmd.Context())
+				if err != nil {
+					return fmt.Errorf("failed to log in: %w", err)
+				}
+				if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+					return err
+				}
 			}
 
 			var result PoliciesResult

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/infracost/cli/internal/api/agents"
@@ -18,6 +19,10 @@ var (
 	_ process.Processor = (*Config)(nil)
 )
 
+// defaultPricingEndpoint is Infracost's SaaS pricing API — must match the
+// `default` tag on Config.PricingEndpoint.
+const defaultPricingEndpoint = "https://pricing.api.infracost.io"
+
 // Config contains the configuration for the CLI.
 type Config struct {
 	// Environment is the environment to target for operations / authentication (development or production). Defaults to
@@ -34,6 +39,17 @@ type Config struct {
 
 	// PricingEndpoint is the endpoint to use for prices. Defaults to https://pricing.api.infracost.io.
 	PricingEndpoint string `env:"INFRACOST_CLI_PRICING_ENDPOINT" flag:"pricing-endpoint;hidden" usage:"The pricing endpoint to use for prices" default:"https://pricing.api.infracost.io"`
+
+	// PricingAPIKey is a static API key for a self-hosted Cloud Pricing API (the
+	// value of its SELF_HOSTED_INFRACOST_API_KEY). Setting it switches the CLI
+	// into self-hosted pricing mode: the key is sent to the pricing API instead
+	// of an OAuth access token, and all other communication with Infracost Cloud
+	// (login, dashboard, telemetry) is disabled — policies, guardrails, budgets,
+	// usage defaults and config templates are skipped. Pair with
+	// PricingEndpoint to point at the self-hosted instance. Deliberately
+	// env-only (like Auth.AuthenticationToken): a flag would put the credential
+	// in argv, visible to `ps` and shell history.
+	PricingAPIKey string `env:"INFRACOST_CLI_PRICING_API_KEY"`
 
 	// Org is the organization slug or ID to use. Resolved to an ID before API calls.
 	Org string `env:"INFRACOST_CLI_ORG" flag:"org" usage:"The organization slug or ID to use"`
@@ -93,8 +109,63 @@ type Config struct {
 }
 
 func (config *Config) Process() {
+	// The pricing endpoint env var was renamed from the legacy CLI's
+	// INFRACOST_PRICING_API_ENDPOINT to INFRACOST_CLI_PRICING_ENDPOINT.
+	// Honor the legacy name only when the new var wasn't set at all (checking
+	// the env directly, not the resolved value: someone explicitly exporting
+	// the new var as the default endpoint must not be repointed) and no flag
+	// changed the endpoint, so migrating self-hosted users don't silently
+	// price against pricing.api.infracost.io.
+	if legacy := os.Getenv("INFRACOST_PRICING_API_ENDPOINT"); legacy != "" &&
+		os.Getenv("INFRACOST_CLI_PRICING_ENDPOINT") == "" &&
+		config.PricingEndpoint == defaultPricingEndpoint {
+		logging.Warnf("INFRACOST_PRICING_API_ENDPOINT was renamed to INFRACOST_CLI_PRICING_ENDPOINT; using the legacy value %s — please update your configuration", legacy)
+		config.PricingEndpoint = legacy
+	}
+
+	// The legacy CLI used a single INFRACOST_API_KEY for everything, including
+	// self-hosted pricing. Adopt it as the pricing API key only when the
+	// legacy pricing endpoint var is also set — that combination is
+	// unambiguously a legacy self-hosted setup. INFRACOST_API_KEY on its own
+	// is too ambiguous to act on: it still exists in many CI environments for
+	// the runner flow, and switching those into self-hosted mode would
+	// silently disable Infracost Cloud.
+	if legacyKey := os.Getenv("INFRACOST_API_KEY"); legacyKey != "" &&
+		config.PricingAPIKey == "" &&
+		os.Getenv("INFRACOST_PRICING_API_ENDPOINT") != "" {
+		logging.Warnf("using INFRACOST_API_KEY as the self-hosted pricing API key because INFRACOST_PRICING_API_ENDPOINT is also set; please rename these to INFRACOST_CLI_PRICING_API_KEY and INFRACOST_CLI_PRICING_ENDPOINT")
+		config.PricingAPIKey = legacyKey
+	}
+
 	events.RegisterMetadata("cloudEnabled", os.Getenv("INFRACOST_ENABLE_CLOUD") == "true")
 	events.RegisterMetadata("dashboardEnabled", os.Getenv("INFRACOST_ENABLE_DASHBOARD") == "true")
 	events.RegisterMetadata("environment", config.Environment.String())
-	events.RegisterMetadata("isDefaultPricingApiEndpoint", config.PricingEndpoint == "https://pricing.api.infracost.io")
+	events.RegisterMetadata("isDefaultPricingApiEndpoint", config.PricingEndpoint == defaultPricingEndpoint)
+
+	// Self-hosted pricing mode: a static pricing API key means the user runs
+	// their own Cloud Pricing API and typically has no route to Infracost
+	// Cloud at all, so disable login (which would otherwise trigger an OAuth
+	// flow / JWKS fetch) and telemetry. This runs after the sub-configs'
+	// Process methods (process.Process is depth-first), so nothing below
+	// overwrites it.
+	config.Auth.Disabled = config.SelfHostedPricing()
+	config.Events.Disabled = config.SelfHostedPricing()
+}
+
+// SelfHostedPricing reports whether the CLI is in self-hosted pricing mode:
+// pricing calls authenticate with the static PricingAPIKey and every other
+// Infracost Cloud integration is disabled.
+func (config *Config) SelfHostedPricing() bool {
+	return config.PricingAPIKey != ""
+}
+
+// ValidateSelfHostedPricing errors when the self-hosted pricing key is set
+// but the endpoint still points at Infracost's SaaS pricing API — the SaaS
+// only accepts OAuth tokens, so every price lookup with a static key would
+// 403. Failing fast with the fix beats a confusing provider-plugin error.
+func (config *Config) ValidateSelfHostedPricing() error {
+	if config.SelfHostedPricing() && config.PricingEndpoint == defaultPricingEndpoint {
+		return fmt.Errorf("INFRACOST_CLI_PRICING_API_KEY is set but the pricing endpoint still points at %s, which does not accept static API keys — set INFRACOST_CLI_PRICING_ENDPOINT to your self-hosted Cloud Pricing API", defaultPricingEndpoint)
+	}
+	return nil
 }

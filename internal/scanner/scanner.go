@@ -39,6 +39,11 @@ type Scanner struct {
 	Dashboard       dashboard.Config
 	Currency        string
 	PricingEndpoint string
+	// PricingAPIKey enables self-hosted pricing mode: the static key is sent to
+	// providers to authenticate pricing calls (instead of an OAuth access
+	// token), and policy evaluation is disabled — providers receive empty
+	// (non-nil) policy slices so they evaluate none.
+	PricingAPIKey string
 	// FetchAuth carries transport-level auth for remote fetches (the developer's
 	// on-disk SSH keys). Passed through to every project's GenericOptions.
 	FetchAuth *options.FetchAuth
@@ -193,9 +198,13 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 
 	repositoryName := runParameters.RepositoryName
 
+	// UsageDefaults is empty when the scan runs without Infracost Cloud
+	// (self-hosted pricing mode passes a zero-value RunParameters).
 	usageDefaults := new(event.UsageDefaults)
-	if err := pj.Unmarshal(runParameters.UsageDefaults, usageDefaults); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal usage defaults: %w", err)
+	if len(runParameters.UsageDefaults) > 0 {
+		if err := pj.Unmarshal(runParameters.UsageDefaults, usageDefaults); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal usage defaults: %w", err)
+		}
 	}
 
 	var repoConfigOpts []repoconfig.GenerationOption
@@ -311,6 +320,16 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		}
 	}
 
+	// Self-hosted pricing mode never evaluates policies: the slices must be
+	// empty but non-nil — a nil FinopsPolicies tells the provider to evaluate
+	// every built-in policy (see ScanProjectOptions), which is exactly what we
+	// don't want here. This also overrides INFRACOST_CLI_USE_ALL_LOCAL_POLICIES.
+	if s.PricingAPIKey != "" {
+		productionFilters = []*event.ProductionFilter{}
+		tagPolicies = []*event.TagPolicy{}
+		finopsPolicies = []*event.FinopsPolicySettings{}
+	}
+
 	cacheDir := cache.ParserDir()
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create parser cache directory: %w", err)
@@ -329,6 +348,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			RepositoryName:    repositoryName,
 			OrgID:             runParameters.OrganizationID,
 			PricingEndpoint:   s.PricingEndpoint,
+			PricingAPIKey:     s.PricingAPIKey,
 			Currency:          result.Config.Currency,
 			TraceID:           trace.ID,
 			ProductionFilters: productionFilters,

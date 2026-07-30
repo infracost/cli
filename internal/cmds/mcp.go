@@ -143,6 +143,15 @@ func requireSessionReadyMiddleware(cfg *config.Config, source oauth2.TokenSource
 				return next(ctx, method, req)
 			}
 
+			// Self-hosted pricing mode: there is no Infracost Cloud login or
+			// org to resolve — the static pricing API key is the only
+			// credential. Tools that do require the Cloud fail downstream
+			// with an actionable "disabled because INFRACOST_CLI_PRICING_API_KEY
+			// is set" error.
+			if cfg.SelfHostedPricing() {
+				return next(ctx, method, req)
+			}
+
 			// Auth gate: every tool needs a token. Force resolution now
 			// so the readable "run infracost auth login" guidance is
 			// returned instead of an opaque downstream API failure.

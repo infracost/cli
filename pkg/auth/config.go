@@ -44,6 +44,13 @@ type Config struct {
 
 	Environment string `flagvalue:"environment"`
 
+	// Disabled disables all authentication against Infracost Cloud. Set in
+	// self-hosted pricing mode (INFRACOST_CLI_PRICING_API_KEY): commands that
+	// require Infracost Cloud fail with an actionable error instead of
+	// triggering a login, and cached tokens are never validated (validation
+	// fetches JWKS over the network, which such environments may not reach).
+	Disabled bool
+
 	source oauth2.TokenSource
 }
 
@@ -145,6 +152,10 @@ func (c *Config) Token(ctx context.Context) (oauth2.TokenSource, error) {
 // This function allows reuse of an earlier login attempt without risking the log in flow launching when the caller
 // requires a non-interactive prompt (such as when logging errors).
 func (c *Config) TokenFromCache(ctx context.Context) oauth2.TokenSource {
+	if c.Disabled {
+		return nil
+	}
+
 	if c.source != nil {
 		return c.source
 	}
@@ -177,6 +188,10 @@ func isInteractive() bool {
 // Login performs the authentication flow (PKCE or Device Flow) and saves the token to the cache.
 // It first tries to load the token from the cache and validate it.
 func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
+	if c.Disabled {
+		return nil, fmt.Errorf("this command requires Infracost Cloud, which is disabled because INFRACOST_CLI_PRICING_API_KEY is set (self-hosted pricing mode)")
+	}
+
 	if len(c.AuthenticationToken) > 0 {
 		return c.AuthenticationToken, nil
 	}

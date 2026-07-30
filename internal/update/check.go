@@ -93,8 +93,13 @@ func compareVersions(current *semver.Version, latestStr string, method InstallMe
 }
 
 // skipUpdateCheck mirrors v0.10's logic: opt-out env, test runs, dev builds.
+// Self-hosted pricing mode also skips: those environments typically can't
+// reach releases.infracost.io, and an unanswered check would block exit.
 func skipUpdateCheck() bool {
 	if os.Getenv("INFRACOST_SKIP_UPDATE_CHECK") != "" {
+		return true
+	}
+	if os.Getenv("INFRACOST_CLI_PRICING_API_KEY") != "" {
 		return true
 	}
 	if isTestBinaryFn() {

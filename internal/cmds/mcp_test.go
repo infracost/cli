@@ -99,6 +99,21 @@ func TestRequireSessionReady_RecoveryToolsSkipOrgGate(t *testing.T) {
 	}
 }
 
+func TestRequireSessionReady_SelfHostedPricingSkipsGates(t *testing.T) {
+	// Self-hosted pricing mode has no Infracost Cloud login or org: even a
+	// failing token source and an empty OrgID must not block tool calls.
+	cfg := &config.Config{PricingAPIKey: "self-hosted-key"}
+	source := stubTokenSource{err: errors.New("authentication disabled")}
+
+	res, called := runGate(t, cfg, source, "tools/call", "scan")
+	if !called {
+		t.Fatal("next handler did not run in self-hosted pricing mode")
+	}
+	if isErrorResult(res) {
+		t.Fatalf("unexpected error result: %#v", res)
+	}
+}
+
 func TestRequireSessionReady_IgnoresNonToolCalls(t *testing.T) {
 	// A failing token source would block a tools/call, but other methods
 	// (e.g. the initialize handshake) must pass through untouched so the
