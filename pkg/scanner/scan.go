@@ -60,7 +60,12 @@ type ScanProjectOptions struct {
 	// long multi-project scans don't reuse an expired access token.
 	TokenSource oauth2.TokenSource
 	// AccessToken is a fallback for callers that don't have a refresh-capable token source.
-	AccessToken     string // nolint:gosec // G117: passed to providers, and not exposed
+	AccessToken string // nolint:gosec // G117: passed to providers, and not exposed
+	// PricingAPIKey is a static key for a self-hosted Cloud Pricing API. When
+	// set it is sent to providers as the pricing API key instead of the OAuth
+	// access token (which a self-hosted pricing API cannot validate), and the
+	// TokenSource is never consulted.
+	PricingAPIKey   string // nolint:gosec // G117: passed to providers, and not exposed
 	BranchName      string
 	RepositoryName  string
 	OrgID           string
@@ -261,10 +266,15 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		return nil, fmt.Errorf("failed to load provider plugins: %w", err)
 	}
 
-	// Refresh the access token once, immediately before the first provider
-	// call — skipped entirely when no provider plugins are loaded so we
-	// don't burn a refresh for a no-op scan.
-	if len(providerPlugins) > 0 && opts.TokenSource != nil {
+	// A static self-hosted pricing API key always wins: it is the only
+	// credential a self-hosted Cloud Pricing API accepts, so it must never be
+	// overwritten by an OAuth access token. Otherwise refresh the access token
+	// once, immediately before the first provider call — skipped entirely when
+	// no provider plugins are loaded so we don't burn a refresh for a no-op
+	// scan.
+	if opts.PricingAPIKey != "" {
+		input.Infracost.ApiKey = opts.PricingAPIKey
+	} else if len(providerPlugins) > 0 && opts.TokenSource != nil {
 		token, err := opts.TokenSource.Token()
 		if err != nil {
 			return nil, fmt.Errorf("failed to retrieve access token: %w", err)

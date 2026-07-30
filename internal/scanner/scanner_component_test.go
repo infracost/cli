@@ -447,6 +447,41 @@ projects:
 		require.Equal(t, 2, tokenSource.calls)
 	})
 
+	t.Run("self-hosted pricing key is sent to providers and disables policies", func(t *testing.T) {
+		dir := writeTestProject(t)
+		// Opting into local policies must not leak policy evaluation into
+		// self-hosted mode either — the empty policy config wins.
+		t.Setenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES", "true")
+
+		var inputs []*provider.TreeInput
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: awsTerraformParseResponse("aws_instance"),
+			awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
+			processValidator: func(_ *testing.T, input *provider.TreeInput) {
+				inputs = append(inputs, input)
+			},
+		})
+		s.PricingAPIKey = "self-hosted-static-key"
+
+		tokenSource := &sequenceTokenSource{tokens: []string{"oauth-token"}}
+		// Zero-value run parameters: self-hosted mode never fetches them, and
+		// the scan must cope with the empty usage defaults / policy fields.
+		result, err := s.Scan(context.Background(), dashboard.RunParameters{}, dir, "main", tokenSource, nil)
+		require.NoError(t, err)
+		require.Len(t, result.Projects, 1)
+		require.Len(t, result.Projects[0].Resources, 1)
+
+		require.NotEmpty(t, inputs)
+		for _, input := range inputs {
+			require.Equal(t, "self-hosted-static-key", input.Infracost.ApiKey,
+				"providers must receive the static pricing API key, not the OAuth token")
+			require.NotNil(t, input.FinopsPolicyConfig,
+				"self-hosted mode must send an empty policy config — nil means 'evaluate all built-in policies'")
+			require.Empty(t, input.FinopsPolicyConfig.Policies)
+		}
+		require.Equal(t, 0, tokenSource.calls, "self-hosted mode must never consult the OAuth token source")
+	})
+
 	t.Run("repo usage file is loaded", func(t *testing.T) {
 		dir := writeTestProject(t, `version: "0.3"
 usage_file: usage.yml

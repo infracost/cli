@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/infracost/cli/internal/api"
+	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/internal/config"
@@ -72,13 +73,21 @@ func Price(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, s
 	repositoryURL := vcs.GetRemoteURL(dir)
 	branchName := vcs.GetCurrentBranch(dir)
 
-	client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
-	runParameters, err := client.RunParameters(ctx, repositoryURL, branchName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve run parameters: %w", err)
-	}
-	if cfg.Org == "" {
-		cfg.OrgID = runParameters.OrganizationID
+	// Self-hosted pricing mode prices without Infracost Cloud: run parameters
+	// stay zero-valued, so no policies or usage defaults apply.
+	var runParameters dashboard.RunParameters
+	if cfg.SelfHostedPricing() {
+		logging.Infof("INFRACOST_CLI_PRICING_API_KEY is set: pricing against the self-hosted pricing API only; Infracost Cloud features are disabled")
+	} else {
+		client := cfg.Dashboard.Client(api.Client(ctx, source, cfg.OrgID))
+		var rpErr error
+		runParameters, rpErr = client.RunParameters(ctx, repositoryURL, branchName)
+		if rpErr != nil {
+			return nil, fmt.Errorf("failed to retrieve run parameters: %w", rpErr)
+		}
+		if cfg.Org == "" {
+			cfg.OrgID = runParameters.OrganizationID
+		}
 	}
 
 	events.RegisterMetadata("orgId", cfg.OrgID)
@@ -91,6 +100,7 @@ func Price(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, s
 		Dashboard:       cfg.Dashboard,
 		Currency:        in.Currency,
 		PricingEndpoint: cfg.PricingEndpoint,
+		PricingAPIKey:   cfg.PricingAPIKey,
 		FetchAuth:       scanner.SSHFetchAuthFromValue(cfg.SSHKeyFile),
 	}
 	startTime := time.Now()
@@ -148,12 +158,18 @@ func PriceCmd(cfg *config.Config) *cobra.Command {
 				outputFormat = "json"
 			}
 
-			source, err := cfg.Auth.Token(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("failed to log in: %w", err)
-			}
-			if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
-				return err
+			// Self-hosted pricing mode needs no login or org: the static
+			// pricing API key is the only credential used, and no Infracost
+			// Cloud API is contacted.
+			var source oauth2.TokenSource
+			if !cfg.SelfHostedPricing() {
+				source, err = cfg.Auth.Token(cmd.Context())
+				if err != nil {
+					return fmt.Errorf("failed to log in: %w", err)
+				}
+				if err := resolveOrg(cmd.Context(), cfg, source); err != nil {
+					return err
+				}
 			}
 
 			var result PriceResult
