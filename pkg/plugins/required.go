@@ -31,10 +31,6 @@ type requiredPlugin struct {
 	// we can't ask it directly.
 	DisplayName string
 	Type        string
-	// RequiresK8sPlugins gates this plugin on the enableK8sPlugins run-parameter
-	// feature flag (a per-org LaunchDarkly rollout). When the flag is off the
-	// plugin is neither downloaded nor loaded.
-	RequiresK8sPlugins bool
 }
 
 // requiredPlugins is the set of plugins the CLI manages automatically.
@@ -53,29 +49,15 @@ var requiredPlugins = []requiredPlugin{
 	{Key: "aws", Name: "infracost-provider-aws", LegacyName: "infracost-plugin-aws", DisplayName: "infracost/aws", Type: pluginTypeProvider},
 	{Key: "google", Name: "infracost-provider-google", LegacyName: "infracost-plugin-google", DisplayName: "infracost/google", Type: pluginTypeProvider},
 	{Key: "azure", Name: "infracost-provider-azure", LegacyName: "infracost-plugin-azure", DisplayName: "infracost/azure", Type: pluginTypeProvider},
-	// Kubernetes parser and provider are gated on the enableK8sPlugins run
-	// parameter. They share the "kubernetes" key (and so the same version pin
-	// env var) — namespacing by type keeps their asset names and on-disk
-	// binaries distinct.
-	{Key: "kubernetes", Name: "infracost-parser-kubernetes", DisplayName: "infracost/kubernetes", Type: pluginTypeParser, RequiresK8sPlugins: true},
-	{Key: "kubernetes", Name: "infracost-provider-kubernetes", DisplayName: "infracost/kubernetes", Type: pluginTypeProvider, RequiresK8sPlugins: true},
+	// The Kubernetes parser and provider share the "kubernetes" key (and so the
+	// same version pin env var) — namespacing by type keeps their asset names
+	// and on-disk binaries distinct.
+	{Key: "kubernetes", Name: "infracost-parser-kubernetes", DisplayName: "infracost/kubernetes", Type: pluginTypeParser},
+	{Key: "kubernetes", Name: "infracost-provider-kubernetes", DisplayName: "infracost/kubernetes", Type: pluginTypeProvider},
 }
 
 // requiredPluginVersion returns the user-pinned version for the required
 // plugin with the given key, or "" if no pin is set.
 func requiredPluginVersion(key string) string {
 	return os.Getenv("INFRACOST_CLI_PLUGIN_" + strings.ToUpper(key) + "_VERSION")
-}
-
-// gatedPluginNames returns the set of reported plugin names (as surfaced by
-// GetPluginInfo) that are gated behind the enableK8sPlugins feature flag. Used
-// to skip their execution when the flag is off.
-func gatedPluginNames() map[string]bool {
-	names := make(map[string]bool)
-	for _, required := range requiredPlugins {
-		if required.RequiresK8sPlugins {
-			names[required.DisplayName] = true
-		}
-	}
-	return names
 }

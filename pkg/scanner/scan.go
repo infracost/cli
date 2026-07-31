@@ -120,15 +120,6 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		return nil, fmt.Errorf("failed to load parser plugin for project type %q: %w", projectType, err)
 	}
 
-	// Skip projects handled by a feature-gated parser (currently the Kubernetes
-	// parser when enableK8sPlugins is off). The plugin is still installed and
-	// autodetection still recognizes its projects; we just don't execute it. A
-	// nil result signals the caller to drop the project.
-	if opts.Plugins.SkipPluginExecution(parserPlugin.Info.GetName()) {
-		logging.Debugf("skipping project %q handled by gated plugin %q (feature flag disabled)", opts.Project.Name, parserPlugin.Info.GetName())
-		return nil, nil
-	}
-
 	overrides := make(map[string]any)
 	if opts.PluginOptions != nil {
 		for _, key := range []string{string(projectType), parserPlugin.Info.GetName(), strings.TrimPrefix(parserPlugin.Info.GetName(), "infracost/")} {
