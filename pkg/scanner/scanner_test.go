@@ -460,7 +460,7 @@ projects:
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -483,7 +483,7 @@ projects:
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -514,7 +514,7 @@ projects:
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -526,7 +526,7 @@ projects:
 	t.Run("auto-generates config for empty directory", func(t *testing.T) {
 		dir := t.TempDir()
 
-		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir)
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, "")
 		if err != nil {
 			t.Fatal(err)
 		}

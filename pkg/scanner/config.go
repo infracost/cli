@@ -25,10 +25,10 @@ func LoadUsageData(r io.Reader, defaults *usage.Usage) (*usage.Usage, error) {
 // LoadOrGenerateRepositoryConfig loads an infracost.yml config from the given directory,
 // or generates one if it doesn't exist. If an infracost.yml.tmpl template exists, it is
 // used as the basis for generation.
-func LoadOrGenerateRepositoryConfig(ctx context.Context, dir string, opts ...repoconfig.GenerationOption) (*repoconfig.Config, error) {
+func LoadOrGenerateRepositoryConfig(ctx context.Context, dir, pluginDir string, opts ...repoconfig.GenerationOption) (*repoconfig.Config, error) {
 	configPath := filepath.Join(dir, RepoConfigFilename)
 	if fileExists(configPath) {
-		c, err := repoconfig.LoadConfigFile(configPath, dir)
+		c, err := repoconfig.LoadConfigFile(ctx, configPath, dir, repoconfig.WithLoadPluginDir(pluginDir))
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %w", err)
 		}
@@ -50,6 +50,8 @@ func LoadOrGenerateRepositoryConfig(ctx context.Context, dir string, opts ...rep
 		}
 		opts = append(opts, repoconfig.WithTemplate(string(content)))
 	}
+
+	opts = append(opts, repoconfig.WithPluginDir(pluginDir))
 
 	c, err := repoconfig.Generate(ctx, dir, opts...)
 	if err != nil {

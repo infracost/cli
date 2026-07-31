@@ -218,8 +218,6 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		repoConfigOpts = append(repoConfigOpts, repoconfig.WithTemplate(runParameters.ConfigTemplate))
 	}
 
-	repoConfigOpts = append(repoConfigOpts, repoconfig.WithPluginDir(s.Plugins.PluginDir()))
-
 	// Ensure required plugins are installed before generating the repo
 	// config — autodetection delegates to plugin identifiers, so a missing
 	// binary means its file types (e.g. terraform plan JSON) won't be
@@ -242,7 +240,7 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 
 	}
 
-	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(ctx, absoluteDirectory, repoConfigOpts...)
+	repoConfig, err := pkgscanner.LoadOrGenerateRepositoryConfig(ctx, absoluteDirectory, s.Plugins.PluginDir(), repoConfigOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("repository configuration error: %w", err)
 	}
