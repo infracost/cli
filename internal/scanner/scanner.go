@@ -59,28 +59,7 @@ type TaggingPolicy struct {
 	*event.TagPolicy
 }
 
-// applyFeatureFlags reads the per-org feature flags returned in the run
-// parameters and applies the ones the CLI acts on to the plugin config.
-// Currently this gates the Kubernetes plugins on enableK8sPlugins. It must run
-// before any plugin is loaded so the manager knows whether to download and load
-// them (EnsurePlugins builds the Manager once and memoizes it).
-func (s *Scanner) applyFeatureFlags(runParameters *dashboard.RunParameters) error {
-	if runParameters == nil || len(runParameters.FeatureFlags) == 0 {
-		return nil
-	}
-	flags := new(event.FeatureFlags)
-	if err := pj.Unmarshal(runParameters.FeatureFlags, flags); err != nil {
-		return fmt.Errorf("failed to unmarshal feature flags: %w", err)
-	}
-	s.Plugins.EnableK8sPlugins = flags.GetEnableK8SPlugins()
-	return nil
-}
-
 func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.RunParameters, providerFilter []string) ([]FinOpsPolicy, []TaggingPolicy, error) {
-	if err := s.applyFeatureFlags(runParameters); err != nil {
-		return nil, nil, err
-	}
-
 	var tagPolicies []*event.TagPolicy
 	var finopsPolicySettings []*event.FinopsPolicySettings
 	var hasRunParameters bool
@@ -189,12 +168,6 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 
 func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameters, absolutePath, branchName string, tokenSource oauth2.TokenSource, pluginOpts pkgscanner.PluginOpts) (*format.Result, error) {
 	var result format.Result
-
-	// Apply run-parameter feature flags (e.g. the Kubernetes plugin gate) before
-	// EnsurePlugins loads any plugins below.
-	if err := s.applyFeatureFlags(&runParameters); err != nil {
-		return nil, err
-	}
 
 	repositoryName := runParameters.RepositoryName
 
@@ -362,12 +335,6 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan project %q: %w", project.Name, err)
 		}
-		// A nil result means the project was intentionally skipped (e.g. a
-		// Kubernetes project while the k8s plugins are feature-gated off).
-		if projectResult == nil {
-			continue
-		}
-
 		result.Projects = append(result.Projects, &format.ProjectResult{
 			Config:           projectResult.Config,
 			Diagnostics:      projectResult.Diagnostics,

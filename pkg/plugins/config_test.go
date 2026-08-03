@@ -561,8 +561,7 @@ func TestEnsureInstalled(t *testing.T) {
 		defer srv.Close()
 
 		cacheDir := t.TempDir()
-		// Every required plugin is downloaded unconditionally, including the
-		// feature-gated Kubernetes ones — the gate only affects execution.
+		// Every required plugin is downloaded unconditionally.
 		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
 		_, err := c.EnsurePlugins(context.Background())
 		require.NoError(t, err)
@@ -637,52 +636,21 @@ func TestUpdatePlugins(t *testing.T) {
 	})
 }
 
-func TestSkipPluginExecution(t *testing.T) {
-	// The Kubernetes plugins are the gated ones; sanity check the source of
-	// truth so this test can't silently pass if that changes.
-	require.Contains(t, gatedPluginNames(), "infracost/kubernetes")
-
-	t.Run("skips gated plugins when the flag is off", func(t *testing.T) {
-		c := &Config{EnableK8sPlugins: false}
-		assert.True(t, c.SkipPluginExecution("infracost/kubernetes"))
-		assert.False(t, c.SkipPluginExecution("infracost/aws"))
-	})
-
-	t.Run("runs gated plugins when the flag is on", func(t *testing.T) {
-		c := &Config{EnableK8sPlugins: true}
-		assert.False(t, c.SkipPluginExecution("infracost/kubernetes"))
-		assert.False(t, c.SkipPluginExecution("infracost/aws"))
-	})
-}
-
-func TestProviderPluginsFiltersGated(t *testing.T) {
+func TestProviderPluginsReturnsAll(t *testing.T) {
 	providers := []*ProviderPlugin{
 		{Info: &pb.GetPluginInfoResponse{Name: "infracost/aws"}},
 		{Info: &pb.GetPluginInfoResponse{Name: "infracost/kubernetes"}},
 	}
-	loader := func(context.Context) ([]*ProviderPlugin, error) { return providers, nil }
+	c := &Config{LoadProviderPlugins: func(context.Context) ([]*ProviderPlugin, error) { return providers, nil }}
 
-	names := func(ps []*ProviderPlugin) []string {
-		out := make([]string, len(ps))
-		for i, p := range ps {
-			out[i] = p.Info.GetName()
-		}
-		return out
+	got, err := c.ProviderPlugins(context.Background())
+	require.NoError(t, err)
+
+	names := make([]string, len(got))
+	for i, p := range got {
+		names[i] = p.Info.GetName()
 	}
-
-	t.Run("excludes the kubernetes provider when the flag is off", func(t *testing.T) {
-		c := &Config{EnableK8sPlugins: false, LoadProviderPlugins: loader}
-		got, err := c.ProviderPlugins(context.Background())
-		require.NoError(t, err)
-		assert.Equal(t, []string{"infracost/aws"}, names(got))
-	})
-
-	t.Run("includes the kubernetes provider when the flag is on", func(t *testing.T) {
-		c := &Config{EnableK8sPlugins: true, LoadProviderPlugins: loader}
-		got, err := c.ProviderPlugins(context.Background())
-		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"infracost/aws", "infracost/kubernetes"}, names(got))
-	})
+	assert.ElementsMatch(t, []string{"infracost/aws", "infracost/kubernetes"}, names)
 }
 
 func TestRequiredPluginVersionEnv(t *testing.T) {
