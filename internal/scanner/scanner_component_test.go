@@ -713,6 +713,57 @@ projects:
 		}
 	})
 
+	t.Run("project type passed to providers", func(t *testing.T) {
+		tests := []struct {
+			name         string
+			projectType  string
+			expectedType string
+		}{
+			// An untyped project is resolved by probing the directory, which
+			// holds only main.tf here.
+			{"untyped project resolves to terraform", "", "terraform"},
+			{"explicit type passes through", "terragrunt", "terragrunt"},
+			// CDK is preprocessed into CloudFormation templates, so it reports
+			// as cloudformation.
+			{"cdk reports as cloudformation", "cdk_python", "cloudformation"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				config := `version: "0.3"
+projects:
+  - path: .
+    name: test-project
+`
+				if tt.projectType != "" {
+					config += "    type: " + tt.projectType + "\n"
+				}
+				dir := writeTestProject(t, config)
+
+				s := newTestScanner(t, testScannerOpts{
+					parseResponse: awsTerraformParseResponse("aws_instance"),
+					awsResources:  []*provider.Resource{{Name: "aws_instance.web", Type: "aws_instance"}},
+					processValidator: func(t *testing.T, input *provider.TreeInput) {
+						t.Helper()
+						if input.ProjectInfo == nil {
+							t.Fatal("expected ProjectInfo to be set")
+						}
+						if input.ProjectInfo.Type != tt.expectedType {
+							t.Errorf("expected project type %q, got %q", tt.expectedType, input.ProjectInfo.Type)
+						}
+					},
+				})
+
+				_, err := s.Scan(context.Background(), dashboard.RunParameters{
+					UsageDefaults: emptyUsageDefaults(t),
+				}, dir, "main", auth.AuthenticationToken("test-token"), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	})
+
 	t.Run("finops policy settings passed to providers", func(t *testing.T) {
 		dir := writeTestProject(t)
 

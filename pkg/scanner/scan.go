@@ -18,6 +18,7 @@ import (
 	"github.com/infracost/go-proto/pkg/address"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 	goprotoevent "github.com/infracost/go-proto/pkg/event"
+	projecttype "github.com/infracost/go-proto/pkg/project"
 	providerconv "github.com/infracost/go-proto/pkg/providers"
 	"github.com/infracost/go-proto/pkg/rat"
 	treeresource "github.com/infracost/go-proto/pkg/tree/resource"
@@ -114,7 +115,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	// Evaluate production filters.
 	isProduction := EvaluateProductionFilters(opts.ProductionFilters, opts.RepositoryName, opts.BranchName, opts.Project.Name)
 
-	projectType := finalProjectType(opts.Project.Type, absoluteProjectPath)
+	projectType := projecttype.Resolve(opts.Project.Type, absoluteProjectPath)
 	parserPlugin, err := opts.Plugins.ParserPluginForProject(ctx, string(projectType))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load parser plugin for project type %q: %w", projectType, err)
@@ -212,6 +213,9 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 			BranchName:   opts.BranchName,
 			Workspace:    opts.Project.Terraform.Workspace,
 			IsProduction: isProduction,
+			// The resolved type, not the configured one, so an untyped project
+			// reports what it was actually parsed as.
+			Type: string(projectType),
 		},
 		PreviousResourceAddresses: opts.PreviousResourceAddresses,
 		Usage:                     projectUsage,
@@ -294,22 +298,6 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	projectResult.TotalMonthlyCost = TotalMonthlyCostFromResources(projectResult.Resources)
 
 	return projectResult, nil
-}
-
-func finalProjectType(projectType repoconfig.ProjectType, absoluteProjectPath string) repoconfig.ProjectType {
-	if projectType == repoconfig.ProjectTypeUnknown {
-		if stat, err := os.Stat(filepath.Join(absoluteProjectPath, "terragrunt.hcl")); err == nil && !stat.IsDir() {
-			return repoconfig.ProjectTypeTerragrunt
-		}
-		if stat, err := os.Stat(filepath.Join(absoluteProjectPath, "terragrunt.hcl.json")); err == nil && !stat.IsDir() {
-			return repoconfig.ProjectTypeTerragrunt
-		}
-		return repoconfig.ProjectTypeTerraform
-	}
-	if strings.HasPrefix(string(projectType), "cdk_") {
-		return repoconfig.ProjectTypeCloudFormation
-	}
-	return projectType
 }
 
 func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
