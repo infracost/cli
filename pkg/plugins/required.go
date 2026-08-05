@@ -45,6 +45,7 @@ var requiredPlugins = []requiredPlugin{
 	{Key: "terragrunt", Name: "infracost-parser-terragrunt", LegacyName: "infracost-plugin-terragrunt", DisplayName: "infracost/terragrunt", Type: pluginTypeParser},
 	{Key: "cloudformation", Name: "infracost-parser-cloudformation", LegacyName: "infracost-plugin-cloudformation", DisplayName: "infracost/cloudformation", Type: pluginTypeParser},
 	{Key: "ciscostacks", Name: "infracost-parser-ciscostacks", LegacyName: "infracost-plugin-ciscostacks", DisplayName: "infracost/ciscostacks", Type: pluginTypeParser},
+	{Key: "arm", Name: "infracost-parser-arm", DisplayName: "infracost/arm", Type: pluginTypeParser},
 	{Key: "terraform-plan", Name: "infracost-parser-terraform-plan", LegacyName: "infracost-plugin-terraform-plan", DisplayName: "infracost/terraform-plan", Type: pluginTypeParser},
 	{Key: "aws", Name: "infracost-provider-aws", LegacyName: "infracost-plugin-aws", DisplayName: "infracost/aws", Type: pluginTypeProvider},
 	{Key: "google", Name: "infracost-provider-google", LegacyName: "infracost-plugin-google", DisplayName: "infracost/google", Type: pluginTypeProvider},
