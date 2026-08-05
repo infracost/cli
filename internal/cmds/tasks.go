@@ -167,10 +167,10 @@ type UpdateTaskStatusInput struct {
 // for the verbs whose underlying Agents endpoint returns them — see the
 // per-verb behavior on UpdateTaskStatus.
 type UpdateTaskStatusResult struct {
-	Task               agents.Task `json:"task"`
-	LearningID         string      `json:"learning_id,omitempty"`
-	DismissedActionIDs []string    `json:"dismissed_action_ids,omitempty"`
-	ConfirmedActionIDs []string    `json:"confirmed_action_ids,omitempty"`
+	Task               TaskOutput `json:"task"`
+	LearningID         string     `json:"learning_id,omitempty"`
+	DismissedActionIDs []string   `json:"dismissed_action_ids,omitempty"`
+	ConfirmedActionIDs []string   `json:"confirmed_action_ids,omitempty"`
 }
 
 // taskUpdateVerb is the internal discriminator. Kept distinct from
@@ -227,7 +227,7 @@ func UpdateTaskStatus(ctx context.Context, cfg *config.Config, source oauth2.Tok
 			return UpdateTaskStatusResult{}, fmt.Errorf("confirming task: %w", err)
 		}
 		return UpdateTaskStatusResult{
-			Task:               resp.Task,
+			Task:               taskOutput(resp.Task),
 			ConfirmedActionIDs: resp.ConfirmedActionIDs,
 		}, nil
 
@@ -240,7 +240,7 @@ func UpdateTaskStatus(ctx context.Context, cfg *config.Config, source oauth2.Tok
 			return UpdateTaskStatusResult{}, fmt.Errorf("correcting task: %w", err)
 		}
 		return UpdateTaskStatusResult{
-			Task:               resp.Task,
+			Task:               taskOutput(resp.Task),
 			LearningID:         resp.LearningID,
 			DismissedActionIDs: resp.DismissedActionIDs,
 		}, nil
@@ -257,7 +257,7 @@ func UpdateTaskStatus(ctx context.Context, cfg *config.Config, source oauth2.Tok
 		// wire (the store dismisses linked actions but the route returns
 		// just the task), so DismissedActionIDs is intentionally empty
 		// here even though server-side actions may have moved.
-		return UpdateTaskStatusResult{Task: task}, nil
+		return UpdateTaskStatusResult{Task: taskOutput(task)}, nil
 	}
 	return UpdateTaskStatusResult{}, fmt.Errorf("unreachable: unhandled task update verb %q", verb)
 }

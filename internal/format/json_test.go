@@ -106,8 +106,8 @@ func TestComputeSummary(t *testing.T) {
 							{
 								Name: "aws_ebs_volume.data",
 								Issues: []FinopsIssueOutput{
-									{Description: "Use GP3", MonthlySavings: rat.New(5)},
-									{Description: "Smaller IOPS", MonthlySavings: rat.New(3)},
+									{Description: "Use GP3", YearlySavings: rat.New(5)},
+									{Description: "Smaller IOPS", YearlySavings: rat.New(3)},
 								},
 							},
 						},
@@ -132,7 +132,7 @@ func TestComputeSummary(t *testing.T) {
 						FailingResources: []FinopsFailingResourceOutput{
 							{
 								Name:   "aws_ebs_volume.data", // same address as in `web` — shouldn't double-count distinct
-								Issues: []FinopsIssueOutput{{Description: "Use GP3", MonthlySavings: rat.New(2)}},
+								Issues: []FinopsIssueOutput{{Description: "Use GP3", YearlySavings: rat.New(2)}},
 							},
 						},
 					},
@@ -171,8 +171,8 @@ func TestComputeSummary(t *testing.T) {
 	assert.Equal(t, 2, s.DistinctFailingFinopsResources, "the same address fails in both projects → counts once per project")
 
 	// Total potential savings = 5 + 3 + 2 = 10
-	assert.True(t, s.TotalPotentialMonthlySavings.Equals(rat.New(10)),
-		"sum of monthly_savings across all FinOps issues; got %s", s.TotalPotentialMonthlySavings.String())
+	assert.True(t, s.TotalPotentialYearlySavings.Equals(rat.New(10)),
+		"sum of yearly_savings across all FinOps issues; got %s", s.TotalPotentialYearlySavings.String())
 
 	// Tagging: helper added 1 policy with 2 failing resources in `web`.
 	assert.Equal(t, 1, s.TaggingPolicies)
@@ -192,7 +192,7 @@ func TestComputeSummaryEmpty(t *testing.T) {
 	assert.Equal(t, 0, s.Projects)
 	assert.Equal(t, 0, s.Resources)
 	assert.True(t, s.TotalMonthlyCost.IsZero(), "total cost on empty output is zero")
-	assert.Nil(t, s.TotalPotentialMonthlySavings, "no savings → field omitted from summary")
+	assert.Nil(t, s.TotalPotentialYearlySavings, "no savings → field omitted from summary")
 	assert.Equal(t, 0, s.FailingFinopsPolicies)
 	assert.Equal(t, 0, s.FailingTaggingPolicies)
 }

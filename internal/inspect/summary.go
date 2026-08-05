@@ -66,15 +66,15 @@ type SummaryView struct {
 // requested by inspect's JSON callers so they don't need a follow-up call to
 // list the failing items.
 //
-// Currency and TotalMonthlySavings live here (not on SummaryView) because
+// Currency and TotalYearlySavings live here (not on SummaryView) because
 // inspect_summary is a standalone MCP return — there's no outer envelope to
-// carry the currency for the agent — and TotalMonthlySavings is the value
+// carry the currency for the agent — and TotalYearlySavings is the value
 // inspect's `--total-savings` printout already computes, surfaced as a typed
 // field so MCP callers don't need a follow-up tool call to get it.
 type Summary struct {
 	SummaryView
 	Currency               string                   `json:"currency"`
-	TotalMonthlySavings    *rat.Rat                 `json:"total_monthly_savings,omitempty"`
+	TotalYearlySavings     *rat.Rat                 `json:"total_yearly_savings,omitempty"`
 	FailingPolicyList      []FailingPolicyEntry     `json:"failing_policy_list,omitempty"`
 	TriggeredGuardrailList []format.GuardrailOutput `json:"triggered_guardrail_list,omitempty"`
 	OverBudgetList         []format.BudgetOutput    `json:"over_budget_list,omitempty"`
@@ -129,8 +129,8 @@ func summaryFieldValue(s Summary, field, currency string) string {
 		return fmt.Sprintf("%d", s.FreeResources)
 	case "monthly_cost":
 		return humanMoney(s.MonthlyCost, currency)
-	case "total_monthly_savings":
-		return humanMoney(s.TotalMonthlySavings, currency)
+	case "total_yearly_savings":
+		return humanMoney(s.TotalYearlySavings, currency)
 	case "finops_policies":
 		return fmt.Sprintf("%d", s.FinopsPolicies)
 	case "failing_policies":
@@ -207,7 +207,6 @@ func WriteSummary(w io.Writer, data *format.Output, opts Options) error {
 	var inner bytes.Buffer
 	fmt.Fprintln(&inner, ui.Bold("Scan Summary"))
 	fmt.Fprintln(&inner)
-
 
 	rows := []kvRow{}
 	if s.Projects > 1 {
@@ -425,7 +424,7 @@ func BuildSummaryView(data *format.Output) SummaryView {
 }
 
 // BuildSummary returns the inspect-only superset of [BuildSummaryView],
-// adding currency, total monthly savings, and the failing-policy /
+// adding currency, total yearly savings, and the failing-policy /
 // triggered-guardrail / over-budget drill-in lists used by `inspect --json`
 // so its consumers don't need a follow-up call to enumerate the failures.
 // The aggregate counts shared with the MCP summary view are computed
@@ -436,7 +435,7 @@ func BuildSummary(data *format.Output) Summary {
 		Currency:    data.Currency,
 	}
 	if total := totalFinopsSavings(data); !total.IsZero() {
-		s.TotalMonthlySavings = total
+		s.TotalYearlySavings = total
 	}
 
 	for _, p := range data.Projects {

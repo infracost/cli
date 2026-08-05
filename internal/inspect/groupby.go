@@ -839,8 +839,8 @@ func writePolicyOverview(w io.Writer, data *format.Output, opts Options) error {
 				writeResourceHeader(&inner, r.project, r.name, r.file, maxWidth)
 				for _, issue := range r.issues {
 					content := issue.Description
-					if issue.MonthlySavings != nil && !issue.MonthlySavings.IsZero() {
-						content += " " + ui.Muted(fmt.Sprintf("— savings %s/mo", humanMoney(issue.MonthlySavings, data.Currency)))
+					if issue.YearlySavings != nil && !issue.YearlySavings.IsZero() {
+						content += " " + ui.Muted(fmt.Sprintf("— savings %s/yr", humanMoney(issue.YearlySavings, data.Currency)))
 					}
 					writeWrapped(&inner, "   ", content, maxWidth)
 				}
@@ -1019,8 +1019,8 @@ func writePolicyResourceDetail(w io.Writer, data *format.Output, opts Options) e
 				for _, issue := range fr.Issues {
 					fmt.Fprintln(&inner)
 					rows := []kvRow{{"Issue", issue.Description}}
-					if issue.MonthlySavings != nil && !issue.MonthlySavings.IsZero() {
-						rows = append(rows, kvRow{"Savings", humanMoney(issue.MonthlySavings, data.Currency) + "/mo"})
+					if issue.YearlySavings != nil && !issue.YearlySavings.IsZero() {
+						rows = append(rows, kvRow{"Savings", humanMoney(issue.YearlySavings, data.Currency) + "/yr"})
 					}
 					if issue.Address != "" {
 						rows = append(rows, kvRow{"Address", issue.Address})
@@ -1170,7 +1170,7 @@ func writeBudgetDetail(w io.Writer, data *format.Output, br format.BudgetOutput)
 		fmt.Fprintln(&inner, ui.Bold("FinOps violations on matching resources"))
 		fmt.Fprintln(&inner)
 		for _, s := range savings {
-			fmt.Fprintf(&inner, "  %s: up to %s/mo (%s %s)\n",
+			fmt.Fprintf(&inner, "  %s: up to %s/yr (%s %s)\n",
 				ui.Accent(s.policyName),
 				humanMoney(s.savings, data.Currency),
 				humanInt(s.resourceCount),
@@ -1188,8 +1188,9 @@ func writeBudgetDetail(w io.Writer, data *format.Output, br format.BudgetOutput)
 }
 
 // budgetStatusValue renders the colored status pill for a budget row.
-//   over-budget → red 💸 "OVER by $X"
-//   under       → green ✓ "$X remaining (Y% left)"
+//
+//	over-budget → red 💸 "OVER by $X"
+//	under       → green ✓ "$X remaining (Y% left)"
 func budgetStatusValue(br format.BudgetOutput, currency string) string {
 	if br.OverBudget {
 		overBy := br.CurrentCost.Sub(br.Amount)
@@ -1268,8 +1269,8 @@ func collectBudgetSavings(data *format.Output, budgetTags []format.BudgetTagOutp
 				}
 				count++
 				for _, iss := range fr.Issues {
-					if iss.MonthlySavings != nil && iss.MonthlySavings.GreaterThanZero() {
-						savings = savings.Add(iss.MonthlySavings)
+					if iss.YearlySavings != nil && iss.YearlySavings.GreaterThanZero() {
+						savings = savings.Add(iss.YearlySavings)
 					}
 				}
 			}

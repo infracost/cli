@@ -10,7 +10,7 @@ import (
 // names are also used as JSON keys when --json/--llm is set, so consumers
 // can rely on a stable schema across renders.
 var (
-	fieldsTopSavings        = []string{"address", "policy", "policy_slug", "project", "monthly_savings", "description"}
+	fieldsTopSavings        = []string{"address", "policy", "policy_slug", "project", "yearly_savings", "description"}
 	fieldsFilteredResources = []string{"address", "type", "project", "monthly_cost", "is_free"}
 
 	// Human defaults trim the machine-oriented columns from the tables a
@@ -18,7 +18,7 @@ var (
 	// selectable via --fields and unchanged for --json/--llm.
 	//   policy_slug — a machine key that duplicates the human policy name.
 	//   is_free     — redundant with a $0 monthly_cost for a reader.
-	fieldsTopSavingsHuman        = []string{"address", "policy", "project", "monthly_savings", "description"}
+	fieldsTopSavingsHuman        = []string{"address", "policy", "project", "yearly_savings", "description"}
 	fieldsFilteredResourcesHuman = []string{"address", "type", "project", "monthly_cost"}
 
 	// Summary fields are the scalar metrics on Summary. Lists like
@@ -27,7 +27,7 @@ var (
 	fieldsSummary = []string{
 		"projects", "projects_with_errors",
 		"resources", "costed_resources", "free_resources",
-		"monthly_cost", "total_monthly_savings",
+		"monthly_cost", "total_yearly_savings",
 		"finops_policies", "failing_policies", "distinct_failing_finops_resources",
 		"tagging_policies", "failing_tagging_policies", "distinct_failing_tagging_resources",
 		"guardrails", "triggered_guardrails",

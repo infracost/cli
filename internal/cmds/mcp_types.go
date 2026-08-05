@@ -374,7 +374,7 @@ type InspectDiagnosticsInput struct {
 
 // inspectSummaryToolOutputSchema returns the JSON schema describing
 // [inspect.Summary]. The shape carries multiple rat.Rat fields (monthly
-// cost on Summary, on each ProjectSummary, total monthly savings) plus
+// cost on Summary, on each ProjectSummary, total yearly savings) plus
 // rat.Rat fields embedded in format.GuardrailOutput / format.BudgetOutput
 // inside the drill-in lists — all covered by the same rat.Rat -> string
 // override scan / price / budgets / guardrails use.
@@ -488,7 +488,7 @@ func inspectResourcesToolOutputSchema() (*jsonschema.Schema, error) {
 // useful headline list.
 type InspectTopSavingsInput struct {
 	Path     string `json:"path,omitempty" jsonschema:"Target a specific previously-scanned directory (absolute or relative). Defaults to the most recent scan in this MCP session."`
-	N        int    `json:"n,omitempty" jsonschema:"Number of top items to return. Defaults to 10. The total_monthly_savings field on the response always reflects the full filtered scan, regardless of n."`
+	N        int    `json:"n,omitempty" jsonschema:"Number of top items to return. Defaults to 10. The total_yearly_savings field on the response always reflects the full filtered scan, regardless of n."`
 	Project  string `json:"project,omitempty" jsonschema:"Filter to a specific project by name."`
 	Provider string `json:"provider,omitempty" jsonschema:"Filter to a specific provider (aws, azurerm, google)."`
 	Filter   string `json:"filter,omitempty" jsonschema:"Generic AND'd filter expression (e.g. \"tag.team=missing,provider=aws\")."`
@@ -496,7 +496,7 @@ type InspectTopSavingsInput struct {
 
 // inspectTopSavingsToolOutputSchema returns the schema for the
 // [inspect.TopSavingsResult] shape. Carries multiple rat.Rat fields
-// (the per-item monthly_savings plus the headline total) covered by
+// (the per-item yearly_savings plus the headline total) covered by
 // the same rat.Rat -> string override the rest of the inspect surface
 // uses.
 func inspectTopSavingsToolOutputSchema() (*jsonschema.Schema, error) {
@@ -543,7 +543,7 @@ type InspectGuardrailDetailInput struct {
 
 // inspectPolicyDetailToolOutputSchema returns the schema for
 // [inspect.PolicyDetail]. Carries rat.Rat indirectly via
-// format.FinopsIssueOutput (monthly_savings) so the override applies.
+// format.FinopsIssueOutput (yearly_savings) so the override applies.
 func inspectPolicyDetailToolOutputSchema() (*jsonschema.Schema, error) {
 	schema, err := jsonschema.For[inspect.PolicyDetail](&jsonschema.ForOptions{
 		TypeSchemas: map[reflect.Type]*jsonschema.Schema{

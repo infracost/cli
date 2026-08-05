@@ -67,11 +67,11 @@ var fieldSpecs = map[string]fieldSpec{
 	"description": {header: "Description", prose: true},
 
 	// Numeric / currency columns — right-aligned so magnitudes align.
-	"count":           {header: "Count", right: true},
-	"monthly_cost":    {header: "Monthly Cost", right: true},
-	"monthly_savings": {header: "Monthly Savings", right: true},
-	"limit":           {header: "Limit", right: true},
-	"actual spend":    {header: "Actual Spend", right: true},
+	"count":          {header: "Count", right: true},
+	"monthly_cost":   {header: "Monthly Cost", right: true},
+	"yearly_savings": {header: "Yearly Savings", right: true},
+	"limit":          {header: "Limit", right: true},
+	"actual spend":   {header: "Actual Spend", right: true},
 
 	// Booleans — rendered as a quiet flag column ("yes" / blank).
 	"is_free": {header: "Free", humanize: humanizeBool},
