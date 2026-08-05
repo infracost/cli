@@ -115,6 +115,8 @@ github.com/infracost/config v0.15.1-0.20260805092511-d11bf869fd2c h1:s8q3jFpYPv8
 github.com/infracost/config v0.15.1-0.20260805092511-d11bf869fd2c/go.mod h1:s3TgPyIRLF+Qi2Ew0lB3AcL9lsRG3DwipXzY3cnsqa8=
 github.com/infracost/config v0.15.1-0.20260805110917-1b517a750574 h1:7yQaCHvhnhgfKYavXaUvy3EsNj/xAoRlikpthe0iB5E=
 github.com/infracost/config v0.15.1-0.20260805110917-1b517a750574/go.mod h1:IFDPMQh5igwS8O2qloLJe4pZYI6St3IxC1d4aN5+D7s=
+github.com/infracost/config v0.16.1-0.20260805112903-a08e2324f289 h1:WmnrYphuuy0Uk8VOym4D5tFRwCCbPAO51vBYiCaHrn8=
+github.com/infracost/config v0.16.1-0.20260805112903-a08e2324f289/go.mod h1:IFDPMQh5igwS8O2qloLJe4pZYI6St3IxC1d4aN5+D7s=
 github.com/infracost/go-proto v1.26.0 h1:DkvnNA3jbYp/i6PALl59JHO552W5Hw+bEhfhg5JH7e0=
 github.com/infracost/go-proto v1.26.0/go.mod h1:9m9zdHPl6mME24y3J0CdTBWXr+d03mfgXuy+9JzA/wU=
 github.com/infracost/go-proto v1.29.1-0.20260804070951-247f26c4a4b5 h1:TYfDrS634zZx4b0Daq+NFd1c1ESCGR1XcfmnXsU4TLM=
