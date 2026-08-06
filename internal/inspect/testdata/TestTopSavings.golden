@@ -1,2 +1,2 @@
-Address              Policy   Project  Monthly Savings  Description
-aws_ebs_volume.data  Use GP3  web-app               $5  Volume type is gp2
+Address              Policy   Project  Yearly Savings  Description
+aws_ebs_volume.data  Use GP3  web-app              $5  Volume type is gp2

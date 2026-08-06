@@ -31,14 +31,14 @@ func Inspect(cfg *config.Config) *cobra.Command {
   # Top 10 most expensive resources:
   $ infracost inspect --top 10
 
-  # Total potential monthly savings if every FinOps issue were fixed:
+  # Total potential yearly savings if every FinOps issue were fixed:
   $ infracost inspect --total-savings
 
   # Top 5 FinOps issues, just the addresses (one per line):
   $ infracost inspect --top-savings 5 --fields address
 
   # Top 5 FinOps issues with a custom column projection (aligned table):
-  $ infracost inspect --top-savings 5 --fields address,monthly_savings,policy
+  $ infracost inspect --top-savings 5 --fields address,yearly_savings,policy
 
   # Every resource missing the 'team' tag, one address per line:
   $ infracost inspect --missing-tag team
@@ -151,8 +151,8 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	cmd.Flags().IntVar(&opts.Top, "top", 0, "Show only the top N resources by cost")
 
 	// Aggregation views.
-	cmd.Flags().BoolVar(&opts.TotalSavings, "total-savings", false, "Print the scalar sum of monthly_savings across every FinOps issue")
-	cmd.Flags().IntVar(&opts.TopSavings, "top-savings", 0, "Print the top N FinOps issues sorted by monthly_savings")
+	cmd.Flags().BoolVar(&opts.TotalSavings, "total-savings", false, "Print the scalar sum of yearly_savings across every FinOps issue")
+	cmd.Flags().IntVar(&opts.TopSavings, "top-savings", 0, "Print the top N FinOps issues sorted by yearly_savings")
 
 	// Output modifiers.
 	cmd.Flags().BoolVar(&opts.AddressesOnly, "addresses-only", false, "Strip everything except resource addresses (one per line). Composes with the other selection flags.")
@@ -167,7 +167,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 	cmd.Flags().StringVar(&opts.Filter, "filter", "", `Filter expression (AND'd, comma-separated). Supported keys: policy, project, provider, tag.<key>=missing. Example: --filter "tag.team=missing,provider=aws"`)
 
 	// Column projection. Per-view canonical field set; unknown names error.
-	cmd.Flags().StringSliceVar(&opts.Fields, "fields", nil, `Tabular column projection (comma-separated). Available fields depend on the view (--top-savings, --policy, --missing-tag/--invalid-tag, etc.). Example: --top-savings 10 --fields address,monthly_savings. --addresses-only is an alias for --fields=address.`)
+	cmd.Flags().StringSliceVar(&opts.Fields, "fields", nil, `Tabular column projection (comma-separated). Available fields depend on the view (--top-savings, --policy, --missing-tag/--invalid-tag, etc.). Example: --top-savings 10 --fields address,yearly_savings. --addresses-only is an alias for --fields=address.`)
 
 	return cmd
 }

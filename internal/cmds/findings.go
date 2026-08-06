@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 
@@ -26,13 +27,146 @@ type FindingsListInput struct {
 	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of findings to return per page (server caps at 200, default 50)."`
 }
 
+// FindingOutput mirrors agents.Finding on the CLI / MCP wire shape, with
+// savings quoted per year instead of the per-month figures the Agents
+// API reports. The dashboard made the same switch (its
+// Format.annualizedDollars floors after ×12); annualizeDollars keeps the
+// two surfaces quoting identical numbers.
+type FindingOutput struct {
+	ID                     string  `json:"id"`
+	OrgID                  string  `json:"orgId,omitempty"`
+	AgentID                string  `json:"agentId,omitempty"`
+	AgentName              string  `json:"agentName,omitempty"`
+	AgentIcon              string  `json:"agentIcon,omitempty"`
+	Title                  string  `json:"title"`
+	Summary                string  `json:"summary,omitempty"`
+	EstimatedYearlySavings float64 `json:"estimatedYearlySavings,omitempty" jsonschema:"Estimated savings per year if the finding is resolved, in whole currency units."`
+	Effort                 string  `json:"effort,omitempty"`
+	TaskTotal              int     `json:"taskTotal,omitempty"`
+	TaskResolved           int     `json:"taskResolved,omitempty"`
+	TaskInProgress         int     `json:"taskInProgress,omitempty"`
+	Status                 string  `json:"status"`
+	InvestigationStatus    string  `json:"investigationStatus,omitempty"`
+	LifecycleState         string  `json:"lifecycleState,omitempty"`
+	RemediationState       string  `json:"remediationState,omitempty"`
+	TopTaskTitle           string  `json:"topTaskTitle,omitempty"`
+	AccountID              string  `json:"accountId,omitempty"`
+	AccountAlias           string  `json:"accountAlias,omitempty"`
+	CreatedAt              string  `json:"createdAt,omitempty"`
+	UpdatedAt              string  `json:"updatedAt,omitempty"`
+
+	DuplicateOfID string                `json:"duplicateOfId,omitempty"`
+	TriggerDetail json.RawMessage       `json:"triggerDetail,omitempty"`
+	Tasks         []TaskOutput          `json:"tasks,omitempty"`
+	Events        []agents.FindingEvent `json:"events,omitempty"`
+	Actions       []agents.Action       `json:"actions,omitempty"`
+	ResolvedAt    string                `json:"resolvedAt,omitempty"`
+}
+
+// TaskOutput mirrors agents.Task with the same yearly-savings conversion
+// as FindingOutput.
+type TaskOutput struct {
+	ID                string                    `json:"id"`
+	FindingID         string                    `json:"findingId"`
+	Index             int                       `json:"index"`
+	Title             string                    `json:"title"`
+	Detail            string                    `json:"detail,omitempty"`
+	ActionDescription string                    `json:"actionDescription,omitempty"`
+	YearlySavings     float64                   `json:"yearlySavings,omitempty" jsonschema:"Estimated savings per year if the task is done, in whole currency units."`
+	Code              string                    `json:"code,omitempty"`
+	Warnings          []string                  `json:"warnings,omitempty"`
+	SuggestedAction   string                    `json:"suggestedAction,omitempty"`
+	ActionContext     json.RawMessage           `json:"actionContext,omitempty"`
+	Effort            string                    `json:"effort,omitempty"`
+	EffortNote        string                    `json:"effortNote,omitempty"`
+	Status            string                    `json:"status"`
+	DismissedReason   string                    `json:"dismissedReason,omitempty"`
+	Events            []agents.FindingTaskEvent `json:"events,omitempty"`
+	CreatedAt         string                    `json:"createdAt,omitempty"`
+	UpdatedAt         string                    `json:"updatedAt,omitempty"`
+}
+
+// annualizeDollars converts an Agents-API monthly money amount to the
+// yearly figure the CLI quotes. Floors after multiplying, matching the
+// dashboard's Format.annualizedDollars, so both surfaces show the same
+// whole-dollar number.
+func annualizeDollars(monthly float64) float64 {
+	return math.Floor(monthly * 12)
+}
+
+// findingOutput converts an API finding to its wire/render shape,
+// annualizing savings on the finding and each nested task.
+func findingOutput(f agents.Finding) FindingOutput {
+	tasks := make([]TaskOutput, 0, len(f.Tasks))
+	for _, t := range f.Tasks {
+		tasks = append(tasks, taskOutput(t))
+	}
+	if len(tasks) == 0 {
+		tasks = nil
+	}
+	return FindingOutput{
+		ID:                     f.ID,
+		OrgID:                  f.OrgID,
+		AgentID:                f.AgentID,
+		AgentName:              f.AgentName,
+		AgentIcon:              f.AgentIcon,
+		Title:                  f.Title,
+		Summary:                f.Summary,
+		EstimatedYearlySavings: annualizeDollars(f.EstimatedMonthlySavings),
+		Effort:                 f.Effort,
+		TaskTotal:              f.TaskTotal,
+		TaskResolved:           f.TaskResolved,
+		TaskInProgress:         f.TaskInProgress,
+		Status:                 f.Status,
+		InvestigationStatus:    f.InvestigationStatus,
+		LifecycleState:         f.LifecycleState,
+		RemediationState:       f.RemediationState,
+		TopTaskTitle:           f.TopTaskTitle,
+		AccountID:              f.AccountID,
+		AccountAlias:           f.AccountAlias,
+		CreatedAt:              f.CreatedAt,
+		UpdatedAt:              f.UpdatedAt,
+		DuplicateOfID:          f.DuplicateOfID,
+		TriggerDetail:          f.TriggerDetail,
+		Tasks:                  tasks,
+		Events:                 f.Events,
+		Actions:                f.Actions,
+		ResolvedAt:             f.ResolvedAt,
+	}
+}
+
+// taskOutput converts an API task to its wire/render shape.
+func taskOutput(t agents.Task) TaskOutput {
+	return TaskOutput{
+		ID:                t.ID,
+		FindingID:         t.FindingID,
+		Index:             t.Index,
+		Title:             t.Title,
+		Detail:            t.Detail,
+		ActionDescription: t.ActionDescription,
+		YearlySavings:     annualizeDollars(t.Savings),
+		Code:              t.Code,
+		Warnings:          t.Warnings,
+		SuggestedAction:   t.SuggestedAction,
+		ActionContext:     t.ActionContext,
+		Effort:            t.Effort,
+		EffortNote:        t.EffortNote,
+		Status:            t.Status,
+		DismissedReason:   t.DismissedReason,
+		Events:            t.Events,
+		CreatedAt:         t.CreatedAt,
+		UpdatedAt:         t.UpdatedAt,
+	}
+}
+
 // FindingsListResult is the typed output of `findings list`.
 type FindingsListResult struct {
-	Findings []agents.Finding `json:"findings"`
-	// TotalSavings sums EstimatedMonthlySavings across the returned page so
-	// the human and LLM renderers don't have to recompute it. It's a page
-	// total, not an org total — paging would accumulate independently.
-	TotalSavings float64 `json:"total_savings"`
+	Findings []FindingOutput `json:"findings"`
+	// TotalYearlySavings sums EstimatedYearlySavings across the returned
+	// page so the human and LLM renderers don't have to recompute it. It's
+	// a page total, not an org total — paging would accumulate
+	// independently.
+	TotalYearlySavings float64 `json:"total_yearly_savings"`
 	// Page / TotalFindings / TotalPages echo the server-applied paging so a
 	// caller can tell a single-page org from a truncated first page.
 	Page          int  `json:"page,omitempty"`
@@ -47,10 +181,10 @@ type FindingsGetInput struct {
 	ID string `json:"id" jsonschema:"Finding ID to fetch. Required."`
 }
 
-// FindingsGetResult wraps a single agents.Finding so the typed-result
+// FindingsGetResult wraps a single FindingOutput so the typed-result
 // shape is consistent with FindingsList.
 type FindingsGetResult struct {
-	Finding agents.Finding `json:"finding"`
+	Finding FindingOutput `json:"finding"`
 }
 
 // ListFindings calls the Agents API. The pure function returns the
@@ -76,11 +210,12 @@ func ListFindings(ctx context.Context, cfg *config.Config, source oauth2.TokenSo
 		return FindingsListResult{}, fmt.Errorf("listing findings: %w", err)
 	}
 
-	if page.Items == nil {
-		page.Items = []agents.Finding{}
+	findings := make([]FindingOutput, 0, len(page.Items))
+	for _, f := range page.Items {
+		findings = append(findings, findingOutput(f))
 	}
 	result := FindingsListResult{
-		Findings:      page.Items,
+		Findings:      findings,
 		Page:          page.Pagination.Page,
 		TotalFindings: page.Pagination.Total,
 		TotalPages:    page.Pagination.TotalPages,
@@ -89,8 +224,8 @@ func ListFindings(ctx context.Context, cfg *config.Config, source oauth2.TokenSo
 	if result.HasNextPage {
 		result.NextPage = page.Pagination.Page + 1
 	}
-	for _, f := range page.Items {
-		result.TotalSavings += f.EstimatedMonthlySavings
+	for _, f := range findings {
+		result.TotalYearlySavings += f.EstimatedYearlySavings
 	}
 	return result, nil
 }
@@ -114,7 +249,7 @@ func GetFinding(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	if err != nil {
 		return FindingsGetResult{}, fmt.Errorf("fetching finding: %w", err)
 	}
-	return FindingsGetResult{Finding: f}, nil
+	return FindingsGetResult{Finding: findingOutput(f)}, nil
 }
 
 // UpdateFindingStatusInput is the parsed input for `findings update`. The
@@ -127,10 +262,10 @@ type UpdateFindingStatusInput struct {
 	Reason string `json:"reason,omitempty" jsonschema:"Optional reason — recommended for dismissals; the text is also emitted as an AgentLearning so the agent doesn't re-raise the same finding."`
 }
 
-// UpdateFindingStatusResult wraps the freshly-updated agents.Finding so
+// UpdateFindingStatusResult wraps the freshly-updated finding so
 // renderers and the MCP wire shape match FindingsGetResult.
 type UpdateFindingStatusResult struct {
-	Finding agents.Finding `json:"finding"`
+	Finding FindingOutput `json:"finding"`
 }
 
 // UpdateFindingStatus calls Agents' PATCH /findings/:id with the
@@ -162,7 +297,7 @@ func UpdateFindingStatus(ctx context.Context, cfg *config.Config, source oauth2.
 	if err != nil {
 		return UpdateFindingStatusResult{}, fmt.Errorf("updating finding status: %w", err)
 	}
-	return UpdateFindingStatusResult{Finding: f}, nil
+	return UpdateFindingStatusResult{Finding: findingOutput(f)}, nil
 }
 
 // resolveFindingStatus maps the user-facing CLI / MCP string onto the
@@ -347,10 +482,10 @@ func renderFindingsListHuman(w io.Writer, r FindingsListResult) error {
 		writeFindingSummary(w, f)
 	}
 
-	if r.TotalSavings > 0 {
-		_, _ = fmt.Fprintf(w, "%s $%s/mo across %d findings on this page\n",
+	if r.TotalYearlySavings > 0 {
+		_, _ = fmt.Fprintf(w, "%s $%s/yr across %d findings on this page\n",
 			ui.Bold("Estimated savings:"),
-			formatFloat(r.TotalSavings),
+			formatFloat(r.TotalYearlySavings),
 			len(r.Findings),
 		)
 	}
@@ -368,7 +503,7 @@ func renderFindingsListHuman(w io.Writer, r FindingsListResult) error {
 // effort badge replaces what would otherwise be a severity tag —
 // Agents doesn't model severity, but "trivial → large" carries the same
 // "how much work is this" signal.
-func writeFindingSummary(w io.Writer, f agents.Finding) {
+func writeFindingSummary(w io.Writer, f FindingOutput) {
 	badge := effortBadge(f.Effort)
 	prefix := ""
 	if badge != "" {
@@ -385,10 +520,10 @@ func writeFindingSummary(w io.Writer, f agents.Finding) {
 	if f.Summary != "" {
 		_, _ = fmt.Fprintln(w, "  "+f.Summary)
 	}
-	if f.EstimatedMonthlySavings > 0 {
-		_, _ = fmt.Fprintf(w, "  %s $%s/mo",
+	if f.EstimatedYearlySavings > 0 {
+		_, _ = fmt.Fprintf(w, "  %s $%s/yr",
 			ui.Muted("Saving:"),
-			ui.Positive(formatFloat(f.EstimatedMonthlySavings)),
+			ui.Positive(formatFloat(f.EstimatedYearlySavings)),
 		)
 		if f.TaskTotal > 0 {
 			_, _ = fmt.Fprintf(w, "    %s %d", ui.Muted("Tasks:"), f.TaskTotal)
@@ -417,10 +552,10 @@ func renderFindingsGetHuman(w io.Writer, r FindingsGetResult) error {
 	if f.Status != "" {
 		_, _ = fmt.Fprintf(w, "%s %s\n", ui.Muted("Status:"), statusText(f.Status))
 	}
-	if f.EstimatedMonthlySavings > 0 {
-		_, _ = fmt.Fprintf(w, "%s $%s/mo\n",
+	if f.EstimatedYearlySavings > 0 {
+		_, _ = fmt.Fprintf(w, "%s $%s/yr\n",
 			ui.Muted("Estimated saving:"),
-			ui.Positive(formatFloat(f.EstimatedMonthlySavings)),
+			ui.Positive(formatFloat(f.EstimatedYearlySavings)),
 		)
 	}
 	if f.Summary != "" {
@@ -461,7 +596,7 @@ func renderFindingsGetHuman(w io.Writer, r FindingsGetResult) error {
 // id, status, effort, suggested action, savings, and the
 // action_description so the user can decide whether to drill in with
 // `tasks preview-fix`.
-func writeTaskSummary(w io.Writer, t agents.Task) {
+func writeTaskSummary(w io.Writer, t TaskOutput) {
 	_, _ = fmt.Fprintf(w, "%s %s\n",
 		ui.Bold(ui.Accent(t.Title)),
 		ui.Mutedf("(%s)", t.ID),
@@ -475,10 +610,10 @@ func writeTaskSummary(w io.Writer, t agents.Task) {
 	if t.Effort != "" {
 		_, _ = fmt.Fprintf(w, "  %s %s\n", ui.Muted("Effort:"), t.Effort)
 	}
-	if t.Savings > 0 {
-		_, _ = fmt.Fprintf(w, "  %s $%s/mo\n",
+	if t.YearlySavings > 0 {
+		_, _ = fmt.Fprintf(w, "  %s $%s/yr\n",
 			ui.Muted("Saving:"),
-			ui.Positive(formatFloat(t.Savings)),
+			ui.Positive(formatFloat(t.YearlySavings)),
 		)
 	}
 	if t.ActionDescription != "" {

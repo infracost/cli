@@ -97,7 +97,7 @@ func Questions() []Question {
 		{
 			ID:       "q10-largest-savings-resource",
 			Category: "aggregation",
-			Prompt:   "Across all FinOps issues, which resource has the largest total `monthly_savings` value? Reply with just the resource address (the `address` field on the issue).",
+			Prompt:   "Across all FinOps issues, which resource has the largest total `yearly_savings` value? Reply with just the resource address (the `address` field on the issue).",
 			Verify: func(ans string, f *format.Output) Verdict {
 				// Multiple resources can tie for the top savings value. Accept
 				// any of them — picking one arbitrarily would make the verdict
@@ -149,7 +149,7 @@ func Questions() []Question {
 		{
 			ID:       "d5-finops-total-savings",
 			Category: "detection",
-			Prompt:   "What is the total potential monthly savings if every FinOps issue were resolved (sum of `monthly_savings` across all issues)? Reply with just the dollar amount.",
+			Prompt:   "What is the total potential yearly savings if every FinOps issue were resolved (sum of `yearly_savings` across all issues)? Reply with just the dollar amount.",
 			Verify: func(ans string, f *format.Output) Verdict {
 				return verdictNumeric(ans, totalFinopsSavings(f), 500)
 			},
@@ -371,17 +371,17 @@ func allFailingTaggingAddresses(f *format.Output) []string {
 	return out
 }
 
-// totalFinopsSavings sums MonthlySavings across every FinOps issue.
+// totalFinopsSavings sums YearlySavings across every FinOps issue.
 func totalFinopsSavings(f *format.Output) float64 {
 	total := rat.Zero
 	for _, p := range f.Projects {
 		for _, fp := range p.FinopsResults {
 			for _, fr := range fp.FailingResources {
 				for _, iss := range fr.Issues {
-					if iss.MonthlySavings == nil {
+					if iss.YearlySavings == nil {
 						continue
 					}
-					total = total.Add(iss.MonthlySavings)
+					total = total.Add(iss.YearlySavings)
 				}
 			}
 		}
@@ -390,7 +390,7 @@ func totalFinopsSavings(f *format.Output) float64 {
 }
 
 // largestSavingsResources returns every address tied for the highest total
-// monthly_savings across all FinOps issues. We return a list (not a single
+// yearly_savings across all FinOps issues. We return a list (not a single
 // pick) because callers verifying free-form model answers should accept any
 // of the tied winners — otherwise the verdict depends on Go map iteration
 // order, which is randomized.
@@ -400,10 +400,10 @@ func largestSavingsResources(f *format.Output) []string {
 		for _, fp := range p.FinopsResults {
 			for _, fr := range fp.FailingResources {
 				for _, iss := range fr.Issues {
-					if iss.MonthlySavings == nil {
+					if iss.YearlySavings == nil {
 						continue
 					}
-					totals[iss.Address] += iss.MonthlySavings.Float64()
+					totals[iss.Address] += iss.YearlySavings.Float64()
 				}
 			}
 		}
@@ -532,4 +532,3 @@ func extractFloat(s string) (float64, bool) {
 	}
 	return 0, false
 }
-

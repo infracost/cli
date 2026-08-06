@@ -103,7 +103,7 @@ type BudgetMatchingResource struct {
 
 type BudgetSaving struct {
 	PolicyName    string   `json:"policy_name"`
-	Savings       *rat.Rat `json:"savings"`
+	YearlySavings *rat.Rat `json:"yearly_savings"`
 	ResourceCount int      `json:"resource_count"`
 }
 
@@ -119,7 +119,7 @@ func BuildBudgetDetail(data *format.Output, br format.BudgetOutput) BudgetDetail
 	for _, s := range collectBudgetSavings(data, br.Tags) {
 		out.Savings = append(out.Savings, BudgetSaving{
 			PolicyName:    s.policyName,
-			Savings:       s.savings,
+			YearlySavings: s.savings,
 			ResourceCount: s.resourceCount,
 		})
 	}
@@ -138,7 +138,7 @@ type PolicyDetail struct {
 	Name      string                  `json:"name"`
 	Slug      string                  `json:"slug,omitempty"`
 	Message   string                  `json:"message,omitempty"`
-	Resources []PolicyResource    `json:"resources"`
+	Resources []PolicyResource        `json:"resources"`
 	TagSchema []format.TagSchemaEntry `json:"tag_schema,omitempty"`
 }
 
@@ -314,9 +314,9 @@ func writePolicyDetailJSON(w io.Writer, data *format.Output, opts Options) error
 // --json`. failing_policies is a flat per-pairing list (mirrors the text
 // panorama); guardrails and budgets reuse their format types directly.
 type FailingPanorama struct {
-	FailingPolicies     []FailingPolicyPairing `json:"failing_policies"`
-	TriggeredGuardrails []format.GuardrailOutput   `json:"triggered_guardrails"`
-	OverBudget          []format.BudgetOutput      `json:"over_budget"`
+	FailingPolicies     []FailingPolicyPairing   `json:"failing_policies"`
+	TriggeredGuardrails []format.GuardrailOutput `json:"triggered_guardrails"`
+	OverBudget          []format.BudgetOutput    `json:"over_budget"`
 }
 
 type FailingPolicyPairing struct {

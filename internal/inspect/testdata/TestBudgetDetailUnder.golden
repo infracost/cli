@@ -17,7 +17,7 @@
 │                                                                 │
 │   FinOps violations on matching resources                       │
 │                                                                 │
-│     Use GP3: up to $5/mo (1 resource)                           │
+│     Use GP3: up to $5/yr (1 resource)                           │
 │                                                                 │
 │   Actual spend is org-wide cloud billing across all resources   │
 │   matching this budget's tags — not just the IaC scan.          │
