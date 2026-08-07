@@ -3,6 +3,7 @@ package cmds
 import (
 	"testing"
 
+	"github.com/infracost/cli/internal/format"
 	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,43 @@ func TestParsePluginOptions(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestCriticalDiagnosticsErr(t *testing.T) {
+	project := func(diagSeverities ...string) format.ProjectOutput {
+		var diags []format.DiagnosticOutput
+		for _, s := range diagSeverities {
+			diags = append(diags, format.DiagnosticOutput{Severity: s, Message: "boom"})
+		}
+		return format.ProjectOutput{ProjectName: "p", Diagnostics: diags}
+	}
+
+	t.Run("no diagnostics", func(t *testing.T) {
+		r := &format.Output{Projects: []format.ProjectOutput{project()}}
+		assert.NoError(t, criticalDiagnosticsErr(r))
+	})
+
+	t.Run("warnings only", func(t *testing.T) {
+		r := &format.Output{Projects: []format.ProjectOutput{project("warning", "info")}}
+		assert.NoError(t, criticalDiagnosticsErr(r))
+	})
+
+	t.Run("single critical", func(t *testing.T) {
+		r := &format.Output{Projects: []format.ProjectOutput{project("critical")}}
+		err := criticalDiagnosticsErr(r)
+		require.Error(t, err)
+		assert.Equal(t, "scan completed with 1 critical diagnostic", err.Error())
+	})
+
+	t.Run("criticals across projects", func(t *testing.T) {
+		r := &format.Output{Projects: []format.ProjectOutput{
+			project("critical", "warning"),
+			project("critical"),
+		}}
+		err := criticalDiagnosticsErr(r)
+		require.Error(t, err)
+		assert.Equal(t, "scan completed with 2 critical diagnostics", err.Error())
+	})
 }
 
 func TestParsePluginOptionsErrors(t *testing.T) {
