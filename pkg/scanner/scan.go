@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/infracost/cli/pkg/logging"
 	"github.com/infracost/cli/pkg/plugins"
@@ -300,12 +301,36 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	return projectResult, nil
 }
 
+var (
+	runTempDirOnce sync.Once
+	runTempDirPath string
+)
+
+// runTempDir returns a per-process temporary directory for plugin scratch
+// space. The parser treats this directory as an allowed containment root for
+// repo-referenced reads (var_files and the like), so handing it the bare
+// shared os.TempDir() would let a repo-committed config read anything another
+// process staged under /tmp. [FIX-548]
+func runTempDir() string {
+	runTempDirOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "infracost-run-")
+		if err != nil {
+			// Parser-side containment still nests its own subdirectory when
+			// handed the bare temp dir, so degrade rather than fail the scan.
+			runTempDirPath = os.TempDir()
+			return
+		}
+		runTempDirPath = dir
+	})
+	return runTempDirPath
+}
+
 func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
 	genericOptions := &options.GenericOptions{
 		ProjectName:        opts.Project.Name,
 		EnvironmentName:    opts.Project.EnvName,
 		RepoDirectory:      opts.RootDir,
-		TemporaryDirectory: os.TempDir(),
+		TemporaryDirectory: runTempDir(),
 		CacheDirectory:     opts.CacheDir,
 		WorkingDirectory:   opts.RootDir,
 		// Caller-sourced runtime options always travel in GenericOptions, regardless of project
