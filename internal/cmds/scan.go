@@ -266,7 +266,10 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 			}); err != nil {
 				return err
 			}
-			return writeStructured(cfg, os.Stdout, result, scanRenderers(includeWarnings))
+			if err := writeStructured(cfg, os.Stdout, result, scanRenderers(includeWarnings)); err != nil {
+				return err
+			}
+			return criticalDiagnosticsErr(result)
 		},
 	}
 
@@ -321,6 +324,24 @@ func parsePluginOptions(options []string) (pkgscanner.PluginOpts, error) {
 		}
 	}
 	return pluginOptionMap, nil
+}
+
+// criticalDiagnosticsErr returns an error when any project in the result
+// carries a critical-severity diagnostic. A project that failed to parse has
+// no tree, so its costs and policy results are absent — without this the run
+// would exit 0 looking like a successful $0 scan. Returned after rendering so
+// the full output (including --json/--llm) is still written before the
+// non-zero exit.
+func criticalDiagnosticsErr(r ScanResult) error {
+	n := len(inspect.CollectDiagnostics(r, false))
+	if n == 0 {
+		return nil
+	}
+	word := "diagnostics"
+	if n == 1 {
+		word = "diagnostic"
+	}
+	return fmt.Errorf("scan completed with %d critical %s", n, word)
 }
 
 func scanRenderers(includeWarnings bool) Renderers[ScanResult] {
