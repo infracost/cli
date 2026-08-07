@@ -114,10 +114,10 @@ func Build(spec Spec) *format.Output {
 					Name: fmt.Sprintf("%s.resource_%d", rt, r+1),
 					Issues: []format.FinopsIssueOutput{
 						{
-							Description:    fmt.Sprintf("Suboptimal %s configuration detected.", rt),
-							MonthlySavings: rat.New(2.5 * float64(r+1)),
-							Address:        fmt.Sprintf("%s.resource_%d", rt, r+1),
-							Attribute:      finopsAttribute(f),
+							Description:   fmt.Sprintf("Suboptimal %s configuration detected.", rt),
+							YearlySavings: rat.New(30 * float64(r+1)),
+							Address:       fmt.Sprintf("%s.resource_%d", rt, r+1),
+							Attribute:     finopsAttribute(f),
 						},
 					},
 				})

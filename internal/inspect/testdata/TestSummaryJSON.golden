@@ -42,7 +42,7 @@
   "critical_diagnostics": 1,
   "warning_diagnostics": 1,
   "currency": "USD",
-  "total_monthly_savings": "5",
+  "total_yearly_savings": "5",
   "failing_policy_list": [
     {
       "kind": "finops",
@@ -56,7 +56,7 @@
           "issues": [
             {
               "description": "Volume type is gp2",
-              "monthly_savings": "5",
+              "yearly_savings": "5",
               "address": "aws_ebs_volume.data",
               "attribute": "type"
             }

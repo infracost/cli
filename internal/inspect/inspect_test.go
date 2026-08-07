@@ -91,10 +91,10 @@ func testData() *format.Output {
 								Name: "aws_ebs_volume.data",
 								Issues: []format.FinopsIssueOutput{
 									{
-										Description:    "Volume type is gp2",
-										MonthlySavings: rat.New(5),
-										Address:        "aws_ebs_volume.data",
-										Attribute:      "type",
+										Description:   "Volume type is gp2",
+										YearlySavings: rat.New(5),
+										Address:       "aws_ebs_volume.data",
+										Attribute:     "type",
 									},
 								},
 							},
@@ -671,7 +671,7 @@ func TestTopSavingsAddressesOnly(t *testing.T) {
 func TestTopSavingsFieldsProjection(t *testing.T) {
 	data := testData()
 	var buf bytes.Buffer
-	err := Run(&buf, data, Options{TopSavings: 5, Fields: []string{"address", "monthly_savings"}})
+	err := Run(&buf, data, Options{TopSavings: 5, Fields: []string{"address", "yearly_savings"}})
 	require.NoError(t, err)
 	assertGolden(t, buf.String())
 }

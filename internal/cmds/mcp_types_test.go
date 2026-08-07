@@ -212,7 +212,7 @@ func TestGuardrailsToolOutputSchema(t *testing.T) {
 }
 
 // TestInspectSummaryToolOutputSchema covers [inspect.Summary], which has
-// many rat.Rat fields (top-level monthly cost / total monthly savings,
+// many rat.Rat fields (top-level monthly cost / total yearly savings,
 // per-project monthly cost) plus rat.Rat fields embedded in the drill-in
 // format.GuardrailOutput / format.BudgetOutput lists. The rat.Rat ->
 // string override must cover every nested occurrence for the schema to
@@ -255,7 +255,7 @@ func TestInspectResourcesToolOutputSchema(t *testing.T) {
 }
 
 // TestInspectTopSavingsToolOutputSchema covers [inspect.TopSavingsResult].
-// Multiple rat.Rat fields (each item's monthly_savings plus the headline
+// Multiple rat.Rat fields (each item's yearly_savings plus the headline
 // total) need the rat.Rat -> string override to produce an honest schema.
 func TestInspectTopSavingsToolOutputSchema(t *testing.T) {
 	schema, err := inspectTopSavingsToolOutputSchema()
@@ -266,7 +266,7 @@ func TestInspectTopSavingsToolOutputSchema(t *testing.T) {
 
 // TestInspectPolicyDetailToolOutputSchema covers [inspect.PolicyDetail].
 // Carries rat.Rat indirectly via format.FinopsIssueOutput's
-// monthly_savings field.
+// yearly_savings field.
 func TestInspectPolicyDetailToolOutputSchema(t *testing.T) {
 	schema, err := inspectPolicyDetailToolOutputSchema()
 	require.NoError(t, err)

@@ -29,8 +29,8 @@ type Options struct {
 
 	// Aggregation views (mutually exclusive with each other; --top-savings
 	// is the only one that takes a count).
-	TotalSavings bool // sum monthly_savings across every FinOps issue
-	TopSavings   int  // top N FinOps issues by monthly_savings (0 = disabled)
+	TotalSavings bool // sum yearly_savings across every FinOps issue
+	TopSavings   int  // top N FinOps issues by yearly_savings (0 = disabled)
 
 	// Output modifiers.
 	AddressesOnly bool // strip everything except resource addresses

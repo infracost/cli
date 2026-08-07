@@ -15,15 +15,15 @@ import (
 // finding without a follow-up drill-in: which resource, which policy,
 // what's the saving, and the issue description.
 type FinopsTopSavingsItem struct {
-	Address        string   `json:"address"`
-	PolicyName     string   `json:"policy_name"`
-	PolicySlug     string   `json:"policy_slug,omitempty"`
-	Project        string   `json:"project"`
-	MonthlySavings *rat.Rat `json:"monthly_savings"`
-	Description    string   `json:"description,omitempty"`
+	Address       string   `json:"address"`
+	PolicyName    string   `json:"policy_name"`
+	PolicySlug    string   `json:"policy_slug,omitempty"`
+	Project       string   `json:"project"`
+	YearlySavings *rat.Rat `json:"yearly_savings"`
+	Description   string   `json:"description,omitempty"`
 }
 
-// totalFinopsSavings sums MonthlySavings across every FinOps issue in the
+// totalFinopsSavings sums YearlySavings across every FinOps issue in the
 // scan, ignoring nil savings values.
 func totalFinopsSavings(data *format.Output) *rat.Rat {
 	total := rat.Zero
@@ -31,10 +31,10 @@ func totalFinopsSavings(data *format.Output) *rat.Rat {
 		for _, fp := range p.FinopsResults {
 			for _, fr := range fp.FailingResources {
 				for _, iss := range fr.Issues {
-					if iss.MonthlySavings == nil {
+					if iss.YearlySavings == nil {
 						continue
 					}
-					total = total.Add(iss.MonthlySavings)
+					total = total.Add(iss.YearlySavings)
 				}
 			}
 		}
@@ -43,20 +43,20 @@ func totalFinopsSavings(data *format.Output) *rat.Rat {
 }
 
 // TopSavingsResult is the typed return of [TopSavingsFor]. The total is
-// the sum of monthly_savings across the whole filtered scan (not just
+// the sum of yearly_savings across the whole filtered scan (not just
 // the top-N), so MCP callers can show both "top items" and "total
 // available savings" without making a separate call. Currency is
 // carried on the envelope so the rat.Rat money values are
 // interpretable without context.
 type TopSavingsResult struct {
-	Currency            string                 `json:"currency"`
-	TotalMonthlySavings *rat.Rat               `json:"total_monthly_savings"`
-	Items               []FinopsTopSavingsItem `json:"items"`
+	Currency           string                 `json:"currency"`
+	TotalYearlySavings *rat.Rat               `json:"total_yearly_savings"`
+	Items              []FinopsTopSavingsItem `json:"items"`
 }
 
 // TopSavingsFor applies the inspect filter pipeline and then returns
 // the top-N FinOps savings opportunities plus the total potential
-// monthly savings across the filtered scan. Pairs with the
+// yearly savings across the filtered scan. Pairs with the
 // `inspect_top_savings` MCP tool — narrower than the failing-panorama
 // triage view: this is the cost-prioritization angle only. Triggered
 // guardrails and over-budget items live in [FailingPanorama] /
@@ -67,13 +67,13 @@ func TopSavingsFor(data *format.Output, opts Options, n int) (TopSavingsResult, 
 	}
 	data = Filter(data, opts)
 	return TopSavingsResult{
-		Currency:            data.Currency,
-		TotalMonthlySavings: totalFinopsSavings(data),
-		Items:               topFinopsSavings(data, n),
+		Currency:           data.Currency,
+		TotalYearlySavings: totalFinopsSavings(data),
+		Items:              topFinopsSavings(data, n),
 	}, nil
 }
 
-// topFinopsSavings returns the top-N FinOps issues by monthly savings,
+// topFinopsSavings returns the top-N FinOps issues by yearly savings,
 // sorted desc. Ties broken by resource address for determinism.
 func topFinopsSavings(data *format.Output, n int) []FinopsTopSavingsItem {
 	var rows []FinopsTopSavingsItem
@@ -82,12 +82,12 @@ func topFinopsSavings(data *format.Output, n int) []FinopsTopSavingsItem {
 			for _, fr := range fp.FailingResources {
 				for _, iss := range fr.Issues {
 					rows = append(rows, FinopsTopSavingsItem{
-						Address:        fr.Name,
-						PolicyName:     fp.PolicyName,
-						PolicySlug:     fp.PolicySlug,
-						Project:        p.ProjectName,
-						MonthlySavings: iss.MonthlySavings,
-						Description:    iss.Description,
+						Address:       fr.Name,
+						PolicyName:    fp.PolicyName,
+						PolicySlug:    fp.PolicySlug,
+						Project:       p.ProjectName,
+						YearlySavings: iss.YearlySavings,
+						Description:   iss.Description,
 					})
 				}
 			}
@@ -95,11 +95,11 @@ func topFinopsSavings(data *format.Output, n int) []FinopsTopSavingsItem {
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		ai, aj := rat.Zero, rat.Zero
-		if rows[i].MonthlySavings != nil {
-			ai = rows[i].MonthlySavings
+		if rows[i].YearlySavings != nil {
+			ai = rows[i].YearlySavings
 		}
-		if rows[j].MonthlySavings != nil {
-			aj = rows[j].MonthlySavings
+		if rows[j].YearlySavings != nil {
+			aj = rows[j].YearlySavings
 		}
 		if !ai.Equals(aj) {
 			return ai.GreaterThan(aj)
@@ -112,26 +112,26 @@ func topFinopsSavings(data *format.Output, n int) []FinopsTopSavingsItem {
 	return rows
 }
 
-// WriteTotalSavings prints a single scalar — the sum of monthly_savings
+// WriteTotalSavings prints a single scalar — the sum of yearly_savings
 // across every FinOps issue. Honors --json and --llm by emitting a small
-// `{"total_monthly_savings": "<value>", "currency": "<code>"}` payload.
+// `{"total_yearly_savings": "<value>", "currency": "<code>"}` payload.
 func WriteTotalSavings(w io.Writer, data *format.Output, opts Options) error {
 	total := totalFinopsSavings(data)
 	if opts.Structured() {
 		payload := struct {
-			TotalMonthlySavings *rat.Rat `json:"total_monthly_savings"`
-			Currency            string   `json:"currency"`
+			TotalYearlySavings *rat.Rat `json:"total_yearly_savings"`
+			Currency           string   `json:"currency"`
 		}{
-			TotalMonthlySavings: total,
-			Currency:            data.Currency,
+			TotalYearlySavings: total,
+			Currency:           data.Currency,
 		}
 		return writeStructured(w, payload, opts)
 	}
-	_, err := fmt.Fprintf(w, "Total potential monthly savings: %s\n", humanMoney(total, data.Currency))
+	_, err := fmt.Fprintf(w, "Total potential yearly savings: %s\n", humanMoney(total, data.Currency))
 	return err
 }
 
-// WriteTopSavings prints the top-N FinOps issues by monthly_savings.
+// WriteTopSavings prints the top-N FinOps issues by yearly_savings.
 // Honors --fields / --addresses-only (column projection) and
 // --json/--llm (structured list, projected if --fields is set).
 func WriteTopSavings(w io.Writer, data *format.Output, n int, opts Options) error {
@@ -180,12 +180,12 @@ func WriteTopSavings(w io.Writer, data *format.Output, n int, opts Options) erro
 // with fieldsTopSavings.
 func projectTopSavingsRow(r FinopsTopSavingsItem, _ []string, currency string) map[string]string {
 	return map[string]string{
-		"address":         r.Address,
-		"policy":          r.PolicyName,
-		"policy_slug":     r.PolicySlug,
-		"project":         r.Project,
-		"monthly_savings": humanMoney(r.MonthlySavings, currency),
-		"description":     r.Description,
+		"address":        r.Address,
+		"policy":         r.PolicyName,
+		"policy_slug":    r.PolicySlug,
+		"project":        r.Project,
+		"yearly_savings": humanMoney(r.YearlySavings, currency),
+		"description":    r.Description,
 	}
 }
 

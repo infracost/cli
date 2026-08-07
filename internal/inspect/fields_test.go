@@ -7,7 +7,7 @@ import (
 )
 
 func TestValidateFields(t *testing.T) {
-	available := []string{"address", "policy", "monthly_savings", "project"}
+	available := []string{"address", "policy", "yearly_savings", "project"}
 
 	cases := []struct {
 		name      string
@@ -27,8 +27,8 @@ func TestValidateFields(t *testing.T) {
 		},
 		{
 			name:      "multiple fields preserve user-supplied order",
-			requested: []string{"monthly_savings", "address", "policy"},
-			want:      []string{"monthly_savings", "address", "policy"},
+			requested: []string{"yearly_savings", "address", "policy"},
+			want:      []string{"yearly_savings", "address", "policy"},
 		},
 		{
 			name:      "leading/trailing whitespace is trimmed",
@@ -43,7 +43,7 @@ func TestValidateFields(t *testing.T) {
 		{
 			name:      "unknown field errors with the available set listed (sorted)",
 			requested: []string{"address", "wrongname"},
-			wantErr:   `unknown field "wrongname". Available fields: address, monthly_savings, policy, project`,
+			wantErr:   `unknown field "wrongname". Available fields: address, policy, project, yearly_savings`,
 		},
 		{
 			name:      "case-sensitive: PolicyName is unknown",

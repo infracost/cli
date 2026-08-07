@@ -339,8 +339,8 @@ func skillCommonFlagAppendix(binPath string) string {
 The ` + "`inspect`" + ` command has dedicated flags for the patterns that would otherwise need jq or python aggregation. Always use these in preference to writing your own parsing scripts:
 
 ### Aggregations
-- ` + "`infracost inspect --total-savings`" + ` — scalar sum of monthly savings across every FinOps issue.
-- ` + "`infracost inspect --top-savings N`" + ` — top N FinOps issues sorted by ` + "`monthly_savings`" + ` desc.
+- ` + "`infracost inspect --total-savings`" + ` — scalar sum of yearly savings across every FinOps issue.
+- ` + "`infracost inspect --top-savings N`" + ` — top N FinOps issues sorted by ` + "`yearly_savings`" + ` desc.
 
 ### Resource selection
 - ` + "`infracost inspect --missing-tag <key>`" + ` — resources missing that tag entirely.
@@ -350,7 +350,7 @@ The ` + "`inspect`" + ` command has dedicated flags for the patterns that would 
 
 ### Output projection (replaces ` + "`cut`" + ` / ` + "`awk '{print $N}'`" + `)
 - ` + "`infracost inspect --fields <a,b,c>`" + ` — choose which columns to emit, in that order. With one field you get one value per line; multiple fields give a TSV with header.
-  - For ` + "`--top-savings`" + `: ` + "`address`" + `, ` + "`policy`" + `, ` + "`policy_slug`" + `, ` + "`project`" + `, ` + "`monthly_savings`" + `, ` + "`description`" + `.
+  - For ` + "`--top-savings`" + `: ` + "`address`" + `, ` + "`policy`" + `, ` + "`policy_slug`" + `, ` + "`project`" + `, ` + "`yearly_savings`" + `, ` + "`description`" + `.
   - For ` + "`--missing-tag`" + ` / ` + "`--invalid-tag`" + ` / ` + "`--min-cost`" + ` / ` + "`--max-cost`" + `: ` + "`address`" + `, ` + "`type`" + `, ` + "`project`" + `, ` + "`monthly_cost`" + `, ` + "`is_free`" + `.
 - ` + "`infracost inspect --addresses-only`" + ` — alias for ` + "`--fields=address`" + ` for the common "just give me the names" case.
 
@@ -378,7 +378,7 @@ For "how many distinct resources fail X policy" questions, prefer ` + "`--summar
 ` + binPath + ` inspect --total-savings                                             # one number
 
 # "List the top N highest-savings opportunities" (no jq, no awk):
-` + binPath + ` inspect --top-savings 5 --fields address,monthly_savings
+` + binPath + ` inspect --top-savings 5 --fields address,yearly_savings
 
 # "Which resources fail the tagging policy?":
 ` + binPath + ` inspect --missing-tag team                        # default: one address per line

@@ -63,7 +63,10 @@ func TestListFindings(t *testing.T) {
 	assert.Len(t, result.Findings, 2)
 	assert.Equal(t, "f-1", result.Findings[0].ID)
 	assert.Equal(t, 2, result.Findings[0].TaskTotal)
-	assert.InDelta(t, 200.75, result.TotalSavings, 0.001)
+	// Savings annualize at the CLI boundary: floor(monthly × 12), matching
+	// the dashboard. 120.50 → 1446, 80.25 → 963.
+	assert.InDelta(t, 1446, result.Findings[0].EstimatedYearlySavings, 0.001)
+	assert.InDelta(t, 2409, result.TotalYearlySavings, 0.001)
 	assert.True(t, result.HasNextPage)
 	assert.Equal(t, 1, result.Page)
 	assert.Equal(t, 2, result.NextPage)

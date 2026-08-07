@@ -17,7 +17,7 @@ import (
 
 // Output is the top-level JSON structure produced by the scan command.
 type Output struct {
-	Currency         string            `json:"currency"`
+	Currency string `json:"currency"`
 	// Summary carries pre-computed aggregations so consumers (LLMs in
 	// particular) don't have to sum/count over Projects themselves. It's
 	// populated by ToOutput; manually-constructed Outputs (tests) leave
@@ -45,7 +45,7 @@ type OutputSummary struct {
 	CostedResources                 int      `json:"costed_resources"`
 	FreeResources                   int      `json:"free_resources"`
 	TotalMonthlyCost                *rat.Rat `json:"total_monthly_cost,omitempty"`
-	TotalPotentialMonthlySavings    *rat.Rat `json:"total_potential_monthly_savings,omitempty"`
+	TotalPotentialYearlySavings     *rat.Rat `json:"total_potential_yearly_savings,omitempty"`
 	FinopsPolicies                  int      `json:"finops_policies,omitempty"`
 	FailingFinopsPolicies           int      `json:"failing_finops_policies,omitempty"`
 	DistinctFailingFinopsResources  int      `json:"distinct_failing_finops_resources,omitempty"`
@@ -128,8 +128,12 @@ type FinopsFailingResourceOutput struct {
 }
 
 type FinopsIssueOutput struct {
-	Description                   string   `json:"description"`
-	MonthlySavings                *rat.Rat `json:"monthly_savings,omitempty"`
+	Description string `json:"description"`
+	// YearlySavings is annualized at the plugin boundary (the plugin proto
+	// reports monthly savings; convertProjectResult multiplies by 12) so
+	// every downstream surface — dashboard, CLI, MCP — quotes savings as
+	// /yr figures.
+	YearlySavings                 *rat.Rat `json:"yearly_savings,omitempty"`
 	MonthlyCarbonSavingsGramsCo2E *rat.Rat `json:"monthly_carbon_savings_grams_co2e,omitempty"`
 	MonthlyWaterSavingsLiters     *rat.Rat `json:"monthly_water_savings_liters,omitempty"`
 	Address                       string   `json:"address,omitempty"`
@@ -137,9 +141,9 @@ type FinopsIssueOutput struct {
 }
 
 type TaggingOutput struct {
-	PolicyID         string                         `json:"policy_id"`
-	PolicyName       string                         `json:"policy_name"`
-	Message          string                         `json:"message"`
+	PolicyID   string `json:"policy_id"`
+	PolicyName string `json:"policy_name"`
+	Message    string `json:"message"`
 	// TagSchema describes the policy's per-key requirements (allowed values,
 	// validation regex, mandatory flag) once per tag key, instead of repeating
 	// them on every failing-resource invalid-tag entry.
@@ -286,8 +290,8 @@ func computeSummary(out *Output) *OutputSummary {
 			for _, fr := range fp.FailingResources {
 				failingFinopsRes[p.ProjectName+"\x00"+fr.Name] = struct{}{}
 				for _, iss := range fr.Issues {
-					if iss.MonthlySavings != nil {
-						totalSavings = totalSavings.Add(iss.MonthlySavings)
+					if iss.YearlySavings != nil {
+						totalSavings = totalSavings.Add(iss.YearlySavings)
 					}
 				}
 			}
@@ -305,7 +309,7 @@ func computeSummary(out *Output) *OutputSummary {
 	s.DistinctFailingFinopsResources = len(failingFinopsRes)
 	s.DistinctFailingTaggingResources = len(failingTaggingRes)
 	if !totalSavings.IsZero() {
-		s.TotalPotentialMonthlySavings = totalSavings
+		s.TotalPotentialYearlySavings = totalSavings
 	}
 	for _, g := range out.GuardrailResults {
 		s.Guardrails++
@@ -358,7 +362,7 @@ func convertProjectResult(pr *ProjectResult) ProjectOutput {
 			for _, iss := range fr.Issues {
 				issues = append(issues, FinopsIssueOutput{
 					Description:                   iss.Description,
-					MonthlySavings:                rat.FromProto(iss.MonthlySavings),
+					YearlySavings:                 annualize(rat.FromProto(iss.MonthlySavings)),
 					MonthlyCarbonSavingsGramsCo2E: rat.FromProto(iss.MonthlyCarbonSavingsGramsCo2E),
 					MonthlyWaterSavingsLiters:     rat.FromProto(iss.MonthlyWaterSavingsLiters),
 					Address:                       iss.Address,
@@ -460,6 +464,19 @@ func convertResource(r *provider.Resource) ResourceOutput {
 }
 
 var hoursInMonth = rat.New(730)
+
+var monthsInYear = rat.New(12)
+
+// annualize converts a monthly money amount to a yearly one. The plugin
+// proto reports savings per month; user-facing output quotes them per
+// year to match the dashboard. Nil-safe because proto money fields are
+// optional.
+func annualize(monthly *rat.Rat) *rat.Rat {
+	if monthly == nil {
+		return nil
+	}
+	return monthly.Mul(monthsInYear)
+}
 
 func convertQuantityToMonthly(qty *rat.Rat, period provider.Period) *rat.Rat {
 	switch period {

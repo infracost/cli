@@ -425,7 +425,7 @@ func registerAgentsMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.T
 		&mcp.Tool{
 			Name: "findings_list",
 			Description: "List FinOps findings for the active organization. Each row carries id, title, summary, severity, " +
-				"status, estimated monthly saving, and a task count. Pass statuses / efforts to narrow; pass cursor to page. " +
+				"status, estimated yearly saving, and a task count. Pass statuses / efforts to narrow; pass cursor to page. " +
 				"Use findings_get to drill into a specific finding and see its tasks.",
 			OutputSchema: findingsListSchema,
 		},
@@ -643,7 +643,7 @@ func registerInspectMCPTools(srv *mcp.Server, store cache.Store) {
 		&mcp.Tool{
 			Name: "inspect_summary",
 			Description: "Summarize the latest scan: headline counts (resources, costed/free, monthly cost), per-policy and " +
-				"per-domain failing counts, diagnostic counts, the per-project breakdown, total potential monthly savings, " +
+				"per-domain failing counts, diagnostic counts, the per-project breakdown, total potential yearly savings, " +
 				"and drill-in lists for every failing policy, triggered guardrail, and over-budget item. Use this as the " +
 				"first call after a scan to triage what needs attention — no follow-up tools required for the headline view.",
 			OutputSchema: summarySchema,
@@ -789,8 +789,8 @@ func registerInspectMCPTools(srv *mcp.Server, store cache.Store) {
 	mcp.AddTool(srv,
 		&mcp.Tool{
 			Name: "inspect_top_savings",
-			Description: "Return the top N FinOps savings opportunities from the latest scan, sorted by monthly_savings " +
-				"desc. The response also carries total_monthly_savings — the sum across the entire filtered scan, not " +
+			Description: "Return the top N FinOps savings opportunities from the latest scan, sorted by yearly_savings " +
+				"desc. The response also carries total_yearly_savings — the sum across the entire filtered scan, not " +
 				"just the top-N — so an agent can show both \"top items\" and \"total available\" without a follow-up " +
 				"call. Cost-prioritization view; for guardrail/budget triage use inspect_failing.",
 			OutputSchema: topSavingsSchema,
