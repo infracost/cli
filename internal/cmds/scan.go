@@ -176,6 +176,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 func ScanCmd(cfg *config.Config) *cobra.Command {
 	var in ScanInput
 	var includeWarnings bool
+	var diff bool
 	var options []string
 	cmd := &cobra.Command{
 		Use:   "scan [path]",
@@ -187,7 +188,11 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
   $ infracost scan ./terraform
 
   # Scan against a different organization's policies & prices
-  $ infracost scan --org acme`,
+  $ infracost scan --org acme
+
+  # Show the cost diff embedded in a Terraform plan JSON file
+  $ terraform show -json plan.tfplan > plan.json
+  $ infracost scan plan.json --diff --json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			startTime := time.Now()
@@ -215,6 +220,10 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 				outputFormat = "llm"
 			case cfg.JSON.Value:
 				outputFormat = "json"
+			}
+
+			if err := validateDiffFlags(diff, cfg); err != nil {
+				return err
 			}
 
 			defer func() {
@@ -258,6 +267,23 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
+			if diff {
+				var diffResult *format.ScanDiffOutput
+				var result ScanResult
+				if err := ui.RunWithSpinnerErr(cmd.Context(), "Scanning...", "Scan complete", func(ctx context.Context) error {
+					var scanErr error
+					diffResult, result, scanErr = ScanDiff(ctx, cfg, source, &cfg.Cache, in, outputFormat, pluginOptionMap)
+					return scanErr
+				}); err != nil {
+					return err
+				}
+				if err := diffResult.ToJSON(os.Stdout); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
+				fmt.Println()
+				return criticalDiagnosticsErr(result)
+			}
+
 			var result ScanResult
 			if err := ui.RunWithSpinnerErr(cmd.Context(), "Scanning...", "Scan complete", func(ctx context.Context) error {
 				var scanErr error
@@ -273,6 +299,7 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&diff, "diff", false, "Show the cost difference between the plan's prior state and planned state (Terraform plan JSON files only, requires --json)")
 	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
 	cmd.Flags().StringVar(&cfg.SSHKeyFile, "ssh-key-file", "", "Comma-separated SSH private key file(s) to use for fetching private modules over SSH (defaults to the standard ~/.ssh keys)")
 	cmd.Flags().BoolVar(&includeWarnings, "include-warnings", false, "Also show warning-severity diagnostics in the summary")
@@ -324,6 +351,22 @@ func parsePluginOptions(options []string) (pkgscanner.PluginOpts, error) {
 		}
 	}
 	return pluginOptionMap, nil
+}
+
+// validateDiffFlags rejects --diff without --json. The diff has no human or
+// LLM rendering yet, so rather than silently falling back to the regular scan
+// output, require the caller to pick the only supported format.
+func validateDiffFlags(diff bool, cfg *config.Config) error {
+	if !diff {
+		return nil
+	}
+	if cfg.LLM.Value {
+		return fmt.Errorf("--diff does not support --llm output yet, use --json")
+	}
+	if !cfg.JSON.Value {
+		return fmt.Errorf("--diff currently requires --json output")
+	}
+	return nil
 }
 
 // criticalDiagnosticsErr returns an error when any project in the result
