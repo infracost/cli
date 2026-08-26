@@ -3,11 +3,13 @@ package format
 import (
 	"encoding/json"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/infracost/cli/internal/format/toon"
+	"github.com/infracost/config"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 	"github.com/infracost/go-proto/pkg/event"
 	"github.com/infracost/go-proto/pkg/rat"
@@ -29,7 +31,13 @@ type Output struct {
 
 	// Fields below are not serialized to JSON but carried through for event
 	// metadata.
-	projectTypes           []string
+	projectTypes []string
+	// sourceFormats records how each project was authored, positionally
+	// parallel to projectTypes. It exists because projectType alone can't
+	// answer some adoption questions: Bicep compiles to ARM and its projects
+	// are typed "arm", so without this the two are indistinguishable. Empty
+	// for projects whose plugin reports no source format.
+	sourceFormats          []string
 	estimatedUsageCounts   map[string]int // nil means no usage file was loaded
 	unestimatedUsageCounts map[string]int
 }
@@ -216,9 +224,11 @@ type BudgetOutput struct {
 func ToOutput(result *Result) Output {
 	projects := make([]ProjectOutput, 0, len(result.Projects))
 	projectTypes := make([]string, 0, len(result.Projects))
+	sourceFormats := make([]string, 0, len(result.Projects))
 	for _, pr := range result.Projects {
 		projects = append(projects, convertProjectResult(pr))
 		projectTypes = append(projectTypes, string(pr.Config.Type))
+		sourceFormats = append(sourceFormats, projectSourceFormat(pr.Config))
 	}
 	guardrailResults := make([]GuardrailOutput, 0, len(result.GuardrailResults))
 	for _, gr := range result.GuardrailResults {
@@ -253,11 +263,45 @@ func ToOutput(result *Result) Output {
 		GuardrailResults:       guardrailResults,
 		BudgetResults:          budgetResults,
 		projectTypes:           projectTypes,
+		sourceFormats:          sourceFormats,
 		estimatedUsageCounts:   result.EstimatedUsageCounts,
 		unestimatedUsageCounts: result.UnestimatedUsageCounts,
 	}
 	out.Summary = computeSummary(&out)
 	return out
+}
+
+// sourceFormatOption is the raw option a plugin stamps on a project to record how
+// it was authored. It is deliberately not namespaced per plugin: the property it
+// feeds is generic, so a plugin that later distinguishes its own source formats
+// (CDK's languages, say) only has to join sourceFormatPlugins below.
+const sourceFormatOption = "source_format"
+
+// sourceFormatPlugins are the plugins known to stamp sourceFormatOption, by short
+// name. The lookup is an allowlist rather than a scan of every plugin blob so an
+// unrelated plugin that happens to use the same option key can't be read as a
+// source format.
+var sourceFormatPlugins = []string{"arm"}
+
+// projectSourceFormat returns the source format a plugin recorded for the project,
+// or "" when none did. Plugin identities carry an optional "infracost/" vendor
+// prefix depending on whether the key came from a generated config or the plugin's
+// self-reported name, so both spellings are matched.
+func projectSourceFormat(project *config.Project) string {
+	if project == nil {
+		return ""
+	}
+
+	for name, options := range project.Plugins {
+		if !slices.Contains(sourceFormatPlugins, strings.TrimPrefix(name, "infracost/")) {
+			continue
+		}
+		if format, ok := options[sourceFormatOption].(string); ok {
+			return format
+		}
+	}
+
+	return ""
 }
 
 // computeSummary fills the Output.Summary aggregate block. Pure function
