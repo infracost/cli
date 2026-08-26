@@ -166,7 +166,7 @@ func (config *Config) Process() {
 // for the same reason the LSP copy exists: the plugin inherits this process's
 // environment and reads the variable itself, so anything stricter here would
 // report bicepEnabled=false on a run that priced Bicep — telemetry that
-// contradicts behaviour. Keep in step with parser/plugin/arm/server.
+// contradicts behavior. Keep in step with parser/plugin/arm/server.
 func bicepEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("INFRACOST_ENABLE_BICEP"))) {
 	case "1", "true", "yes", "on":
