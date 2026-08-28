@@ -10,17 +10,17 @@ import (
 )
 
 // ScanDiffOutput is the top-level JSON structure produced by `scan --diff`.
-// Field names and casing are a published contract with external consumers, so
-// they deliberately do not follow the snake_case convention of Output.
+// Field names follow the snake_case convention of Output so `scan --json` and
+// `scan --diff --json` emit one consistent casing.
 // Monetary values are fixed two-decimal strings; percentages are numbers, and
 // null when the previous cost is zero (the change is undefined, not 0%).
 type ScanDiffOutput struct {
-	Currency                         string                       `json:"Currency"`
-	TotalMonthlyCost                 string                       `json:"TotalMonthlyCost"`
-	PastTotalMonthlyCost             string                       `json:"PastTotalMonthlyCost"`
-	DiffTotalMonthlyCost             string                       `json:"DiffTotalMonthlyCost"`
-	PercentageChangeTotalMonthlyCost *float64                     `json:"PercentageChangeTotalMonthlyCost"`
-	Diff                             map[string]*ResourceTypeDiff `json:"Diff"`
+	Currency                         string                       `json:"currency"`
+	TotalMonthlyCost                 string                       `json:"total_monthly_cost"`
+	PastTotalMonthlyCost             string                       `json:"past_total_monthly_cost"`
+	DiffTotalMonthlyCost             string                       `json:"diff_total_monthly_cost"`
+	PercentageChangeTotalMonthlyCost *float64                     `json:"percentage_change_total_monthly_cost"`
+	Diff                             map[string]*ResourceTypeDiff `json:"diff"`
 }
 
 // ResourceTypeDiff aggregates the changed resources of one resource type
@@ -28,11 +28,11 @@ type ScanDiffOutput struct {
 // unchanged resources of the same type are excluded, so the block is
 // self-consistent with its entries.
 type ResourceTypeDiff struct {
-	CurrentMonthlyCost          string               `json:"CurrentMonthlyCost"`
-	PreviousMonthlyCost         string               `json:"PreviousMonthlyCost"`
-	DiffMonthlyCost             string               `json:"DiffMonthlyCost"`
-	PercentageChangeMonthlyCost *float64             `json:"PercentageChangeMonthlyCost"`
-	Diff                        []*ResourceDiffEntry `json:"Diff"`
+	CurrentMonthlyCost          string               `json:"current_monthly_cost"`
+	PreviousMonthlyCost         string               `json:"previous_monthly_cost"`
+	DiffMonthlyCost             string               `json:"diff_monthly_cost"`
+	PercentageChangeMonthlyCost *float64             `json:"percentage_change_monthly_cost"`
+	Diff                        []*ResourceDiffEntry `json:"diff"`
 }
 
 // ResourceDiffEntry is the cost change of a single resource. Subresources
@@ -40,21 +40,21 @@ type ResourceTypeDiff struct {
 // child resources by their name (recursive total). Only changed entries
 // appear, matching the resource-level filter.
 type ResourceDiffEntry struct {
-	Name                        string               `json:"Name"`
-	CurrentMonthlyCost          string               `json:"CurrentMonthlyCost"`
-	PreviousMonthlyCost         string               `json:"PreviousMonthlyCost"`
-	DiffMonthlyCost             string               `json:"DiffMonthlyCost"`
-	PercentageChangeMonthlyCost *float64             `json:"PercentageChangeMonthlyCost"`
-	Subresources                map[string]*CostDiff `json:"Subresources,omitempty"`
+	Name                        string               `json:"name"`
+	CurrentMonthlyCost          string               `json:"current_monthly_cost"`
+	PreviousMonthlyCost         string               `json:"previous_monthly_cost"`
+	DiffMonthlyCost             string               `json:"diff_monthly_cost"`
+	PercentageChangeMonthlyCost *float64             `json:"percentage_change_monthly_cost"`
+	Subresources                map[string]*CostDiff `json:"subresources,omitempty"`
 }
 
 // CostDiff is the leaf cost-change block shared by subresource/component
 // entries.
 type CostDiff struct {
-	CurrentMonthlyCost          string   `json:"CurrentMonthlyCost"`
-	PreviousMonthlyCost         string   `json:"PreviousMonthlyCost"`
-	DiffMonthlyCost             string   `json:"DiffMonthlyCost"`
-	PercentageChangeMonthlyCost *float64 `json:"PercentageChangeMonthlyCost"`
+	CurrentMonthlyCost          string   `json:"current_monthly_cost"`
+	PreviousMonthlyCost         string   `json:"previous_monthly_cost"`
+	DiffMonthlyCost             string   `json:"diff_monthly_cost"`
+	PercentageChangeMonthlyCost *float64 `json:"percentage_change_monthly_cost"`
 }
 
 // ToJSON writes a ScanDiffOutput as indented JSON to w.
