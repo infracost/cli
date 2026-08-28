@@ -50,12 +50,19 @@ type ResourceDiffEntry struct {
 }
 
 // CostDiff is the leaf cost-change block shared by subresource/component
-// entries.
+// entries. Price and quantity are set for cost components when unambiguous
+// (they are omitted for child resources, and for duplicate-named lines whose
+// costs were accumulated); like the legacy CLI, a change in either surfaces
+// the entry even when the monthly cost is unchanged.
 type CostDiff struct {
 	CurrentMonthlyCost          string   `json:"current_monthly_cost"`
 	PreviousMonthlyCost         string   `json:"previous_monthly_cost"`
 	DiffMonthlyCost             string   `json:"diff_monthly_cost"`
 	PercentageChangeMonthlyCost *float64 `json:"percentage_change_monthly_cost"`
+	CurrentPrice                *rat.Rat `json:"current_price,omitempty"`
+	PreviousPrice               *rat.Rat `json:"previous_price,omitempty"`
+	CurrentQuantity             *rat.Rat `json:"current_quantity,omitempty"`
+	PreviousQuantity            *rat.Rat `json:"previous_quantity,omitempty"`
 }
 
 // ToJSON writes a ScanDiffOutput as indented JSON to w.
@@ -71,9 +78,12 @@ func (d *ScanDiffOutput) ToJSON(w io.Writer) error {
 // BuildScanDiff diffs two scan outputs — prev from the plan's prior state,
 // curr from its planned values — into the `scan --diff` shape. Totals cover
 // every resource on each side; the Diff map carries only resources whose
-// monthly cost changed, grouped by resource type. Resources are matched by
-// address, so a resource that only appears on one side is treated as
-// added/removed with a zero cost on the missing side.
+// cost changed, grouped by resource type. A resource is included when its
+// monthly total changed or when any of its cost lines changed — offsetting
+// component changes and price/quantity changes that leave the total intact
+// still count, matching the legacy CLI. Resources are matched by address, so
+// a resource that only appears on one side is treated as added/removed with
+// a zero cost on the missing side.
 func BuildScanDiff(prev, curr *Output) *ScanDiffOutput {
 	prevRes := flattenResources(prev)
 	currRes := flattenResources(curr)
@@ -128,7 +138,8 @@ func BuildScanDiff(prev, curr *Output) *ScanDiffOutput {
 		if p.curr != nil {
 			currCost = resourceMonthlyCost(p.curr)
 		}
-		if prevCost.Equals(currCost) {
+		subs := diffSubcosts(p.prev, p.curr)
+		if prevCost.Equals(currCost) && len(subs) == 0 {
 			continue
 		}
 
@@ -138,7 +149,7 @@ func BuildScanDiff(prev, curr *Output) *ScanDiffOutput {
 			PreviousMonthlyCost:         prevCost.StringFixed(2),
 			DiffMonthlyCost:             currCost.Sub(prevCost).StringFixed(2),
 			PercentageChangeMonthlyCost: percentChange(prevCost, currCost),
-			Subresources:                diffSubcosts(p.prev, p.curr),
+			Subresources:                subs,
 		}
 
 		td, ok := out.Diff[p.resType]
@@ -187,10 +198,21 @@ func sumResourceCosts(res map[string]*ResourceOutput) *rat.Rat {
 	return total
 }
 
+// subcost is one immediate cost line of a resource: a cost component (with
+// its price and quantity when unambiguous) or a child resource (recursive
+// total only).
+type subcost struct {
+	cost     *rat.Rat
+	price    *rat.Rat
+	quantity *rat.Rat
+}
+
 // diffSubcosts builds the one-level breakdown of a resource's cost change:
 // each cost component by name, and each child resource by name with its
-// recursive total. Entries whose cost did not change are dropped. Either side
-// may be nil (added/removed resource).
+// recursive total. As in the legacy CLI's diffCostComponents, an entry is
+// kept when its cost, price or quantity changed — a price move that leaves
+// the monthly cost intact still shows — and dropped only when none of them
+// did. Either side may be nil (added/removed resource).
 //
 // Lines are paired by exact name first, then — mirroring the legacy CLI's
 // findMatchingCostComponent — by the text before the bracket, so a resize
@@ -203,8 +225,8 @@ func diffSubcosts(prev, curr *ResourceOutput) map[string]*CostDiff {
 	currCosts := subcosts(curr)
 
 	type costPair struct {
-		prev *rat.Rat
-		curr *rat.Rat
+		prev *subcost
+		curr *subcost
 	}
 	pairs := map[string]costPair{}
 	matchedCurr := map[string]bool{}
@@ -216,8 +238,8 @@ func diffSubcosts(prev, curr *ResourceOutput) map[string]*CostDiff {
 
 	var unmatchedPrev []string
 	for _, name := range prevNames {
-		if currCost, ok := currCosts[name]; ok {
-			pairs[name] = costPair{prev: prevCosts[name], curr: currCost}
+		if currLine, ok := currCosts[name]; ok {
+			pairs[name] = costPair{prev: prevCosts[name], curr: currLine}
 			matchedCurr[name] = true
 			continue
 		}
@@ -226,7 +248,7 @@ func diffSubcosts(prev, curr *ResourceOutput) map[string]*CostDiff {
 
 	for _, prevName := range unmatchedPrev {
 		pairName := prevName
-		pair := costPair{prev: prevCosts[prevName], curr: rat.Zero}
+		pair := costPair{prev: prevCosts[prevName], curr: &subcost{cost: rat.Zero}}
 		if prefix, ok := bracketPrefix(prevName); ok {
 			for _, currName := range currNames {
 				if matchedCurr[currName] {
@@ -245,26 +267,38 @@ func diffSubcosts(prev, curr *ResourceOutput) map[string]*CostDiff {
 
 	for _, currName := range currNames {
 		if !matchedCurr[currName] {
-			pairs[currName] = costPair{prev: rat.Zero, curr: currCosts[currName]}
+			pairs[currName] = costPair{prev: &subcost{cost: rat.Zero}, curr: currCosts[currName]}
 		}
 	}
 
 	out := map[string]*CostDiff{}
 	for name, pair := range pairs {
-		if pair.prev.Equals(pair.curr) {
+		costChanged := !pair.prev.cost.Equals(pair.curr.cost)
+		if !costChanged && !ratChanged(pair.prev.price, pair.curr.price) && !ratChanged(pair.prev.quantity, pair.curr.quantity) {
 			continue
 		}
 		out[name] = &CostDiff{
-			CurrentMonthlyCost:          pair.curr.StringFixed(2),
-			PreviousMonthlyCost:         pair.prev.StringFixed(2),
-			DiffMonthlyCost:             pair.curr.Sub(pair.prev).StringFixed(2),
-			PercentageChangeMonthlyCost: percentChange(pair.prev, pair.curr),
+			CurrentMonthlyCost:          pair.curr.cost.StringFixed(2),
+			PreviousMonthlyCost:         pair.prev.cost.StringFixed(2),
+			DiffMonthlyCost:             pair.curr.cost.Sub(pair.prev.cost).StringFixed(2),
+			PercentageChangeMonthlyCost: percentChange(pair.prev.cost, pair.curr.cost),
+			CurrentPrice:                pair.curr.price,
+			PreviousPrice:               pair.prev.price,
+			CurrentQuantity:             pair.curr.quantity,
+			PreviousQuantity:            pair.prev.quantity,
 		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// ratChanged reports whether two optional values differ. A side without a
+// value (child resources, accumulated duplicates, added/removed lines) can't
+// signal a change on its own — the cost comparison covers those.
+func ratChanged(prev, curr *rat.Rat) bool {
+	return prev != nil && curr != nil && !prev.Equals(curr)
 }
 
 // bracketPrefix returns the text before the first " (" in a cost line name,
@@ -274,7 +308,7 @@ func bracketPrefix(name string) (string, bool) {
 	return prefix, found
 }
 
-func sortedKeys(m map[string]*rat.Rat) []string {
+func sortedKeys(m map[string]*subcost) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -284,28 +318,32 @@ func sortedKeys(m map[string]*rat.Rat) []string {
 }
 
 // subcosts maps a resource's immediate cost lines by name: cost components
-// to their monthly total and child resources to their recursive total.
-// Duplicate names accumulate.
-func subcosts(r *ResourceOutput) map[string]*rat.Rat {
-	out := map[string]*rat.Rat{}
+// to their monthly total (with price and quantity) and child resources to
+// their recursive total. Duplicate names accumulate their costs; price and
+// quantity are dropped for them since neither value is the line's.
+func subcosts(r *ResourceOutput) map[string]*subcost {
+	out := map[string]*subcost{}
 	if r == nil {
 		return out
 	}
-	add := func(name string, cost *rat.Rat) {
+	add := func(name string, cost, price, quantity *rat.Rat) {
 		if cost == nil {
 			return
 		}
 		if existing, ok := out[name]; ok {
-			out[name] = existing.Add(cost)
+			existing.cost = existing.cost.Add(cost)
+			existing.price = nil
+			existing.quantity = nil
 			return
 		}
-		out[name] = cost
+		out[name] = &subcost{cost: cost, price: price, quantity: quantity}
 	}
 	for i := range r.CostComponents {
-		add(r.CostComponents[i].Name, r.CostComponents[i].TotalMonthlyCost)
+		c := &r.CostComponents[i]
+		add(c.Name, c.TotalMonthlyCost, c.Price, c.Quantity)
 	}
 	for i := range r.Subresources {
-		add(r.Subresources[i].Name, resourceMonthlyCost(&r.Subresources[i]))
+		add(r.Subresources[i].Name, resourceMonthlyCost(&r.Subresources[i]), nil, nil)
 	}
 	return out
 }

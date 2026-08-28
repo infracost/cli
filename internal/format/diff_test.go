@@ -165,6 +165,72 @@ func TestBuildScanDiff_SubresourceCosts(t *testing.T) {
 	assert.Equal(t, "5.00", sub.DiffMonthlyCost)
 }
 
+func TestBuildScanDiff_OffsettingComponentChanges(t *testing.T) {
+	// One component goes up $10 and another down $10: the resource's total is
+	// unchanged, but the composition changed, so it must still appear (as the
+	// legacy CLI's component-level diff did) with both components listed.
+	prev := outputWith(costedResource("aws_instance.web", "aws_instance", map[string]int64{"Instance usage": 80, "EBS-optimized usage": 20}))
+	curr := outputWith(costedResource("aws_instance.web", "aws_instance", map[string]int64{"Instance usage": 70, "EBS-optimized usage": 30}))
+
+	d := BuildScanDiff(prev, curr)
+
+	assert.Equal(t, "0.00", d.DiffTotalMonthlyCost)
+	td := d.Diff["aws_instance"]
+	require.NotNil(t, td)
+	require.Len(t, td.Diff, 1)
+	entry := td.Diff[0]
+	assert.Equal(t, "0.00", entry.DiffMonthlyCost)
+
+	require.Len(t, entry.Subresources, 2)
+	down := entry.Subresources["Instance usage"]
+	require.NotNil(t, down)
+	assert.Equal(t, "-10.00", down.DiffMonthlyCost)
+	up := entry.Subresources["EBS-optimized usage"]
+	require.NotNil(t, up)
+	assert.Equal(t, "10.00", up.DiffMonthlyCost)
+}
+
+func TestBuildScanDiff_PriceChangeSameMonthlyCost(t *testing.T) {
+	// Price halves and quantity doubles: the monthly cost is identical, but
+	// the component changed — the legacy CLI compared quantity and price too,
+	// so the entry must surface, carrying the price/quantity that moved.
+	prevRes := ResourceOutput{Name: "aws_lambda_function.fn", Type: "aws_lambda_function", IsSupported: true,
+		CostComponents: []CostComponentOutput{{
+			Name:             "Requests",
+			Price:            rat.New(4),
+			Quantity:         rat.New(25),
+			TotalMonthlyCost: rat.New(100),
+		}}}
+	currRes := ResourceOutput{Name: "aws_lambda_function.fn", Type: "aws_lambda_function", IsSupported: true,
+		CostComponents: []CostComponentOutput{{
+			Name:             "Requests",
+			Price:            rat.New(2),
+			Quantity:         rat.New(50),
+			TotalMonthlyCost: rat.New(100),
+		}}}
+
+	d := BuildScanDiff(outputWith(prevRes), outputWith(currRes))
+
+	td := d.Diff["aws_lambda_function"]
+	require.NotNil(t, td)
+	require.Len(t, td.Diff, 1)
+	entry := td.Diff[0]
+	assert.Equal(t, "0.00", entry.DiffMonthlyCost)
+
+	require.Len(t, entry.Subresources, 1)
+	sub := entry.Subresources["Requests"]
+	require.NotNil(t, sub)
+	assert.Equal(t, "0.00", sub.DiffMonthlyCost)
+	require.NotNil(t, sub.PreviousPrice)
+	assert.True(t, sub.PreviousPrice.Equals(rat.New(4)))
+	require.NotNil(t, sub.CurrentPrice)
+	assert.True(t, sub.CurrentPrice.Equals(rat.New(2)))
+	require.NotNil(t, sub.PreviousQuantity)
+	assert.True(t, sub.PreviousQuantity.Equals(rat.New(25)))
+	require.NotNil(t, sub.CurrentQuantity)
+	assert.True(t, sub.CurrentQuantity.Equals(rat.New(50)))
+}
+
 func TestScanDiffOutput_JSONShape(t *testing.T) {
 	prev := outputWith(costedResource("aws_instance.web", "aws_instance", map[string]int64{"Instance usage (Linux/UNIX, on-demand, t2.medium)": 80}))
 	curr := outputWith(costedResource("aws_instance.web", "aws_instance", map[string]int64{"Instance usage (Linux/UNIX, on-demand, t2.medium)": 120}))
