@@ -122,7 +122,15 @@ func TestValidateDiffFlags(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires --json")
 
+	// --json alone is not enough: Infracost Cloud mode would scan the prior
+	// state without the org's usage defaults, so --diff is gated to
+	// self-hosted pricing mode for now.
 	cfg.JSON.Value = true
+	err = validateDiffFlags(true, cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "self-hosted pricing mode")
+
+	cfg.PricingAPIKey = "static-key"
 	require.NoError(t, validateDiffFlags(true, cfg))
 
 	cfg.LLM.Value = true

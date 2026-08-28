@@ -299,7 +299,7 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&diff, "diff", false, "Show the cost difference between the plan's prior state and planned state (Terraform plan JSON files only, requires --json)")
+	cmd.Flags().BoolVar(&diff, "diff", false, "Show the cost difference between the plan's prior state and planned state (Terraform plan JSON files only, requires --json and self-hosted pricing mode)")
 	cmd.Flags().StringVar(&cfg.Currency, "currency", "", "ISO 4217 currency code to use for prices (e.g. USD, EUR, GBP)")
 	cmd.Flags().StringVar(&cfg.SSHKeyFile, "ssh-key-file", "", "Comma-separated SSH private key file(s) to use for fetching private modules over SSH (defaults to the standard ~/.ssh keys)")
 	cmd.Flags().BoolVar(&includeWarnings, "include-warnings", false, "Also show warning-severity diagnostics in the summary")
@@ -356,6 +356,13 @@ func parsePluginOptions(options []string) (pkgscanner.PluginOpts, error) {
 // validateDiffFlags rejects --diff without --json. The diff has no human or
 // LLM rendering yet, so rather than silently falling back to the regular scan
 // output, require the caller to pick the only supported format.
+//
+// It also rejects --diff outside self-hosted pricing mode: an Infracost Cloud
+// run scans the current state with real RunParameters (usage defaults, config
+// template) while the prior state is scanned with zero values, so an
+// unchanged usage-based resource would show a phony cost change. Until the
+// prior scan shares the current scan's RunParameters, fail clearly instead of
+// quietly returning wrong numbers.
 func validateDiffFlags(diff bool, cfg *config.Config) error {
 	if !diff {
 		return nil
@@ -365,6 +372,9 @@ func validateDiffFlags(diff bool, cfg *config.Config) error {
 	}
 	if !cfg.JSON.Value {
 		return fmt.Errorf("--diff currently requires --json output")
+	}
+	if !cfg.SelfHostedPricing() {
+		return fmt.Errorf("--diff currently requires self-hosted pricing mode (set INFRACOST_CLI_PRICING_API_KEY): Infracost Cloud usage defaults are not yet applied to the plan's prior state, which would skew the diff")
 	}
 	return nil
 }

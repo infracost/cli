@@ -77,7 +77,10 @@ func ScanDiff(ctx context.Context, cfg *config.Config, source oauth2.TokenSource
 // a temp dir and scans it. The scan runs with zero RunParameters so no
 // policies, guardrails or budgets are evaluated — only costs are needed — and
 // bypasses Scan() so the synthetic file never pollutes run telemetry or the
-// results cache.
+// results cache. Zero RunParameters only match the current scan's settings in
+// self-hosted pricing mode, which validateDiffFlags guarantees; supporting
+// Infracost Cloud runs means sharing the current scan's RunParameters here
+// and skipping only policies, guardrails and budgets.
 func scanPriorState(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, in ScanInput, plan map[string]json.RawMessage, branchName string, pluginOpts pkgscanner.PluginOpts) (*format.Output, error) {
 	tempDir, err := os.MkdirTemp("", "infracost-diff-")
 	if err != nil {
