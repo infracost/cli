@@ -113,6 +113,79 @@ func TestPriorPlanJSON_NoPriorState(t *testing.T) {
 	assert.JSONEq(t, `{}`, string(prior["planned_values"]))
 }
 
+func TestStagePriorScanConfig_NoConfig(t *testing.T) {
+	targetDir := t.TempDir()
+	tempDir := t.TempDir()
+
+	require.NoError(t, stagePriorScanConfig(targetDir, tempDir))
+
+	entries, err := os.ReadDir(tempDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+func TestStagePriorScanConfig_CopiesConfigAndUsage(t *testing.T) {
+	targetDir := t.TempDir()
+	tempDir := t.TempDir()
+
+	configYML := "version: \"1.0\"\ncurrency: EUR\nusage_file: usage/infracost-usage.yml\nprojects:\n  - path: plan.json\n"
+	require.NoError(t, os.WriteFile(filepath.Join(targetDir, "infracost.yml"), []byte(configYML), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(targetDir, "usage"), 0o700))
+	usageYML := "version: 0.1\nresource_usage:\n  aws_s3_bucket.assets:\n    standard:\n      storage_gb: 500\n"
+	require.NoError(t, os.WriteFile(filepath.Join(targetDir, "usage", "infracost-usage.yml"), []byte(usageYML), 0o600))
+
+	require.NoError(t, stagePriorScanConfig(targetDir, tempDir))
+
+	stagedConfig, err := os.ReadFile(filepath.Join(tempDir, "infracost.yml"))
+	require.NoError(t, err)
+	assert.Equal(t, configYML, string(stagedConfig))
+
+	stagedUsage, err := os.ReadFile(filepath.Join(tempDir, "usage", "infracost-usage.yml"))
+	require.NoError(t, err)
+	assert.Equal(t, usageYML, string(stagedUsage))
+}
+
+func TestStagePriorScanConfig_CopiesTemplate(t *testing.T) {
+	targetDir := t.TempDir()
+	tempDir := t.TempDir()
+
+	tmpl := "version: \"1.0\"\nprojects:\n  - path: plan.json\n"
+	require.NoError(t, os.WriteFile(filepath.Join(targetDir, "infracost.yml.tmpl"), []byte(tmpl), 0o600))
+
+	require.NoError(t, stagePriorScanConfig(targetDir, tempDir))
+
+	staged, err := os.ReadFile(filepath.Join(tempDir, "infracost.yml.tmpl"))
+	require.NoError(t, err)
+	assert.Equal(t, tmpl, string(staged))
+}
+
+func TestStagePriorScanConfig_MissingUsageFileOK(t *testing.T) {
+	targetDir := t.TempDir()
+	tempDir := t.TempDir()
+
+	// The scanner treats a missing usage file as "no usage data", so staging
+	// must too — both scans then agree.
+	configYML := "version: \"1.0\"\nusage_file: infracost-usage.yml\n"
+	require.NoError(t, os.WriteFile(filepath.Join(targetDir, "infracost.yml"), []byte(configYML), 0o600))
+
+	require.NoError(t, stagePriorScanConfig(targetDir, tempDir))
+
+	_, err := os.Stat(filepath.Join(tempDir, "infracost-usage.yml"))
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestStagePriorScanConfig_RejectsEscapingUsagePath(t *testing.T) {
+	targetDir := t.TempDir()
+	tempDir := t.TempDir()
+
+	configYML := "version: \"1.0\"\nusage_file: ../infracost-usage.yml\n"
+	require.NoError(t, os.WriteFile(filepath.Join(targetDir, "infracost.yml"), []byte(configYML), 0o600))
+
+	err := stagePriorScanConfig(targetDir, tempDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "usage_file")
+}
+
 func TestValidateDiffFlags(t *testing.T) {
 	cfg := &config.Config{}
 

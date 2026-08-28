@@ -17,6 +17,7 @@ import (
 	"github.com/infracost/cli/internal/vcs"
 	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	"golang.org/x/oauth2"
+	"gopkg.in/yaml.v3"
 )
 
 // ScanDiff runs `scan --diff`: the target must be a Terraform plan JSON file
@@ -64,7 +65,7 @@ func ScanDiff(ctx context.Context, cfg *config.Config, source oauth2.TokenSource
 		return nil, current, err
 	}
 
-	previous, err := scanPriorState(ctx, cfg, source, in, plan, vcs.GetCurrentBranch(filepath.Dir(absolutePath)), pluginOpts)
+	previous, err := scanPriorState(ctx, cfg, source, in, plan, absolutePath, pluginOpts)
 	if err != nil {
 		return nil, current, fmt.Errorf("failed to cost the plan's prior state: %w", err)
 	}
@@ -81,14 +82,24 @@ func ScanDiff(ctx context.Context, cfg *config.Config, source oauth2.TokenSource
 // self-hosted pricing mode, which validateDiffFlags guarantees; supporting
 // Infracost Cloud runs means sharing the current scan's RunParameters here
 // and skipping only policies, guardrails and budgets.
-func scanPriorState(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, in ScanInput, plan map[string]json.RawMessage, branchName string, pluginOpts pkgscanner.PluginOpts) (*format.Output, error) {
+//
+// The target directory's repo config and usage file are mirrored into the
+// temp dir, and the synthetic plan keeps the target's basename, so the prior
+// scan resolves the same currency, usage data and project entry as the
+// current scan.
+func scanPriorState(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, in ScanInput, plan map[string]json.RawMessage, targetPath string, pluginOpts pkgscanner.PluginOpts) (*format.Output, error) {
 	tempDir, err := os.MkdirTemp("", "infracost-diff-")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	priorPath := filepath.Join(tempDir, "prior-plan.json")
+	targetDir := filepath.Dir(targetPath)
+	if err := stagePriorScanConfig(targetDir, tempDir); err != nil {
+		return nil, err
+	}
+
+	priorPath := filepath.Join(tempDir, filepath.Base(targetPath))
 	priorPlan, err := priorPlanJSON(plan)
 	if err != nil {
 		return nil, err
@@ -106,7 +117,7 @@ func scanPriorState(ctx context.Context, cfg *config.Config, source oauth2.Token
 		PricingAPIKey:   cfg.PricingAPIKey,
 		FetchAuth:       scanner.SSHFetchAuthFromValue(cfg.SSHKeyFile),
 	}
-	result, err := s.Scan(ctx, dashboard.RunParameters{}, priorPath, branchName, source, pluginOpts)
+	result, err := s.Scan(ctx, dashboard.RunParameters{}, priorPath, vcs.GetCurrentBranch(targetDir), source, pluginOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +126,81 @@ func scanPriorState(ctx context.Context, cfg *config.Config, source oauth2.Token
 		return nil, err
 	}
 	return &output, nil
+}
+
+// stagePriorScanConfig mirrors the target directory's scan configuration into
+// the prior scan's temp dir: infracost.yml (and its template), plus the usage
+// file the config references. Currency and the usage file path only come from
+// a loaded repo config — a generated one never sets them — so without this
+// the prior scan would fall back to USD with no usage while the current scan
+// uses the repo's settings, and unchanged usage-based resources would show
+// phony cost changes. A template is copied verbatim but not rendered, so a
+// usage file only referenced from the template is not mirrored.
+func stagePriorScanConfig(targetDir, tempDir string) error {
+	for _, name := range []string{pkgscanner.RepoConfigFilename, pkgscanner.RepoConfigTemplateFilename} {
+		if err := copyFileIfExists(filepath.Join(targetDir, name), filepath.Join(tempDir, name)); err != nil {
+			return err
+		}
+	}
+
+	usageFile, err := repoConfigUsageFilePath(filepath.Join(targetDir, pkgscanner.RepoConfigFilename))
+	if err != nil {
+		return err
+	}
+	if usageFile == "" {
+		return nil
+	}
+	// A usage path that escapes the repo directory can't be mirrored into the
+	// temp dir at the same relative location; the prior scan would silently
+	// run without usage data, so refuse rather than return skewed numbers.
+	if !filepath.IsLocal(usageFile) {
+		return fmt.Errorf("--diff requires the %s usage_file to be a relative path inside the repository, got %q", pkgscanner.RepoConfigFilename, usageFile)
+	}
+	dst := filepath.Join(tempDir, usageFile)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return fmt.Errorf("failed to stage usage file for the prior state scan: %w", err)
+	}
+	return copyFileIfExists(filepath.Join(targetDir, usageFile), dst)
+}
+
+// repoConfigUsageFilePath returns the top-level usage_file from an
+// infracost.yml, or "" when the config or the key is absent. All repo config
+// formats (current, file-based and legacy) spell the key usage_file, so a
+// minimal decode avoids pulling the full config loader (and its plugin
+// machinery) into the diff path.
+func repoConfigUsageFilePath(configPath string) (string, error) {
+	data, err := os.ReadFile(configPath) // #nosec G304 -- repo config next to the user-specified scan target
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to read %s: %w", configPath, err)
+	}
+	var repoConfig struct {
+		UsageFilePath string `yaml:"usage_file"`
+	}
+	if err := yaml.Unmarshal(data, &repoConfig); err != nil {
+		return "", fmt.Errorf("failed to parse %s: %w", configPath, err)
+	}
+	return repoConfig.UsageFilePath, nil
+}
+
+// copyFileIfExists copies src to dst, silently doing nothing when src does
+// not exist (or is a directory) — mirroring how the scanner treats a missing
+// usage file as "no usage data" rather than an error.
+func copyFileIfExists(src, dst string) error {
+	stat, err := os.Stat(src)
+	if err != nil || stat.IsDir() {
+		return nil
+	}
+	data, err := os.ReadFile(src) // #nosec G304 -- config file next to the user-specified scan target
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", src, err)
+	}
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		return fmt.Errorf("failed to stage %s for the prior state scan: %w", filepath.Base(src), err)
+	}
+	return nil
 }
 
 var (
