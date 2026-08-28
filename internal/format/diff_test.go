@@ -208,21 +208,42 @@ func TestScanDiffOutput_JSONShape(t *testing.T) {
 }
 
 func TestBuildScanDiff_ComponentRename(t *testing.T) {
-	// An instance-type change renames the cost component: both names appear,
-	// one ending at zero and one starting from zero.
+	// An instance-type change renames the cost component. The names pair on
+	// the text before the bracket (as in the legacy CLI), so a resize shows
+	// as one changed entry under the current name — not two entries bouncing
+	// through zero.
 	prev := outputWith(costedResource("aws_instance.web", "aws_instance", map[string]int64{"Instance usage (t2.small)": 40}))
 	curr := outputWith(costedResource("aws_instance.web", "aws_instance", map[string]int64{"Instance usage (t2.medium)": 80}))
 
 	d := BuildScanDiff(prev, curr)
 
 	entry := d.Diff["aws_instance"].Diff[0]
+	require.Len(t, entry.Subresources, 1)
+	resized := entry.Subresources["Instance usage (t2.medium)"]
+	require.NotNil(t, resized)
+	assert.Equal(t, "80.00", resized.CurrentMonthlyCost)
+	assert.Equal(t, "40.00", resized.PreviousMonthlyCost)
+	assert.Equal(t, "40.00", resized.DiffMonthlyCost)
+	require.NotNil(t, resized.PercentageChangeMonthlyCost)
+	assert.InDelta(t, 100.0, *resized.PercentageChangeMonthlyCost, 0.001)
+}
+
+func TestBuildScanDiff_BareNameDoesNotBracketMatch(t *testing.T) {
+	// The bracket fallback needs a bracket on both sides (legacy behavior):
+	// a bare "Storage" line must not pair with "Storage (provisioned IOPS)".
+	prev := outputWith(costedResource("aws_ebs_volume.data", "aws_ebs_volume", map[string]int64{"Storage": 10}))
+	curr := outputWith(costedResource("aws_ebs_volume.data", "aws_ebs_volume", map[string]int64{"Storage (provisioned IOPS)": 25}))
+
+	d := BuildScanDiff(prev, curr)
+
+	entry := d.Diff["aws_ebs_volume"].Diff[0]
 	require.Len(t, entry.Subresources, 2)
-	old := entry.Subresources["Instance usage (t2.small)"]
-	require.NotNil(t, old)
-	assert.Equal(t, "0.00", old.CurrentMonthlyCost)
-	assert.Equal(t, "40.00", old.PreviousMonthlyCost)
-	updated := entry.Subresources["Instance usage (t2.medium)"]
-	require.NotNil(t, updated)
-	assert.Equal(t, "80.00", updated.CurrentMonthlyCost)
-	assert.Equal(t, "0.00", updated.PreviousMonthlyCost)
+	removed := entry.Subresources["Storage"]
+	require.NotNil(t, removed)
+	assert.Equal(t, "0.00", removed.CurrentMonthlyCost)
+	assert.Equal(t, "10.00", removed.PreviousMonthlyCost)
+	added := entry.Subresources["Storage (provisioned IOPS)"]
+	require.NotNil(t, added)
+	assert.Equal(t, "25.00", added.CurrentMonthlyCost)
+	assert.Equal(t, "0.00", added.PreviousMonthlyCost)
 }

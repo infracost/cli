@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/infracost/go-proto/pkg/rat"
 )
@@ -190,44 +191,96 @@ func sumResourceCosts(res map[string]*ResourceOutput) *rat.Rat {
 // each cost component by name, and each child resource by name with its
 // recursive total. Entries whose cost did not change are dropped. Either side
 // may be nil (added/removed resource).
+//
+// Lines are paired by exact name first, then — mirroring the legacy CLI's
+// findMatchingCostComponent — by the text before the bracket, so a resize
+// pairs "Instance usage (..., t2.small)" with "Instance usage (..., t2.medium)"
+// as one changed entry (keyed by the current name) instead of two entries
+// bouncing through zero. The bracket fallback requires a bracket on both
+// sides; a bare name never pairs with a bracketed one.
 func diffSubcosts(prev, curr *ResourceOutput) map[string]*CostDiff {
 	prevCosts := subcosts(prev)
 	currCosts := subcosts(curr)
 
-	out := map[string]*CostDiff{}
-	for name, prevCost := range prevCosts {
-		currCost, ok := currCosts[name]
-		if !ok {
-			currCost = rat.Zero
-		}
-		if prevCost.Equals(currCost) {
+	type costPair struct {
+		prev *rat.Rat
+		curr *rat.Rat
+	}
+	pairs := map[string]costPair{}
+	matchedCurr := map[string]bool{}
+
+	// Iterate names sorted so bracket-fallback pairing is deterministic when
+	// several lines share a prefix.
+	prevNames := sortedKeys(prevCosts)
+	currNames := sortedKeys(currCosts)
+
+	var unmatchedPrev []string
+	for _, name := range prevNames {
+		if currCost, ok := currCosts[name]; ok {
+			pairs[name] = costPair{prev: prevCosts[name], curr: currCost}
+			matchedCurr[name] = true
 			continue
 		}
-		out[name] = &CostDiff{
-			CurrentMonthlyCost:          currCost.StringFixed(2),
-			PreviousMonthlyCost:         prevCost.StringFixed(2),
-			DiffMonthlyCost:             currCost.Sub(prevCost).StringFixed(2),
-			PercentageChangeMonthlyCost: percentChange(prevCost, currCost),
+		unmatchedPrev = append(unmatchedPrev, name)
+	}
+
+	for _, prevName := range unmatchedPrev {
+		pairName := prevName
+		pair := costPair{prev: prevCosts[prevName], curr: rat.Zero}
+		if prefix, ok := bracketPrefix(prevName); ok {
+			for _, currName := range currNames {
+				if matchedCurr[currName] {
+					continue
+				}
+				if currPrefix, ok := bracketPrefix(currName); ok && currPrefix == prefix {
+					pairName = currName
+					pair.curr = currCosts[currName]
+					matchedCurr[currName] = true
+					break
+				}
+			}
+		}
+		pairs[pairName] = pair
+	}
+
+	for _, currName := range currNames {
+		if !matchedCurr[currName] {
+			pairs[currName] = costPair{prev: rat.Zero, curr: currCosts[currName]}
 		}
 	}
-	for name, currCost := range currCosts {
-		if _, seen := prevCosts[name]; seen {
-			continue
-		}
-		if currCost.IsZero() {
+
+	out := map[string]*CostDiff{}
+	for name, pair := range pairs {
+		if pair.prev.Equals(pair.curr) {
 			continue
 		}
 		out[name] = &CostDiff{
-			CurrentMonthlyCost:          currCost.StringFixed(2),
-			PreviousMonthlyCost:         rat.Zero.StringFixed(2),
-			DiffMonthlyCost:             currCost.StringFixed(2),
-			PercentageChangeMonthlyCost: percentChange(rat.Zero, currCost),
+			CurrentMonthlyCost:          pair.curr.StringFixed(2),
+			PreviousMonthlyCost:         pair.prev.StringFixed(2),
+			DiffMonthlyCost:             pair.curr.Sub(pair.prev).StringFixed(2),
+			PercentageChangeMonthlyCost: percentChange(pair.prev, pair.curr),
 		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// bracketPrefix returns the text before the first " (" in a cost line name,
+// reporting whether the name has a bracketed suffix at all.
+func bracketPrefix(name string) (string, bool) {
+	prefix, _, found := strings.Cut(name, " (")
+	return prefix, found
+}
+
+func sortedKeys(m map[string]*rat.Rat) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // subcosts maps a resource's immediate cost lines by name: cost components
