@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/infracost/cli/internal/config"
+	"github.com/infracost/cli/internal/format"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -111,6 +112,78 @@ func TestPriorPlanJSON_NoPriorState(t *testing.T) {
 	var prior map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(priorRaw, &prior))
 	assert.JSONEq(t, `{}`, string(prior["planned_values"]))
+}
+
+func outputWithResources(names ...string) *format.Output {
+	resources := make([]format.ResourceOutput, 0, len(names))
+	for _, name := range names {
+		resources = append(resources, format.ResourceOutput{Name: name})
+	}
+	return &format.Output{Projects: []format.ProjectOutput{{ProjectName: "main", Resources: resources}}}
+}
+
+func resourceNames(o *format.Output) []string {
+	var names []string
+	for _, p := range o.Projects {
+		for _, r := range p.Resources {
+			names = append(names, r.Name)
+		}
+	}
+	return names
+}
+
+func TestStripNonTargetResources_TargetedPlan(t *testing.T) {
+	// A -target plan: prior_state carries the whole infrastructure, but only
+	// aws_instance.a was targeted (planned_values + resource_changes). The
+	// untargeted aws_instance.b must not surface in the diff as deleted.
+	// aws_s3_bucket.c is a targeted no-op: present in the current scan, so
+	// kept even without a resource_changes entry.
+	previous := outputWithResources("aws_instance.a", "aws_instance.b", "aws_s3_bucket.c")
+	current := outputWithResources("aws_instance.a", "aws_s3_bucket.c")
+	plan := map[string]json.RawMessage{
+		"resource_changes": json.RawMessage(`[{"address": "aws_instance.a", "change": {"actions": ["update"]}}]`),
+	}
+
+	require.NoError(t, stripNonTargetResources(previous, current, plan))
+
+	assert.Equal(t, []string{"aws_instance.a", "aws_s3_bucket.c"}, resourceNames(previous))
+	assert.Equal(t, []string{"aws_instance.a", "aws_s3_bucket.c"}, resourceNames(current))
+}
+
+func TestStripNonTargetResources_KeepsDeletions(t *testing.T) {
+	// A deleted resource is absent from planned_values but present in
+	// resource_changes, so it must survive the filter to show as removed.
+	previous := outputWithResources("aws_instance.doomed")
+	current := outputWithResources()
+	plan := map[string]json.RawMessage{
+		"resource_changes": json.RawMessage(`[{"address": "aws_instance.doomed", "change": {"actions": ["delete"]}}]`),
+	}
+
+	require.NoError(t, stripNonTargetResources(previous, current, plan))
+
+	assert.Equal(t, []string{"aws_instance.doomed"}, resourceNames(previous))
+}
+
+func TestStripNonTargetResources_NoResourceChangesKey(t *testing.T) {
+	previous := outputWithResources("aws_instance.a", "aws_instance.b")
+	current := outputWithResources("aws_instance.a")
+	plan := map[string]json.RawMessage{}
+
+	require.NoError(t, stripNonTargetResources(previous, current, plan))
+
+	// Without resource_changes there is no target information; leave the
+	// prior side untouched.
+	assert.Equal(t, []string{"aws_instance.a", "aws_instance.b"}, resourceNames(previous))
+}
+
+func TestStripNonTargetResources_InvalidResourceChanges(t *testing.T) {
+	previous := outputWithResources("aws_instance.a")
+	current := outputWithResources("aws_instance.a")
+	plan := map[string]json.RawMessage{
+		"resource_changes": json.RawMessage(`{"not": "a list"}`),
+	}
+
+	require.Error(t, stripNonTargetResources(previous, current, plan))
 }
 
 func TestStagePriorScanConfig_NoConfig(t *testing.T) {

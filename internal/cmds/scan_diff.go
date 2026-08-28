@@ -70,7 +70,57 @@ func ScanDiff(ctx context.Context, cfg *config.Config, source oauth2.TokenSource
 		return nil, current, fmt.Errorf("failed to cost the plan's prior state: %w", err)
 	}
 
+	if err := stripNonTargetResources(previous, current, plan); err != nil {
+		return nil, current, err
+	}
+
 	return format.BuildScanDiff(previous, current), current, nil
+}
+
+// stripNonTargetResources drops prior-state resources that are in neither the
+// current scan nor the plan's resource_changes. When Terraform runs with
+// -target, every resource still appears in prior_state but planned_values
+// holds only the targeted ones — without this filter the whole rest of the
+// infrastructure would show up in the diff as deleted. Mirrors the legacy
+// CLI's stripNonTargetResources; it lives here rather than in the synthetic
+// prior plan (by copying resource_changes into it) so the behavior doesn't
+// depend on the parser plugin's handling of that key. In a plan run without
+// -target, resource_changes covers every changed resource — deletions
+// included — so nothing real is dropped.
+func stripNonTargetResources(previous, current *format.Output, plan map[string]json.RawMessage) error {
+	rawChanges, ok := plan["resource_changes"]
+	if !ok {
+		return nil
+	}
+	var changes []struct {
+		Address string `json:"address"`
+	}
+	if err := json.Unmarshal(rawChanges, &changes); err != nil {
+		return fmt.Errorf("failed to parse the plan's resource_changes: %w", err)
+	}
+
+	keep := map[string]bool{}
+	for _, c := range changes {
+		keep[c.Address] = true
+	}
+	for pi := range current.Projects {
+		p := &current.Projects[pi]
+		for ri := range p.Resources {
+			keep[p.Resources[ri].Name] = true
+		}
+	}
+
+	for pi := range previous.Projects {
+		p := &previous.Projects[pi]
+		filtered := p.Resources[:0]
+		for _, r := range p.Resources {
+			if keep[r.Name] {
+				filtered = append(filtered, r)
+			}
+		}
+		p.Resources = filtered
+	}
+	return nil
 }
 
 // scanPriorState prices the prior state embedded in a plan: it writes a
