@@ -37,7 +37,14 @@ func stubUninstallRegistry(t *testing.T, reg *registry.Registry, err error) {
 	t.Cleanup(func() { uninstallRegistryLoad = orig })
 }
 
-func newTestCmd() *cobra.Command { return &cobra.Command{} }
+// newTestCmd returns a command carrying a background context, mirroring how
+// cobra populates the context during Execute in production. RunE closures read
+// cmd.Context() (e.g. for HTTP requests), which is nil on a bare command.
+func newTestCmd() *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	return cmd
+}
 
 func newUninstallTestConfig(t *testing.T, dir string) *config.Config {
 	t.Helper()

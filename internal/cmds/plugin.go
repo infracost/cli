@@ -18,6 +18,8 @@ func PluginsCmd(cfg *config.Config) *cobra.Command {
 		Short: "Manage Infracost plugins",
 	}
 	cmd.AddCommand(pluginsListCmd(cfg))
+	cmd.AddCommand(pluginsSearchCmd(cfg))
+	cmd.AddCommand(pluginsInfoCmd(cfg))
 	cmd.AddCommand(pluginsInstallCmd(cfg))
 	cmd.AddCommand(pluginsUninstallCmd(cfg))
 	cmd.AddCommand(pluginsUpdateCmd(cfg))
