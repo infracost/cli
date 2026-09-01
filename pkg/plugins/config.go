@@ -2,7 +2,6 @@ package plugins
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/infracost/cli/pkg/config/process"
@@ -43,6 +42,12 @@ type Config struct {
 	// running real subprocesses. When non-nil, ProviderPlugins calls this
 	// instead of the Manager.
 	LoadProviderPlugins func(context.Context) ([]*ProviderPlugin, error)
+
+	// newStager lets tests inject a registryStager with stubbed probing seams
+	// so the update/install orchestration can be driven without spawning real
+	// plugin subprocesses. When non-nil, newRegistryStager returns it instead
+	// of the default. Production code never sets it.
+	newStager func() *registryStager
 }
 
 func (c *Config) Process() {
@@ -106,32 +111,6 @@ func (c *Config) EnsurePlugins(ctx context.Context) (*Manager, error) {
 		c.ensureErr = c.manager.EnsureInstalled(ctx)
 	})
 	return c.manager, c.ensureErr
-}
-
-// UpdatePlugins forces every required plugin to be re-checked against the
-// release host and updated to its latest (or user-pinned) version. Unlike
-// EnsurePlugins, it ignores the AutoUpdate setting — an explicit update always
-// installs the newest available version, whether or not auto-update is enabled.
-// It uses a throwaway Manager so it doesn't disturb the memoized one used for
-// scanning.
-//
-// Updates are a no-op when a local plugin directory override (Dir) is in effect,
-// since managed downloads are skipped in that mode; an error is returned so the
-// caller can tell the user their plugins are being loaded from a dev override.
-func (c *Config) UpdatePlugins(ctx context.Context) error {
-	if c.Dir != "" {
-		return fmt.Errorf("plugin updates are disabled while INFRACOST_CLI_PLUGIN_DIR is set (%s) — plugins are loaded from that directory; unset it to manage plugins automatically", c.Dir)
-	}
-
-	mgr := NewManager(ManagerOptions{
-		Dir:        c.PluginDir(),
-		Cache:      c.Cache,
-		BaseURL:    c.BaseURL,
-		AutoUpdate: true,
-	})
-	defer mgr.Close()
-
-	return mgr.EnsureInstalled(ctx)
 }
 
 // ParserPluginForProject returns the parser plugin that handles the given

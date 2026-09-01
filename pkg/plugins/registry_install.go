@@ -203,6 +203,9 @@ type registryStager struct {
 }
 
 func (c *Config) newRegistryStager() *registryStager {
+	if c.newStager != nil {
+		return c.newStager()
+	}
 	return &registryStager{
 		cacheDir:   c.pluginStateDir(),
 		goos:       runtime.GOOS,

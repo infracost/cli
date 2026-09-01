@@ -1,7 +1,6 @@
 package cmds
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/infracost/cli/internal/config"
@@ -76,18 +75,3 @@ func pluginsListCmd(cfg *config.Config) *cobra.Command {
 	}
 }
 
-func pluginsUpdateCmd(cfg *config.Config) *cobra.Command {
-	return &cobra.Command{
-		Use:   "update",
-		Short: "Update all Infracost plugins to the latest version",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			// Per-plugin download lines nest above this spinner, which resolves
-			// to "Plugins up to date." — the only output when everything was
-			// already current.
-			return ui.RunWithSpinnerErr(cmd.Context(), "Updating plugins...", "Plugins up to date.", func(ctx context.Context) error {
-				return cfg.Plugins.UpdatePlugins(ctx)
-			})
-		},
-	}
-}
