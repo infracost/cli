@@ -62,3 +62,32 @@ var requiredPlugins = []requiredPlugin{
 func requiredPluginVersion(key string) string {
 	return os.Getenv("INFRACOST_CLI_PLUGIN_" + strings.ToUpper(key) + "_VERSION")
 }
+
+// RequiredAliases returns the alias map that resolves a required plugin's key
+// or legacy binary name to its canonical registry entry name (<owner>/<repo>).
+// It is passed to registry.Resolve so `infracost plugin install terraform` (a
+// key) or a legacy binary filename resolves to the built-in entry.
+func RequiredAliases() map[string]string {
+	m := make(map[string]string, len(requiredPlugins)*3)
+	for _, r := range requiredPlugins {
+		m[r.Key] = r.DisplayName
+		m[r.Name] = r.DisplayName
+		if r.LegacyName != "" {
+			m[r.LegacyName] = r.DisplayName
+		}
+	}
+	return m
+}
+
+// requiredPluginsForName returns the required plugins whose registry entry name
+// (DisplayName) matches, in declaration order. A required entry can map to more
+// than one component (e.g. the Kubernetes parser and provider share a name).
+func requiredPluginsForName(name string) []requiredPlugin {
+	var out []requiredPlugin
+	for _, r := range requiredPlugins {
+		if r.DisplayName == name {
+			out = append(out, r)
+		}
+	}
+	return out
+}
