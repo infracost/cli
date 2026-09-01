@@ -17,6 +17,7 @@ func PluginsCmd(cfg *config.Config) *cobra.Command {
 	}
 	cmd.AddCommand(pluginsListCmd(cfg))
 	cmd.AddCommand(pluginsUpdateCmd(cfg))
+	cmd.AddCommand(pluginsValidateCmd(cfg))
 	return cmd
 }
 

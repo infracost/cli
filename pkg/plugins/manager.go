@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/go-plugin"
 	"github.com/infracost/cli/pkg/logging"
@@ -271,30 +272,36 @@ func (m *Manager) discoverAndConnect(ctx context.Context) ([]*ParserPlugin, []*P
 	return parsers, providers, nil
 }
 
-// queryPluginInfo spawns the plugin binary at path, calls GetPluginInfo, and
-// returns the response. The subprocess is terminated before this function
-// returns. Used by Install to read a plugin's reported version without
-// holding a long-lived connection.
-func queryPluginInfo(ctx context.Context, path string) (*pb.GetPluginInfoResponse, error) {
+// statPluginBinary performs the file-level preflight shared by every plugin
+// launch path: the target must exist, not be a directory, and (on non-Windows)
+// carry an executable bit. The chmod hint mirrors the guidance used elsewhere
+// so a developer sees the same fix in discovery, install, and validate.
+func statPluginBinary(path string) error {
 	stat, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if stat.IsDir() {
-		return nil, fmt.Errorf("%s is a directory", path)
+		return fmt.Errorf("%s is a directory", path)
 	}
 	if runtime.GOOS != "windows" && stat.Mode()&0o111 == 0 {
-		return nil, fmt.Errorf("%w: %s", pluginerr.ErrPluginNotExecutable, path)
+		return fmt.Errorf("%w: %s (try: chmod +x %s)", pluginerr.ErrPluginNotExecutable, path, path)
 	}
+	return nil
+}
 
-	startTimeout := pluginconn.StartTimeout()
-	client := plugin.NewClient(&plugin.ClientConfig{
+// newPluginClient builds the go-plugin client used to launch the binary at
+// path. Shared by every connection path (queryPluginInfo, connect, validate)
+// so handshake configuration, message limits, and stderr handling stay
+// identical.
+func newPluginClient(path string) *plugin.Client {
+	return plugin.NewClient(&plugin.ClientConfig{
 		HandshakeConfig: handshakeConfig,
 		Plugins: map[string]plugin.Plugin{
 			dispenseName: grpcPlugin{},
 		},
 		Cmd:              pluginCommand(path),
-		StartTimeout:     startTimeout,
+		StartTimeout:     pluginconn.StartTimeout(),
 		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
 		Logger:           logging.PluginHCLogger(),
 		// go-plugin re-emits parsed plugin stderr through Logger; discard the
@@ -307,19 +314,47 @@ func queryPluginInfo(ctx context.Context, path string) (*pb.GetPluginInfoRespons
 			),
 		},
 	})
-	defer client.Kill()
+}
+
+// dialPlugin starts the plugin subprocess at path and performs the go-plugin
+// handshake, returning a live gRPC connection. The caller always owns the
+// returned client and MUST Kill it, even when err is non-nil. startTimeout is
+// returned so callers can build accurate timeout hints. Handshake errors are
+// classified through pluginerr for readable messages.
+func dialPlugin(path string) (client *plugin.Client, conn *grpc.ClientConn, startTimeout time.Duration, err error) {
+	startTimeout = pluginconn.StartTimeout()
+	client = newPluginClient(path)
 
 	rpcClient, err := client.Client()
 	if err != nil {
-		return nil, pluginerr.WindowsHint(pluginerr.ClassifyConnect(err), path, startTimeout)
+		return client, nil, startTimeout, pluginerr.WindowsHint(pluginerr.ClassifyConnect(err), path, startTimeout)
 	}
+
 	raw, err := rpcClient.Dispense(dispenseName)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", pluginerr.ErrPluginHandshake, err)
+		return client, nil, startTimeout, fmt.Errorf("%w: %v", pluginerr.ErrPluginHandshake, err)
 	}
+
 	conn, ok := raw.(*grpc.ClientConn)
 	if !ok {
-		return nil, fmt.Errorf("unexpected dispensed type %T", raw)
+		return client, nil, startTimeout, fmt.Errorf("unexpected dispensed type %T", raw)
+	}
+	return client, conn, startTimeout, nil
+}
+
+// queryPluginInfo spawns the plugin binary at path, calls GetPluginInfo, and
+// returns the response. The subprocess is terminated before this function
+// returns. Used by Install to read a plugin's reported version without
+// holding a long-lived connection.
+func queryPluginInfo(ctx context.Context, path string) (*pb.GetPluginInfoResponse, error) {
+	if err := statPluginBinary(path); err != nil {
+		return nil, err
+	}
+
+	client, conn, _, err := dialPlugin(path)
+	defer client.Kill()
+	if err != nil {
+		return nil, err
 	}
 
 	info, err := pb.NewPluginServiceClient(conn).GetPluginInfo(ctx, &pb.GetPluginInfoRequest{})
@@ -335,54 +370,14 @@ func queryPluginInfo(ctx context.Context, path string) (*pb.GetPluginInfoRespons
 // connect starts the plugin subprocess at path, reads GetPluginInfo, and
 // returns either a parser or provider client depending on the reported type.
 func (m *Manager) connect(ctx context.Context, path string) (*ParserPlugin, *ProviderPlugin, error) {
-	stat, err := os.Stat(path)
-	if err != nil {
+	if err := statPluginBinary(path); err != nil {
 		return nil, nil, err
 	}
-	if stat.IsDir() {
-		return nil, nil, fmt.Errorf("%s is a directory", path)
-	}
-	if runtime.GOOS != "windows" && stat.Mode()&0o111 == 0 {
-		return nil, nil, fmt.Errorf("%w: %s (try: chmod +x %s)", pluginerr.ErrPluginNotExecutable, path, path)
-	}
 
-	startTimeout := pluginconn.StartTimeout()
-	client := plugin.NewClient(&plugin.ClientConfig{
-		HandshakeConfig: handshakeConfig,
-		Plugins: map[string]plugin.Plugin{
-			dispenseName: grpcPlugin{},
-		},
-		Cmd:              pluginCommand(path),
-		StartTimeout:     startTimeout,
-		AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
-		Logger:           logging.PluginHCLogger(),
-		// go-plugin re-emits parsed plugin stderr through Logger; discard the
-		// raw copy so lines aren't also printed unformatted.
-		SyncStderr: io.Discard,
-		GRPCDialOptions: []grpc.DialOption{
-			grpc.WithDefaultCallOptions(
-				grpc.MaxCallRecvMsgSize(consts.MaxGRPCMessageSize),
-				grpc.MaxCallSendMsgSize(consts.MaxGRPCMessageSize),
-			),
-		},
-	})
-
-	rpcClient, err := client.Client()
+	client, conn, _, err := dialPlugin(path)
 	if err != nil {
 		client.Kill()
-		return nil, nil, pluginerr.WindowsHint(pluginerr.ClassifyConnect(err), path, startTimeout)
-	}
-
-	raw, err := rpcClient.Dispense(dispenseName)
-	if err != nil {
-		client.Kill()
-		return nil, nil, fmt.Errorf("%w: %v", pluginerr.ErrPluginHandshake, err)
-	}
-
-	conn, ok := raw.(*grpc.ClientConn)
-	if !ok {
-		client.Kill()
-		return nil, nil, fmt.Errorf("unexpected dispensed type %T", raw)
+		return nil, nil, err
 	}
 
 	pluginClient := pb.NewPluginServiceClient(conn)
