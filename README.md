@@ -124,6 +124,42 @@ infracost inspect --summary
 
 Plugins are downloaded automatically from the plugin Infracost releases when you run the CLI. Parser plugins are ensured up front; provider plugins are downloaded on demand when a scan needs them. No manual setup is required.
 
+#### Managing plugins
+
+Beyond the required built-in plugins, the CLI can discover and install third-party plugins from the Infracost plugin registry. The `infracost plugin` subcommands manage them:
+
+```bash
+# Browse the registry
+infracost plugin search                 # list every registry plugin
+infracost plugin search kube            # filter by name/description
+infracost plugin info acme/kubewidget   # full metadata for one plugin
+
+# Install / update / remove
+infracost plugin install acme/kubewidget            # latest version
+infracost plugin install acme/kubewidget@1.4.2      # pin an explicit version
+infracost plugin update                             # update every managed plugin
+infracost plugin update acme/kubewidget             # update just one
+infracost plugin uninstall acme/kubewidget
+
+# Inspect what is installed
+infracost plugin list                   # grouped parser/provider listing
+infracost plugin list --json            # machine-readable, with provenance fields
+```
+
+A plugin is referenced by its registry name (`<owner>/<repo>`), and most commands also accept a component binary name or a built-in plugin alias. Unknown names produce a "did you mean" suggestion. `search`, `info`, and `list` accept `--json` for scripting.
+
+Registry plugins are either **official** (published by Infracost) or **unofficial** (community-published). Installing or updating an unofficial plugin runs a third-party binary on your machine, so the CLI prompts for confirmation first. In a non-interactive context pass `--allow-unofficial` to `install`/`update` to proceed without the prompt; official plugins never need it.
+
+Plugin authors can validate and package their builds locally before publishing:
+
+```bash
+infracost plugin validate ./infracost-parser-acme          # check one binary against the CLI's expectations
+infracost plugin validate --release acme/kubewidget@1.4.2  # verify a published registry release
+infracost plugin package --name acme/kubewidget --build-dir ./dist  # build a publishable release
+```
+
+Plugin management is disabled while `INFRACOST_CLI_PLUGIN_DIR` is set (see [Local Plugin Overrides](#local-plugin-overrides)) — the CLI loads plugins from that directory as-is rather than managing them.
+
 #### Version Pinning
 
 By default, the CLI downloads the latest version of each plugin. You can pin individual plugins to a specific version using environment variables:
@@ -142,7 +178,7 @@ The older parser/provider version environment variables are still accepted as fa
 
 Plugins auto-update by default. Set `INFRACOST_CLI_PLUGIN_AUTO_UPDATE=false` to disable automatic plugin updates. When disabled, the CLI uses an existing flat-installed plugin binary if one exists, and only downloads from the plugin Infracost releases if the binary is missing.
 
-Set `INFRACOST_CLI_PLUGIN_BASE_URL` to override the plugin Infracost releases URL. Use `--debug` to show plugin download URLs and other debug logs.
+Set `INFRACOST_CLI_PLUGIN_BASE_URL` to override the plugin Infracost releases URL (the artifact host for the built-in plugins). Set `INFRACOST_CLI_PLUGIN_REGISTRY_URL` to override the plugin registry manifest URL used by the `plugin search`/`info`/`install`/`update` commands — useful for air-gapped mirrors or testing against a local registry. It defaults to the published [`infracost/plugins-registry`](https://github.com/infracost/plugins-registry) manifest. Use `--debug` to show plugin download URLs and other debug logs.
 
 To update the CLI itself, you can use the `update` command. This updates the CLI binary by downloading the latest CLI archive from the Infracost releases bucket. Note that this does not update plugins, which are managed separately as described above.
 
