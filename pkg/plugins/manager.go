@@ -452,7 +452,14 @@ func (m *Manager) Close() {
 }
 
 func isPluginSidecar(name string) bool {
-	return strings.HasSuffix(name, ".sha256") || strings.HasSuffix(name, ".version")
+	return strings.HasSuffix(name, ".sha256") ||
+		strings.HasSuffix(name, ".version") ||
+		// The provenance state file and its temp/corrupt siblings live in the
+		// same directory but are never plugin binaries — keep discovery and
+		// List() from ever exec'ing or listing them.
+		name == stateFileName ||
+		strings.HasPrefix(name, stateFileName+".") || // .state.json.corrupt
+		strings.HasPrefix(name, ".state-") // .state-*.tmp during atomic write
 }
 
 // ParserPlugin is a connected parser plugin subprocess.

@@ -62,6 +62,31 @@ func (c *Config) PluginDir() string {
 	return c.Cache
 }
 
+// pluginStateDir returns the directory the provenance state file lives in. It
+// is always the plugin cache directory (honoring
+// INFRACOST_CLI_PLUGIN_CACHE_DIRECTORY) — never the INFRACOST_CLI_PLUGIN_DIR
+// dev-override directory, which the install/uninstall/update flows refuse to
+// manage anyway.
+func (c *Config) pluginStateDir() string {
+	if c.Cache != "" {
+		return c.Cache
+	}
+	return defaultPluginCachePath()
+}
+
+// LoadState reads the provenance state recording how registry entries were
+// installed. Reads are tolerant: a missing or corrupt file yields an empty
+// state (see loadState).
+func (c *Config) LoadState() *State {
+	return loadState(c.pluginStateDir())
+}
+
+// SaveState atomically writes the provenance state to the plugin cache
+// directory.
+func (c *Config) SaveState(s *State) error {
+	return s.save(c.pluginStateDir())
+}
+
 // EnsurePlugins installs any required plugins (when AutoUpdate is enabled and
 // Dir is not set as a developer override), then returns the Manager. The
 // install runs once and is memoized, so only the first caller's context bounds
