@@ -24,6 +24,7 @@ func PluginsCmd(cfg *config.Config) *cobra.Command {
 	cmd.AddCommand(pluginsUninstallCmd(cfg))
 	cmd.AddCommand(pluginsUpdateCmd(cfg))
 	cmd.AddCommand(pluginsValidateCmd(cfg))
+	cmd.AddCommand(pluginsPackageCmd(cfg))
 	return cmd
 }
 
@@ -149,4 +150,3 @@ func pluginsListCmd(cfg *config.Config) *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Output the plugin list as JSON, including provenance fields")
 	return cmd
 }
-

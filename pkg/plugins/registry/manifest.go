@@ -42,6 +42,12 @@ var entryNameRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/
 // slash-separated segments).
 var platformRE = regexp.MustCompile(`^[A-Za-z0-9]+/[A-Za-z0-9]+$`)
 
+// ValidEntryName reports whether name satisfies the registry's
+// `<github-owner>/<github-repository>` namespacing. It is the exported form of
+// the rule validate() enforces, so callers building an entry (e.g. `plugin
+// package`) can reject a bad name before assembling one.
+func ValidEntryName(name string) bool { return entryNameRE.MatchString(name) }
+
 // Registry is the top-level manifest fetched from the plugins registry repo.
 type Registry struct {
 	SchemaVersion int     `json:"schemaVersion"`
