@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/infracost/cli/internal/textutil"
 )
 
 // ResolveOrgID resolves an org flag value (slug or ID) to an organization ID
@@ -33,7 +35,7 @@ func orgNotFoundError(orgFlag string, orgs []CachedOrganization) error {
 
 	for _, org := range orgs {
 		fmt.Fprintf(&b, "  %-20s\n", org.Slug)
-		dist := levenshteinDistance(strings.ToLower(orgFlag), strings.ToLower(org.Slug))
+		dist := textutil.LevenshteinDistance(strings.ToLower(orgFlag), strings.ToLower(org.Slug))
 		if bestDist < 0 || dist < bestDist {
 			bestDist = dist
 			bestSlug = org.Slug
@@ -46,40 +48,4 @@ func orgNotFoundError(orgFlag string, orgs []CachedOrganization) error {
 	}
 
 	return errors.New(b.String())
-}
-
-// levenshteinDistance computes the edit distance between two strings.
-func levenshteinDistance(a, b string) int {
-	la, lb := len(a), len(b)
-	if la == 0 {
-		return lb
-	}
-	if lb == 0 {
-		return la
-	}
-
-	// Single-row DP: prev holds the previous row of distances.
-	prev := make([]int, lb+1)
-	for j := range prev {
-		prev[j] = j
-	}
-
-	for i := 1; i <= la; i++ {
-		curr := make([]int, lb+1)
-		curr[0] = i
-		for j := 1; j <= lb; j++ {
-			cost := 1
-			if a[i-1] == b[j-1] {
-				cost = 0
-			}
-			curr[j] = min(
-				prev[j]+1,      // deletion
-				curr[j-1]+1,    // insertion
-				prev[j-1]+cost, // substitution
-			)
-		}
-		prev = curr
-	}
-
-	return prev[lb]
 }

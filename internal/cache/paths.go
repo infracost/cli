@@ -23,6 +23,12 @@ const (
 	// agent-skill staleness checker (internal/cmds) reads/writes it to
 	// throttle how often it probes the user's AI agents.
 	AgentSkillsCheckFilename = "agent-skills-check.json"
+
+	// PluginRegistryFilename is a file allowed at the cache root; the plugin
+	// registry client (pkg/plugins/registry) caches the fetched manifest here
+	// so registry operations degrade gracefully when the network is
+	// unavailable.
+	PluginRegistryFilename = "plugin-registry.json"
 )
 
 // Root resolves the on-disk root for every infracost cache. Tries the OS
@@ -58,3 +64,7 @@ func ParserResultsDir() string { return filepath.Join(Root(), parserResultsSubdi
 
 // PluginsDir is where plugin binaries live.
 func PluginsDir() string { return filepath.Join(Root(), pluginsSubdir) }
+
+// PluginRegistryCacheFile is where the plugin registry client caches the
+// fetched manifest (see [PluginRegistryFilename]).
+func PluginRegistryCacheFile() string { return filepath.Join(Root(), PluginRegistryFilename) }

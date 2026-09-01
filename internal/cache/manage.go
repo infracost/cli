@@ -75,8 +75,8 @@ type SubdirInfo struct {
 //
 // What gets cleaned, by area:
 //
-//   - root: every file under [Root] except [UpdateCheckFilename] and
-//     [AgentSkillsCheckFilename] is
+//   - root: every file under [Root] except [UpdateCheckFilename],
+//     [AgentSkillsCheckFilename], and [PluginRegistryFilename] is
 //     removed; directories are left alone (the four canonical caches
 //     plus anything a future version adds).
 //   - results/: <key>.json files older than age, then the manifest is
@@ -150,7 +150,7 @@ func Info() []SubdirInfo {
 }
 
 // pruneRoot removes every file directly under [Root] except
-// [UpdateCheckFilename] and [AgentSkillsCheckFilename]. Directories are left alone: the four canonical
+// [UpdateCheckFilename], [AgentSkillsCheckFilename], and [PluginRegistryFilename]. Directories are left alone: the four canonical
 // caches own their own cleanup below, and any future version of the CLI
 // is free to add new subdirs without this sweep nuking them. Catches
 // legacy protocache blobs (extensionless files at root).
@@ -168,7 +168,7 @@ func pruneRoot() {
 		if e.IsDir() {
 			continue
 		}
-		if e.Name() == UpdateCheckFilename || e.Name() == AgentSkillsCheckFilename {
+		if e.Name() == UpdateCheckFilename || e.Name() == AgentSkillsCheckFilename || e.Name() == PluginRegistryFilename {
 			continue
 		}
 		target := filepath.Join(root, e.Name())
