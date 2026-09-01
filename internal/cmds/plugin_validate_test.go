@@ -2,6 +2,7 @@ package cmds
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/pkg/plugins"
+	"github.com/infracost/cli/pkg/plugins/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -101,6 +103,79 @@ func TestPluginValidateJSONShape(t *testing.T) {
 		assert.NotEmpty(t, c.Name, "each check has a name")
 		assert.NotEmpty(t, c.ID, "each check has a stable id")
 	}
+}
+
+// stubValidateRegistry overrides the --release registry-load seam so name
+// resolution runs against a fixture without a network fetch.
+func stubValidateRegistry(t *testing.T, reg *registry.Registry, err error) {
+	t.Helper()
+	orig := validateRegistryLoad
+	validateRegistryLoad = func(context.Context) (*registry.Registry, error) { return reg, err }
+	t.Cleanup(func() { validateRegistryLoad = orig })
+}
+
+func TestValidateReleaseUnknownRegistryName(t *testing.T) {
+	stubValidateRegistry(t, browseFixtureRegistry(), nil)
+
+	err := runValidateRelease(newTestCmd(), "infracost/nonexistent", false, false, false)
+	require.Error(t, err)
+	// Mirrors install's "not found in registry" shape, with a suggestion.
+	assert.Contains(t, err.Error(), "not found in registry")
+}
+
+func TestResolveReleaseEntryLocalFileSource(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest-entry.json")
+	entryJSON := `{
+		"name": "acme/widget",
+		"official": false,
+		"components": [{
+			"type": "parser",
+			"binaryName": "acme-parser-widget",
+			"platforms": ["linux/amd64"],
+			"download": "https://example.com/{version}/{os}/{arch}/data.tar.gz",
+			"checksums": "https://example.com/{version}/{os}/{arch}/data.tar.gz.sha256"
+		}]
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(entryJSON), 0o600))
+
+	entry, source, version, err := resolveReleaseEntry(context.Background(), path)
+	require.NoError(t, err)
+	assert.Equal(t, "file", source)
+	assert.Empty(t, version)
+	require.NotNil(t, entry)
+	assert.Equal(t, "acme/widget", entry.Name)
+}
+
+func TestResolveReleaseEntryFilePinnedVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "entry.json")
+	entryJSON := `{
+		"name": "acme/widget",
+		"components": [{
+			"type": "parser",
+			"binaryName": "acme-parser-widget",
+			"platforms": ["linux/amd64"],
+			"download": "https://example.com/{version}/data.tar.gz",
+			"checksums": "https://example.com/{version}/data.tar.gz.sha256"
+		}]
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(entryJSON), 0o600))
+
+	// A name@version split where the name half is a file pins the version.
+	_, source, version, err := resolveReleaseEntry(context.Background(), path+"@2.3.4")
+	require.NoError(t, err)
+	assert.Equal(t, "file", source)
+	assert.Equal(t, "2.3.4", version)
+}
+
+func TestValidateReleaseRejectsPathAndReleaseCombo(t *testing.T) {
+	cmd := pluginsValidateCmd(pluginValidateTestConfig(t, t.TempDir()))
+	cmd.SetArgs([]string{"--release", "acme/widget", "/some/binary/path"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot combine")
 }
 
 func TestPluginValidateJSONEmptyDir(t *testing.T) {

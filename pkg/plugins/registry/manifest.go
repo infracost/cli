@@ -110,6 +110,25 @@ func Parse(data []byte) (*Registry, error) {
 	return &reg, nil
 }
 
+// ParseEntry decodes and validates a single manifest entry — the
+// manifest-entry.json emitted by `plugin package` — applying the same rule set
+// Parse applies to a full manifest (namespaced name, 1–2 components, unique
+// binary names, download + checksum templates, well-formed platforms). The
+// returned entry carries the same uninstallable flag a manifest entry would, so
+// an unknown component type is surfaced rather than rejected. It is the local,
+// pre-PR counterpart to fetching the entry from the registry by name.
+func ParseEntry(data []byte) (*Entry, error) {
+	var e Entry
+	if err := json.Unmarshal(data, &e); err != nil {
+		return nil, fmt.Errorf("invalid manifest entry JSON: %w", err)
+	}
+	reg := &Registry{SchemaVersion: SupportedSchemaVersion, Plugins: []Entry{e}}
+	if err := reg.validate(); err != nil {
+		return nil, err
+	}
+	return &reg.Plugins[0], nil
+}
+
 // validate enforces the manifest rules the registry JSON Schema mirrors:
 // namespaced unique names, 1–2 components per entry, no duplicate component
 // types within an entry, globally unique binary names, and every component
