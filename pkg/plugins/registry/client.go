@@ -56,7 +56,7 @@ type Client struct {
 }
 
 // NewClient returns a Client configured from the environment: the manifest URL
-// honours RegistryURLEnv (falling back to DefaultURL) and the manifest is
+// honors RegistryURLEnv (falling back to DefaultURL) and the manifest is
 // cached under the CLI cache root.
 func NewClient() *Client {
 	url := os.Getenv(RegistryURLEnv)

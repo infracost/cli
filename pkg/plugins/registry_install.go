@@ -133,7 +133,7 @@ func checkMinCLIVersion(e *registry.Entry) error {
 // required plugin. It never records provenance and never creates a durable pin
 // — required versions stay controlled by the compiled defaults and
 // INFRACOST_CLI_PLUGIN_<KEY>_VERSION. An explicit @<version> is refused because
-// the CLI can't honour it; a plain install ensures every missing required
+// the CLI can't honor it; a plain install ensures every missing required
 // component is present, leaving already-installed ones untouched.
 func (c *Config) ensureRequiredEntry(ctx context.Context, e *registry.Entry, wantVersion string) (*RegistryInstallResult, error) {
 	reqs := requiredPluginsForName(e.Name)

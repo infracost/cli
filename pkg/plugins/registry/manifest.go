@@ -20,7 +20,7 @@ import (
 
 // SupportedSchemaVersion is the highest registry manifest schemaVersion this
 // build understands. A manifest declaring a newer version is rejected with an
-// upgrade hint rather than parsed against fields this CLI may not recognise.
+// upgrade hint rather than parsed against fields this CLI may not recognize.
 const SupportedSchemaVersion = 1
 
 // Component types the CLI knows how to install. A component whose type is not
@@ -79,7 +79,7 @@ type Entry struct {
 // Component is one installable artifact within an entry: a parser or provider.
 type Component struct {
 	// Type is "parser" or "provider" (see ComponentType* constants). An
-	// unrecognised value marks the entry uninstallable.
+	// unrecognized value marks the entry uninstallable.
 	Type string `json:"type"`
 	// BinaryName is the on-disk/archive binary name, including the
 	// parser/provider prefix (e.g. "infracost-parser-kubernetes").
@@ -139,7 +139,7 @@ func ParseEntry(data []byte) (*Entry, error) {
 // namespaced unique names, 1–2 components per entry, no duplicate component
 // types within an entry, globally unique binary names, and every component
 // carrying download + checksum templates and at least one well-formed
-// platform. A component with an unrecognised type does not fail validation;
+// platform. A component with an unrecognized type does not fail validation;
 // its entry is flagged uninstallable.
 func (r *Registry) validate() error {
 	seenNames := map[string]struct{}{}

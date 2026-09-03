@@ -292,6 +292,51 @@ func TestPackageReleaseInvalidName(t *testing.T) {
 	assert.Contains(t, err.Error(), "namespaced")
 }
 
+func TestPackageReleaseRejectsPathTraversalSegments(t *testing.T) {
+	tests := []struct {
+		name       string
+		binaryName string
+		goos       string
+		goarch     string
+	}{
+		{name: "binary name", binaryName: "../infracost-parser-acme", goos: "linux", goarch: "amd64"},
+		{name: "goos", binaryName: "infracost-parser-acme", goos: "../linux", goarch: "amd64"},
+		{name: "goarch", binaryName: "infracost-parser-acme", goos: "linux", goarch: `..\amd64`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := baseOpts(nil)
+			opts.Components = []PackageComponentInput{{
+				Type:       registry.ComponentTypeParser,
+				BinaryName: tt.binaryName,
+				Builds:     []PackageBuild{{GOOS: tt.goos, GOARCH: tt.goarch, Path: "unused"}},
+			}}
+
+			err := validatePackageInputs(&opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "single path segment")
+		})
+	}
+}
+
+func TestPackageReleaseRejectsPathTraversalVersion(t *testing.T) {
+	build := t.TempDir()
+	parserPath := writeBinary(t, build, "infracost-parser-acme", []byte("p"))
+	opts := baseOpts(map[string]probeResult{parserPath: parserProbe("acme/tf", "../escape")})
+	opts.Version = "../escape"
+	opts.Components = []PackageComponentInput{{
+		Type:       registry.ComponentTypeParser,
+		BinaryName: "infracost-parser-acme",
+		Builds:     []PackageBuild{{GOOS: "linux", GOARCH: "amd64", Path: parserPath}},
+	}}
+
+	_, err := PackageRelease(context.Background(), opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid version")
+	assert.Contains(t, err.Error(), "single path segment")
+}
+
 func TestPackageReleaseRefusesDirtyOutWithoutForce(t *testing.T) {
 	build := t.TempDir()
 	out := filepath.Join(t.TempDir(), "dist")

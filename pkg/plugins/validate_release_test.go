@@ -315,7 +315,7 @@ func TestValidateRelease_UnofficialNonTTYSkipsExecution(t *testing.T) {
 
 	// A non-interactive run without --allow-unofficial: the trust gate warns and
 	// declines (proceed=false, err=nil), mirroring confirmUnofficialInstall's
-	// trustSkip behaviour.
+	// trustSkip behavior.
 	trust := func(*registry.Entry) (bool, error) { return false, nil }
 
 	res, err := h.v.validate(context.Background(), h.entry, ReleaseOptions{}, trust)

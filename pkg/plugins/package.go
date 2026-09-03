@@ -208,6 +208,9 @@ func validatePackageInputs(opts *PackageOptions) error {
 		if c.BinaryName == "" {
 			return fmt.Errorf("a %s component was provided without a binary name", c.Type)
 		}
+		if err := validateOutputPathSegment("component binaryName", c.BinaryName); err != nil {
+			return err
+		}
 		if _, dup := seenBinaries[c.BinaryName]; dup {
 			return fmt.Errorf("duplicate component binaryName %q", c.BinaryName)
 		}
@@ -221,6 +224,12 @@ func validatePackageInputs(opts *PackageOptions) error {
 			if b.GOOS == "" || b.GOARCH == "" {
 				return fmt.Errorf("component %q has a build with an empty goos/goarch", c.BinaryName)
 			}
+			if err := validateOutputPathSegment("goos", b.GOOS); err != nil {
+				return fmt.Errorf("component %q: %w", c.BinaryName, err)
+			}
+			if err := validateOutputPathSegment("goarch", b.GOARCH); err != nil {
+				return fmt.Errorf("component %q: %w", c.BinaryName, err)
+			}
 			if _, dup := seenPlat[b.platform()]; dup {
 				return fmt.Errorf("component %q has two builds for %s", c.BinaryName, b.platform())
 			}
@@ -233,6 +242,9 @@ func validatePackageInputs(opts *PackageOptions) error {
 func (p *packager) run(ctx context.Context) (*PackageResult, error) {
 	version, static, err := p.resolveVersionAndValidate()
 	if err != nil {
+		return nil, err
+	}
+	if err := validateOutputPathSegment("version", version); err != nil {
 		return nil, err
 	}
 
@@ -503,13 +515,13 @@ func (p *packager) emitArchive(c PackageComponentInput, b PackageBuild, version 
 	if err := os.MkdirAll(filepath.Dir(archivePath), 0o750); err != nil {
 		return PackagedArtifact{}, fmt.Errorf("failed to create output directory: %w", err)
 	}
-	if err := os.WriteFile(archivePath, archiveBytes, 0o600); err != nil {
+	if err := os.WriteFile(archivePath, archiveBytes, 0o600); err != nil { //nolint:gosec // G703: every dynamic path segment is validated before emission.
 		return PackagedArtifact{}, fmt.Errorf("failed to write archive %s: %w", archivePath, err)
 	}
 
 	shaPath := archivePath + ".sha256"
 	shaBody := fmt.Sprintf("%s  %s\n", shaHex, filepath.Base(archivePath))
-	if err := os.WriteFile(shaPath, []byte(shaBody), 0o600); err != nil {
+	if err := os.WriteFile(shaPath, []byte(shaBody), 0o600); err != nil { //nolint:gosec // G703: derived only by appending a fixed suffix to archivePath.
 		return PackagedArtifact{}, fmt.Errorf("failed to write checksum %s: %w", shaPath, err)
 	}
 
@@ -649,6 +661,18 @@ func (p *packager) versionFilePaths() []string {
 }
 
 // --- helpers ----------------------------------------------------------------
+
+// validateOutputPathSegment rejects values that could escape or reshape the
+// output tree. filepath.Join treats absolute paths and dot segments specially,
+// and backslashes are separators on Windows even when packaging is invoked on
+// another platform.
+func validateOutputPathSegment(label, value string) error {
+	if value == "" || value == "." || value == ".." ||
+		strings.ContainsAny(value, `/\\`) || filepath.IsAbs(value) {
+		return fmt.Errorf("invalid %s %q: must be a single path segment", label, value)
+	}
+	return nil
+}
 
 // staticBinaryCheck performs the cross-compiled binary checks: the file exists,
 // is non-empty, and (for a Windows target) carries the .exe suffix its archive
