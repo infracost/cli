@@ -42,6 +42,12 @@ bin/
 tools/llmbench/.cache/
 tools/llmbench/results/
 
+# Local development state.
+.worktrees/
+.synapse/
+synapse-state.json
+.synapse-project-types
+
 # Editor/IDE
 .idea/
 .vscode/
