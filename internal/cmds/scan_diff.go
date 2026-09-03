@@ -247,6 +247,7 @@ func copyFileIfExists(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read %s: %w", src, err)
 	}
+	// #nosec G703 -- dst is inside the scan temp dir: a fixed config filename, or the repo-config usage_file validated repo-local by the caller
 	if err := os.WriteFile(dst, data, 0o600); err != nil {
 		return fmt.Errorf("failed to stage %s for the prior state scan: %w", filepath.Base(src), err)
 	}
