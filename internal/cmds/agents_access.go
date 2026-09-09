@@ -30,9 +30,9 @@ func errAgentsNotEnabled(slug string) error {
 	if slug != "" {
 		org = fmt.Sprintf("organization %q", slug)
 	}
-	return fmt.Errorf(
+	return fmt.Errorf( //nolint:revive,staticcheck // user-facing message, reads as prose
 		"%s has AI features turned off, so Infracost Agents is unavailable. "+
-			"Contact support@infracost.io if you think this is a mistake.", //nolint:revive,staticcheck // user-facing message
+			"Contact support@infracost.io if you think this is a mistake.",
 		org,
 	)
 }
