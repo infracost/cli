@@ -130,14 +130,17 @@ func TestListFindings_NoOrg(t *testing.T) {
 func TestListFindings_AgentsNotEnabled(t *testing.T) {
 	mockClient := agentsmocks.NewMockClient(t)
 	// Org is resolved but has AI features off — the gate should short-circuit
-	// with the settings message before any API call.
+	// before any API call, naming the org and offering no self-serve fix.
 	cfg := &config.Config{OrgID: "org-1", OrgSlug: "acme", AgentsEnabled: false}
 	cfg.Agents.Client = func(_ *http.Client) agents.Client { return mockClient }
 
 	_, err := cmds.ListFindings(context.Background(), cfg, nil, cmds.FindingsListInput{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "AI features turned off")
-	assert.Contains(t, err.Error(), "dashboard.infracost.io/org/acme/settings")
+	assert.Contains(t, err.Error(), `organization "acme" has AI features turned off`)
+	assert.Contains(t, err.Error(), "contact the Infracost team")
+	// Nothing in the dashboard can change this setting, so pointing at one
+	// would send people looking for a control that isn't there.
+	assert.NotContains(t, err.Error(), "dashboard.infracost.io")
 }
 
 func TestListFindings_APIError(t *testing.T) {

@@ -58,8 +58,8 @@ type Config struct {
 	OrgID string
 
 	// OrgSlug is the resolved active organization's slug, set alongside OrgID
-	// when the org is resolved from the user cache. Used for building org-
-	// scoped dashboard links (e.g. the org's settings page).
+	// when the org is resolved from the user cache. Names the org in messages
+	// that need to say which one they mean.
 	OrgSlug string
 
 	// AgentsEnabled is the resolved Agents entitlement the Agents commands and
