@@ -414,8 +414,8 @@ func registerMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSo
 // registerAgentsMCPTools attaches the Agents-backed tools (findings /
 // tasks / actions) to srv. The tools are always registered so an agent
 // can discover them; each handler gates on the active org's agentsEnabled
-// flag via ensureAgentsEnabled and returns a friendly early-access /
-// waitlist message when the org isn't switched on.
+// flag via ensureAgentsEnabled and returns a friendly message naming the
+// org's settings when AI features are switched off.
 func registerAgentsMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.TokenSource) {
 	findingsListSchema, err := findingsListToolOutputSchema()
 	if err != nil {

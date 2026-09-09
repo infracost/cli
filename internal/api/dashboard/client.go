@@ -17,9 +17,8 @@ type Organization struct {
 	Slug  string `json:"slug"`
 	Roles []Role `json:"roles"`
 	// AgentsEnabled reports whether Infracost Agents (findings / tasks /
-	// actions) is enabled for this org. Driven server-side by the
-	// coast-access entitlement; the CLI gates the Agents commands and MCP
-	// tools on it, surfacing a waitlist message when it's false.
+	// actions) is enabled for this org. An alias of the dashboard's org-level
+	// aiEnabled switch; the CLI gates the Agents commands and MCP tools on it.
 	AgentsEnabled bool `json:"agentsEnabled"`
 }
 
@@ -28,14 +27,9 @@ type Role struct {
 }
 
 type CurrentUser struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	// AgentsEnabled reports whether Infracost Agents is enabled for this user
-	// directly (rather than via one of their orgs). Driven server-side by the
-	// coast-access entitlement targeted at the user. When true the Agents
-	// commands / MCP tools are enabled regardless of the active org's flag.
-	AgentsEnabled bool           `json:"agentsEnabled"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Email         string         `json:"email"`
 	Organizations []Organization `json:"organizations"`
 }
 
@@ -72,7 +66,6 @@ func (c *client) CurrentUser(ctx context.Context) (CurrentUser, error) {
     id
     name
     email
-    agentsEnabled
     organizations {
       id
       name

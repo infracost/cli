@@ -59,12 +59,12 @@ type Config struct {
 
 	// OrgSlug is the resolved active organization's slug, set alongside OrgID
 	// when the org is resolved from the user cache. Used for building org-
-	// scoped dashboard links (e.g. the Agents waitlist).
+	// scoped dashboard links (e.g. the org's settings page).
 	OrgSlug string
 
 	// AgentsEnabled is the resolved Agents entitlement the Agents commands and
-	// MCP tools gate on (see ensureAgentsEnabled). It is true when the coast-
-	// access entitlement is set on either the user directly or the active org
+	// MCP tools gate on (see ensureAgentsEnabled). It mirrors the active org's
+	// aiEnabled switch, the only gate on Agents access.
 	AgentsEnabled bool
 
 	// ClaudePath is the path to the Claude CLI binary. Defaults to "claude" (looked up on PATH).
