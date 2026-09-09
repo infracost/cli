@@ -137,7 +137,7 @@ func TestListFindings_AgentsNotEnabled(t *testing.T) {
 	_, err := cmds.ListFindings(context.Background(), cfg, nil, cmds.FindingsListInput{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `organization "acme" has AI features turned off`)
-	assert.Contains(t, err.Error(), "contact the Infracost team")
+	assert.Contains(t, err.Error(), "support@infracost.io")
 	// Nothing in the dashboard can change this setting, so pointing at one
 	// would send people looking for a control that isn't there.
 	assert.NotContains(t, err.Error(), "dashboard.infracost.io")

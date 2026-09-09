@@ -22,10 +22,9 @@ func ensureAgentsEnabled(cfg *config.Config) error {
 }
 
 // errAgentsNotEnabled builds the message shown when the active org has AI
-// features switched off. Infracost sets that by hand for customers who can't
-// send data to a model, and nothing in the dashboard exposes it — so this
-// deliberately offers no link: there is no page where the caller, admin or
-// not, could turn it back on.
+// features switched off. Infracost sets that by hand and nothing in the
+// dashboard exposes it, so this deliberately offers no link: there is no page
+// where the caller, admin or not, could turn it back on.
 func errAgentsNotEnabled(slug string) error {
 	org := "this organization"
 	if slug != "" {
@@ -33,7 +32,7 @@ func errAgentsNotEnabled(slug string) error {
 	}
 	return fmt.Errorf(
 		"%s has AI features turned off, so Infracost Agents is unavailable. "+
-			"Infracost manages that setting - contact the Infracost team if you think it should be on",
+			"Contact support@infracost.io if you think this is a mistake.", //nolint:revive,staticcheck // user-facing message
 		org,
 	)
 }
