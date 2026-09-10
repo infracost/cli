@@ -8,15 +8,12 @@ import (
 
 // ensureAgentsEnabled gates the Agents-backed surfaces (findings / tasks /
 // actions, and their MCP tool equivalents) on the active organization's
-// agentsEnabled flag. The dashboard derives that flag from the coast-access
-// entitlement and returns it on the currentUser query; resolveOrg (and setOrg
-// for mid-session MCP org switches) resolves it onto cfg before these
-// functions run.
+// agentsEnabled flag, an alias of the dashboard's org-level aiEnabled switch.
+// resolveOrg (and setOrg for mid-session MCP org switches) resolves it onto
+// cfg before these functions run.
 //
-// When the org isn't enabled we return a friendly, actionable error pointing
-// at the Agents waitlist rather than letting the downstream Agents API reject
-// the call with an opaque error — Agents is in early access, so most orgs will
-// hit this path until they're switched on.
+// When the org isn't enabled we say so up front rather than letting the
+// downstream Agents API reject the call with an opaque error.
 func ensureAgentsEnabled(cfg *config.Config) error {
 	if cfg.AgentsEnabled {
 		return nil
@@ -24,18 +21,18 @@ func ensureAgentsEnabled(cfg *config.Config) error {
 	return errAgentsNotEnabled(cfg.OrgSlug)
 }
 
-// errAgentsNotEnabled builds the early-access message shown when the active
-// org doesn't have Agents turned on. When the org slug is known it deep-links
-// to that org's Agents page (which surfaces the waitlist signup); otherwise it
-// falls back to the dashboard root.
+// errAgentsNotEnabled builds the message shown when the active org has AI
+// features switched off. Infracost sets that by hand and nothing in the
+// dashboard exposes it, so this deliberately offers no link: there is no page
+// where the caller, admin or not, could turn it back on.
 func errAgentsNotEnabled(slug string) error {
-	url := "https://dashboard.infracost.io"
+	org := "this organization"
 	if slug != "" {
-		url = fmt.Sprintf("https://dashboard.infracost.io/org/%s/agents", slug)
+		org = fmt.Sprintf("organization %q", slug)
 	}
-	return fmt.Errorf(
-		"this organization doesn't have Infracost Agents enabled yet — it's currently in early access. "+
-			"Join the waitlist at %s, or contact the Infracost team to get set up",
-		url,
+	return fmt.Errorf( //nolint:revive,staticcheck // user-facing message, reads as prose
+		"%s has AI features turned off, so Infracost Agents is unavailable. "+
+			"Contact support@infracost.io if you think this is a mistake.",
+		org,
 	)
 }

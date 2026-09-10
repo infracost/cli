@@ -129,15 +129,18 @@ func TestListFindings_NoOrg(t *testing.T) {
 
 func TestListFindings_AgentsNotEnabled(t *testing.T) {
 	mockClient := agentsmocks.NewMockClient(t)
-	// Org is resolved but Agents isn't enabled for it — the gate should
-	// short-circuit with the early-access message before any API call.
+	// Org is resolved but has AI features off — the gate should short-circuit
+	// before any API call, naming the org and offering no self-serve fix.
 	cfg := &config.Config{OrgID: "org-1", OrgSlug: "acme", AgentsEnabled: false}
 	cfg.Agents.Client = func(_ *http.Client) agents.Client { return mockClient }
 
 	_, err := cmds.ListFindings(context.Background(), cfg, nil, cmds.FindingsListInput{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "early access")
-	assert.Contains(t, err.Error(), "dashboard.infracost.io/org/acme/agents")
+	assert.Contains(t, err.Error(), `organization "acme" has AI features turned off`)
+	assert.Contains(t, err.Error(), "support@infracost.io")
+	// Nothing in the dashboard can change this setting, so pointing at one
+	// would send people looking for a control that isn't there.
+	assert.NotContains(t, err.Error(), "dashboard.infracost.io")
 }
 
 func TestListFindings_APIError(t *testing.T) {

@@ -63,7 +63,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	if uc.SelectedOrgID != "" {
 		for _, org := range uc.Organizations {
 			if org.ID == uc.SelectedOrgID {
-				applyActiveOrg(cfg, uc, org)
+				applyActiveOrg(cfg, org)
 				return nil
 			}
 		}
@@ -72,7 +72,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 
 	// No org context set — if single org, use it silently.
 	if len(uc.Organizations) == 1 {
-		applyActiveOrg(cfg, uc, uc.Organizations[0])
+		applyActiveOrg(cfg, uc.Organizations[0])
 		return nil
 	}
 
@@ -82,7 +82,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 		if pickErr == nil {
 			for _, org := range uc.Organizations {
 				if org.Slug == slug {
-					applyActiveOrg(cfg, uc, org)
+					applyActiveOrg(cfg, org)
 					uc.SelectedOrgID = org.ID
 					if saveErr := cfg.Auth.SaveUserCache(uc); saveErr != nil {
 						logging.WithError(saveErr).Msg("failed to save org selection")
@@ -102,10 +102,10 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 // applyActiveOrg records the resolved active organization on cfg, including
 // the per-org agentsEnabled flag the Agents commands / MCP tools gate on and
 // the slug used for org-scoped dashboard links.
-func applyActiveOrg(cfg *config.Config, uc *auth.UserCache, org auth.CachedOrganization) {
+func applyActiveOrg(cfg *config.Config, org auth.CachedOrganization) {
 	cfg.OrgID = org.ID
 	cfg.OrgSlug = org.Slug
-	cfg.AgentsEnabled = org.AgentsEnabled || uc.AgentsEnabled
+	cfg.AgentsEnabled = org.AgentsEnabled
 }
 
 // applyActiveOrgByID looks up org id in orgs and applies it via applyActiveOrg.
@@ -114,7 +114,7 @@ func applyActiveOrg(cfg *config.Config, uc *auth.UserCache, org auth.CachedOrgan
 func applyActiveOrgByID(cfg *config.Config, uc *auth.UserCache, id string) {
 	for _, org := range uc.Organizations {
 		if org.ID == id {
-			applyActiveOrg(cfg, uc, org)
+			applyActiveOrg(cfg, org)
 			return
 		}
 	}
@@ -193,7 +193,6 @@ func cacheUser(cfg *config.Config, user dashboard.CurrentUser) *auth.UserCache {
 		ID:            user.ID,
 		Name:          user.Name,
 		Email:         user.Email,
-		AgentsEnabled: user.AgentsEnabled,
 		Organizations: orgs,
 	}
 
