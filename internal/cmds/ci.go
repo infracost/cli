@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -21,37 +21,135 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// actionsRef is the pinned commit SHA for the infracost/actions composite actions.
-const actionsRef = "c2e668fda0716ccc96353c6e6438c4a20448821a"
-
 type repoInfo struct {
 	owner string
 	repo  string
 	host  string
 }
 
-func (r repoInfo) isGitHub() bool {
-	return strings.Contains(r.host, "github.com")
-}
-
 func (r repoInfo) slug() string {
 	return r.owner + "/" + r.repo
 }
 
+// hostSlug is HOST/OWNER/REPO, the form `gh --repo` needs so a self-hosted
+// remote's secret is not written to the same-named repo on github.com.
+func (r repoInfo) hostSlug() string {
+	return r.host + "/" + r.slug()
+}
+
 func parseRemoteURL(remoteURL string) (repoInfo, error) {
-	// SSH: git@github.com:owner/repo.git
-	sshRe := regexp.MustCompile(`^git@([^:]+):([^/]+)/([^/]+?)(?:\.git)?$`)
+	remoteURL = normalizeSSHURL(remoteURL)
+
+	if info, ok := parseAzureRemoteURL(remoteURL); ok {
+		return info, nil
+	}
+
+	// SSH: git@github.com:owner/repo.git. The owner is greedy so a GitLab
+	// subgroup remote keeps every level of its path.
+	sshRe := regexp.MustCompile(`^git@([^:]+):(.+)/([^/]+?)(?:\.git)?$`)
 	if m := sshRe.FindStringSubmatch(remoteURL); m != nil {
 		return repoInfo{host: m[1], owner: m[2], repo: m[3]}, nil
 	}
 
-	// HTTPS: https://github.com/owner/repo.git
-	httpsRe := regexp.MustCompile(`^https?://([^/]+)/([^/]+)/([^/]+?)(?:\.git)?$`)
+	// HTTPS: https://github.com/owner/repo.git. The userinfo is dropped, not
+	// captured — repoInfo.host is printed and passed to gh — and matched
+	// greedily, so an @ in a password cannot spill into the host.
+	httpsRe := regexp.MustCompile(`^https?://(?:[^/]*@)?([^/@]+)/(.+)/([^/]+?)(?:\.git)?$`)
 	if m := httpsRe.FindStringSubmatch(remoteURL); m != nil {
 		return repoInfo{host: m[1], owner: m[2], repo: m[3]}, nil
 	}
 
 	return repoInfo{}, fmt.Errorf("could not parse remote URL %q — expected SSH (git@host:owner/repo.git) or HTTPS (https://host/owner/repo.git) format", remoteURL)
+}
+
+// sshURLRe matches the ssh:// form, which `url.<base>.insteadOf` rewrites
+// remotes into and which Azure also documents.
+var sshURLRe = regexp.MustCompile(`^(?:ssh|git)://(?:[^/]*@)?([^/:]+)(?::\d+)?/+(.+)$`)
+
+// normalizeSSHURL rewrites an ssh:// remote into the scp-style form the parsers
+// take. The port is SSH-only, so it is dropped rather than carried into
+// repoInfo.host, which builds web URLs.
+func normalizeSSHURL(remoteURL string) string {
+	m := sshURLRe.FindStringSubmatch(remoteURL)
+	if m == nil {
+		return remoteURL
+	}
+	return "git@" + m[1] + ":" + m[2]
+}
+
+// azureHTTPSRe splits an Azure DevOps HTTPS clone URL on its _git marker. What
+// precedes the marker is captured whole and read by parseAzureRemoteURL. The
+// org@ userinfo is matched greedily, so an @ in a password stays out of the host.
+var azureHTTPSRe = regexp.MustCompile(`^https?://(?:[^/]*@)?([^/@]+)/(?:(.+)/)?_git/([^/]+?)(?:\.git)?/?$`)
+
+// azureSSHRe matches git@ssh.dev.azure.com:v3/org/project/repo and the legacy
+// org@vs-ssh.visualstudio.com:v3/org/project/repo.
+var azureSSHRe = regexp.MustCompile(`^(?:[^:/]*@)?([^:/@]+):v3/([^/]+)/([^/]+)/([^/]+?)(?:\.git)?$`)
+
+// parseAzureRemoteURL handles the Azure DevOps remote forms, which carry a
+// project between the organization and the repository. The dashboard keys
+// Azure repositories on org/project/repo, so the project rides in repoInfo.repo
+// and slug() renders all three.
+func parseAzureRemoteURL(remoteURL string) (repoInfo, bool) {
+	if m := azureSSHRe.FindStringSubmatch(remoteURL); m != nil && vcsHostKind(m[1]) == hostAzure {
+		return repoInfo{
+			host:  m[1],
+			owner: unescapePathSegment(m[2]),
+			repo:  unescapePathSegment(m[3]) + "/" + unescapePathSegment(m[4]),
+		}, true
+	}
+
+	m := azureHTTPSRe.FindStringSubmatch(remoteURL)
+	if m == nil || vcsHostKind(m[1]) != hostAzure {
+		return repoInfo{}, false
+	}
+
+	host, repo := m[1], m[3]
+	var segments []string
+	if m[2] != "" {
+		segments = strings.Split(m[2], "/")
+	}
+
+	var org string
+	if strings.HasSuffix(normalizedHost(host), ".visualstudio.com") {
+		// The legacy host names the org, and may carry a collection segment
+		// ahead of the project.
+		org, _, _ = strings.Cut(host, ".")
+		if len(segments) > 0 && strings.EqualFold(segments[0], "DefaultCollection") {
+			segments = segments[1:]
+		}
+	} else {
+		if len(segments) == 0 {
+			return repoInfo{}, false
+		}
+		org, segments = segments[0], segments[1:]
+	}
+
+	if len(segments) > 1 {
+		return repoInfo{}, false
+	}
+	// The project is left out of the URL when it shares the repository's name.
+	project := repo
+	if len(segments) == 1 {
+		project = segments[0]
+	}
+
+	return repoInfo{
+		host:  host,
+		owner: unescapePathSegment(org),
+		repo:  unescapePathSegment(project) + "/" + unescapePathSegment(repo),
+	}, true
+}
+
+// unescapePathSegment decodes the percent-encoding an HTTPS clone URL puts on
+// an Azure project name with spaces; the dashboard stores the decoded name. A
+// segment holding a separator or a dot segment stays encoded: the slug is a path.
+func unescapePathSegment(s string) string {
+	decoded, err := url.PathUnescape(s)
+	if err != nil || strings.Contains(decoded, "/") || decoded == "." || decoded == ".." {
+		return s
+	}
+	return decoded
 }
 
 // resolveSetupOrgWithSpinner resolves the user's organization for setup
@@ -106,9 +204,22 @@ func CI(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
+// CISetupOptions controls `infracost ci setup`. It replaces the positional
+// bools RunCISetup used to take, because the per-platform follow-ups each add
+// a knob of their own.
+type CISetupOptions struct {
+	// Pipeline writes a CI config for the repository instead of connecting it
+	// to the app integration.
+	Pipeline bool
+	// Platform pins the CI platform by id, skipping detection. Implies Pipeline.
+	Platform string
+	// Yes skips confirmation prompts for non-interactive scripting.
+	Yes bool
+}
+
 func ciSetup(cfg *config.Config) *cobra.Command {
+	var opts CISetupOptions
 	var ciPipeline bool
-	var yes bool
 
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -116,14 +227,21 @@ func ciSetup(cfg *config.Config) *cobra.Command {
 		Example: `  # Connect this repo to the Infracost app integration (recommended)
   $ infracost ci setup
 
-  # Generate a GitHub Actions workflow instead
-  $ infracost ci setup --ci-pipeline`,
+  # Write a CI config for this repository instead
+  $ infracost ci setup --pipeline`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := requireUserLogin(cfg); err != nil {
 				return err
 			}
-			if err := RunCISetup(cmd.Context(), cfg, ciPipeline, yes); err != nil {
+			opts.Pipeline = opts.Pipeline || ciPipeline
+			configured, err := RunCISetup(cmd.Context(), cfg, opts)
+			if err != nil {
 				return err
+			}
+			// No card when the user was handed a by-hand recipe: nothing is
+			// set up yet, so "Setup complete" would be a lie.
+			if !configured {
+				return nil
 			}
 			// Mirror the unified `infracost setup` flow's closing card —
 			// CI gets a tailored "open a PR" CTA via the ciSetUp flag.
@@ -133,8 +251,12 @@ func ciSetup(cfg *config.Config) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&ciPipeline, "ci-pipeline", false, "Use CI pipeline mode (GitHub Actions) instead of the app integration")
-	cmd.Flags().BoolVar(&yes, "yes", false, "Skip confirmation prompts for non-interactive scripting")
+	cmd.Flags().BoolVar(&opts.Pipeline, "pipeline", false, "Write a CI config for this repository instead of using the app integration")
+	cmd.Flags().BoolVar(&ciPipeline, "ci-pipeline", false, "Write a CI config for this repository instead of using the app integration")
+	_ = cmd.Flags().MarkDeprecated("ci-pipeline", "use --pipeline instead")
+	cmd.Flags().StringVar(&opts.Platform, "ci-platform", "",
+		fmt.Sprintf("CI platform to configure (%s) — detected from the repository when unset", strings.Join(ciPlatformIDs(), ", ")))
+	cmd.Flags().BoolVar(&opts.Yes, "yes", false, "Skip confirmation prompts for non-interactive scripting")
 
 	return cmd
 }
@@ -165,62 +287,80 @@ func CISetupAvailable() bool {
 }
 
 // RunCISetup is the core logic for `infracost ci setup`, callable from the
-// unified `infracost setup` flow (DEV-230).
-func RunCISetup(ctx context.Context, cfg *config.Config, ciPipeline, yes bool) error {
+// unified `infracost setup` flow (DEV-230). It reports whether CI was actually
+// configured — false means the user was left with manual steps to follow.
+func RunCISetup(ctx context.Context, cfg *config.Config, opts CISetupOptions) (bool, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
+		return false, fmt.Errorf("getting working directory: %w", err)
 	}
 
 	repoRoot := vcs.GetRepoRoot(cwd)
 	if repoRoot == "" {
-		return fmt.Errorf("not inside a git repository — run this command from within a git repo")
+		return false, fmt.Errorf("not inside a git repository — run this command from within a git repo")
 	}
 
 	remoteURL := vcs.GetRemoteURL(repoRoot)
 	if remoteURL == "" {
-		return fmt.Errorf("no git remote found — run this from a repository with an origin remote")
+		return false, fmt.Errorf("no git remote found — run this from a repository with an origin remote")
 	}
 
 	repo, err := parseRemoteURL(remoteURL)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	defaultBranch := vcs.GetDefaultBranch(repoRoot)
 
-	if ciPipeline {
-		return runCIPipelineSetup(ctx, cfg, repo, repoRoot, defaultBranch, yes)
+	if opts.Platform != "" {
+		opts.Pipeline = true
+	}
+	if !opts.Pipeline && !hasAppIntegration(repo.host) {
+		fmt.Println()
+		// The host, not the provider: github.acme.com has no app integration
+		// even though GitHub does.
+		ui.Warnf("%s has no Infracost app integration — setting up a CI pipeline instead.", repo.host)
+		opts.Pipeline = true
+	}
+
+	if opts.Pipeline {
+		return runCIPipelineSetup(ctx, cfg, repo, repoRoot, defaultBranch, opts)
 	}
 	return runCIAppSetup(ctx, cfg, repo)
 }
 
-func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error {
+// runCIAppSetup reports true only when the repository is already connected.
+// Handing the user a dashboard URL to click is not a finished setup.
+func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) (bool, error) {
 	fmt.Println()
 	ui.Heading("Scanning repository")
 
-	provider := detectVCSProvider(repo)
-	ui.Successf("%s repository  %s", provider, repo.slug())
+	// Fixed labels, so a long provider name does not stagger the value column.
+	ui.Successf("Git repository      %s", repo.slug())
+	ui.Successf("VCS provider        %s", detectVCSProvider(repo))
 
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
-		return fmt.Errorf("authenticating: %w", err)
+		return false, fmt.Errorf("authenticating: %w", err)
 	}
 
 	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
-		return err
+		return false, err
 	}
-	ui.Successf("Infracost org      %s", org.Slug)
+	ui.Successf("Infracost org       %s", org.Slug)
 
 	// Check if the repo is already connected via the app integration.
 	orgClient := cfg.Dashboard.Client(api.Client(ctx, source, org.ID))
 	var connected bool
 	if err := ui.RunWithSpinnerErr(ctx, "Checking repository connection...", "", func(ctx context.Context) error {
-		connected, _ = orgClient.HasRepo(ctx, org.ID, repo.slug())
-		return nil
-	}); err != nil {
+		var err error
+		connected, err = orgClient.HasRepo(ctx, org.ID, repo.slug())
 		return err
+	}); err != nil {
+		// A dashboard blip is not a reason to fail the whole setup: an
+		// unanswered check just means the pitch below is shown.
+		ui.Warnf("Could not check whether this repository is connected: %v", err)
 	}
 	if connected {
 		ui.Success("App integration already connected")
@@ -228,7 +368,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 		fmt.Println("This repository is already sending PR cost estimates.")
 		fmt.Println("To manage settings, visit:")
 		fmt.Printf("  %s\n", ui.Accentf("https://dashboard.infracost.io/org/%s/repos", org.Slug))
-		return nil
+		return true, nil
 	}
 
 	fmt.Println()
@@ -252,149 +392,240 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 	fmt.Println("Once connected, Infracost will comment on every PR automatically.")
 	fmt.Println()
 	fmt.Println("To use CI pipeline mode instead, run:")
-	fmt.Println("  infracost ci setup --ci-pipeline")
+	fmt.Println("  infracost ci setup --pipeline")
 
-	return nil
+	return false, nil
 }
 
-func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, repoRoot, defaultBranch string, yes bool) error {
+func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, repoRoot, defaultBranch string, opts CISetupOptions) (bool, error) {
 	fmt.Println()
 	ui.Heading("Scanning repository")
+	ui.Successf("Git repository      %s", repo.slug())
 
-	if !repo.isGitHub() {
-		provider := detectVCSProvider(repo)
-		ui.Successf("Git repository      %s", repo.slug())
-		ui.Failf("CI provider         %s detected — GitHub Actions only for now", provider)
-		fmt.Println()
-		fmt.Println("To use the app integration instead, run:")
-		fmt.Println("  infracost ci setup")
-		return fmt.Errorf("%s is not supported for CI pipeline mode", provider)
+	platform, err := resolveCIPlatform(repoRoot, repo, opts.Platform)
+	if err != nil {
+		return false, err
 	}
-
-	ui.Successf("GitHub repository   %s", repo.slug())
+	ui.Successf("CI platform         %s", platform.name)
 
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
-		return fmt.Errorf("authenticating: %w", err)
+		return false, fmt.Errorf("authenticating: %w", err)
 	}
 
 	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ui.Successf("Infracost org       %s", org.Slug)
 
-	apiKey := os.Getenv("INFRACOST_API_KEY")
-	if apiKey == "" {
-		ui.Fail("Infracost API key   not found")
-		fmt.Println()
-		fmt.Println("To get an API key, visit your organization's CLI tokens page:")
-		ui.OpenOrContinue(fmt.Sprintf("https://dashboard.infracost.io/org/%s/settings/cli-tokens", org.Slug))
-		fmt.Println()
-		fmt.Println("Once you have a key, set it as an environment variable and retry:")
-		fmt.Println("  export INFRACOST_API_KEY=<your-key>")
-		return fmt.Errorf("INFRACOST_API_KEY environment variable not set")
-	}
-	ui.Success("Infracost API key   ready (from INFRACOST_API_KEY)")
-
-	ghPath, _ := exec.LookPath("gh")
-	hasGH := ghPath != ""
-	if hasGH {
-		ui.Success("gh CLI              available")
-	} else {
-		ui.Warn("gh CLI              not found — secret will need to be set manually")
+	if platform.writer == nil {
+		printCIRecipe(platform, org.Slug)
+		return false, nil
 	}
 
-	workflowDir := filepath.Join(repoRoot, ".github", "workflows")
-	diffPath := filepath.Join(workflowDir, "infracost-diff.yml")
-	scanPath := filepath.Join(workflowDir, "infracost-scan.yml")
+	jobOpts := ciJobOpts{
+		image:         ciImage,
+		repo:          repo,
+		defaultBranch: defaultBranch,
+		apiKeySecret:  ciAPIKeySecret,
+	}
 
-	writeWorkflows := true
-	if fileExists(diffPath) || fileExists(scanPath) {
-		overwrite, err := promptExistingWorkflows(yes)
-		if err != nil {
-			return err
+	// Only a run that will set the secret itself needs the key's value — with
+	// gh missing the value is never read, so demanding it would refuse a setup
+	// the manual steps can finish.
+	setter, canSetSecret := platform.writer.(ciSecretSetter)
+	canSetSecret = canSetSecret && setter.CanSetSecret()
+	if canSetSecret {
+		if os.Getenv(ciAPIKeySecret) == "" {
+			ui.Fail("Infracost API key   not found")
+			fmt.Println()
+			fmt.Println("To get an API key, visit your organization's CLI tokens page:")
+			ui.OpenOrContinue(cliTokensURL(org.Slug))
+			fmt.Println()
+			fmt.Println("Once you have a key, set it as an environment variable and retry:")
+			fmt.Printf("  export %s=<your-key>\n", ciAPIKeySecret)
+			return false, fmt.Errorf("%s environment variable not set", ciAPIKeySecret)
 		}
-		writeWorkflows = overwrite
+		ui.Successf("Infracost API key   ready (from %s)", ciAPIKeySecret)
+	}
+
+	paths, err := platform.writer.ConfigPaths(repoRoot)
+	if err != nil {
+		return false, err
+	}
+
+	writeConfigs := true
+	if platform.ownsFiles && anyConfigExists(repoRoot, paths) {
+		overwrite, err := promptExistingWorkflows(opts.Yes)
+		if err != nil {
+			return false, err
+		}
+		writeConfigs = overwrite
 	}
 
 	fmt.Println()
 	ui.Heading("This will:")
-	if writeWorkflows {
-		ui.Step("Create  .github/workflows/infracost-diff.yml")
-		ui.Step("Create  .github/workflows/infracost-scan.yml")
-	}
-	if hasGH {
-		ui.Stepf("Set     INFRACOST_API_KEY secret on %s", repo.slug())
-	}
-
-	if !yes {
-		if !ui.IsInteractive() {
-			return fmt.Errorf("cannot confirm in a non-interactive terminal — re-run with --yes to skip the confirmation prompt")
-		}
-		var confirm bool
-		err := huh.NewConfirm().
-			Title("Ready?").
-			Affirmative("Yes").
-			Negative("No").
-			Value(&confirm).
-			WithTheme(ui.BrandTheme()).
-			Run()
-		if err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				return nil
+	if writeConfigs {
+		for _, p := range paths {
+			verb := "Create"
+			if fileExists(filepath.Join(repoRoot, filepath.FromSlash(p))) {
+				verb = "Update"
 			}
-			return err
+			ui.Stepf("%s  %s", verb, p)
 		}
-		if !confirm {
-			return nil
+	}
+	if canSetSecret {
+		ui.Stepf("Set     %s secret on %s", ciAPIKeySecret, repo.slug())
+	}
+
+	if !opts.Yes {
+		confirmed, err := confirmCISetup()
+		if err != nil || !confirmed {
+			return false, err
 		}
 	}
 
-	if writeWorkflows {
-		if err := os.MkdirAll(workflowDir, 0o750); err != nil { //nolint:gosec // G301: workflows dir needs group read+exec for CI runners
-			return fmt.Errorf("creating workflow directory: %w", err)
+	var written []string
+	var changed bool
+	if writeConfigs {
+		results, writeErr := platform.writer.Write(repoRoot, jobOpts)
+		// Report what reached disk before surfacing the failure, so a partial
+		// write is not left silently in the working tree.
+		for _, r := range results {
+			if r.block != "" {
+				printCIBlockToPaste(r)
+				continue
+			}
+			written = append(written, r.path)
+			switch {
+			case r.unchanged:
+				ui.Successf("Unchanged %s", r.path)
+			case r.created:
+				ui.Successf("Created %s", r.path)
+				changed = true
+			default:
+				ui.Successf("Updated %s", r.path)
+				changed = true
+			}
 		}
-
-		if err := os.WriteFile(diffPath, []byte(diffWorkflowContent()), 0o600); err != nil {
-			return fmt.Errorf("writing diff workflow: %w", err)
+		if writeErr != nil {
+			return false, writeErr
 		}
-		ui.Success("Created .github/workflows/infracost-diff.yml")
-
-		if err := os.WriteFile(scanPath, []byte(scanWorkflowContent(defaultBranch)), 0o600); err != nil {
-			return fmt.Errorf("writing scan workflow: %w", err)
-		}
-		ui.Success("Created .github/workflows/infracost-scan.yml")
 	}
 
-	if hasGH {
-		ghCmd := exec.CommandContext(ctx, ghPath, "secret", "set", "INFRACOST_API_KEY", //nolint:gosec // G204: ghPath is from exec.LookPath, not user input
-			"--body", apiKey,
-			"--repo", repo.slug())
-		if err := ghCmd.Run(); err != nil {
-			ui.Warn("Failed to set INFRACOST_API_KEY secret via gh")
-			fmt.Println()
-			printManualSecretInstructions(repo)
+	secretSet, secretFailed := false, false
+	if canSetSecret {
+		if err := setter.SetSecret(ctx, jobOpts); err != nil {
+			ui.Warnf("Failed to set the %s secret: %v", ciAPIKeySecret, err)
+			secretFailed = true
 		} else {
-			ui.Success("Set INFRACOST_API_KEY secret (via gh secret set)")
+			ui.Successf("Set %s secret", ciAPIKeySecret)
+			secretSet = true
 		}
-	} else {
-		fmt.Println()
-		printManualSecretInstructions(repo)
+	}
+	if !secretSet {
+		printCISteps(platform.writer.Steps(repoRoot, jobOpts))
 	}
 
 	fmt.Println()
-	if writeWorkflows {
+	switch {
+	case changed:
 		ui.Heading("Done. Push this commit to see Infracost on your next PR:")
 		fmt.Println()
-		fmt.Println("  git add .github/workflows/infracost-diff.yml .github/workflows/infracost-scan.yml")
+		fmt.Printf("  git add %s\n", strings.Join(written, " "))
 		fmt.Println("  git commit -m \"chore: add Infracost CI integration\"")
 		fmt.Println("  git push")
-	} else {
-		ui.Heading("Done. The INFRACOST_API_KEY secret has been configured.")
+	case len(written) > 0:
+		ui.Heading("Done. Your CI config is already up to date.")
+	case secretSet:
+		ui.Headingf("Done. The %s secret has been configured.", ciAPIKeySecret)
+	default:
+		ui.Heading("Done. Nothing was changed.")
 	}
 
-	return nil
+	// A declined prompt, a block we could not place, or a secret we tried and
+	// failed to set all leave work for the user, so they are not "configured".
+	return (len(written) > 0 || secretSet) && !secretFailed, nil
+}
+
+// printCIRecipe is the nil-writer path: name the platform, point at its recipe
+// and exit 0. Refusing here would just reword the bug this replaced.
+//
+// The container lines are printed as well as the URL because this is also the
+// generic platform's only output, and a bare link is not instructions.
+func printCIRecipe(platform ciPlatform, orgSlug string) {
+	fmt.Println()
+	ui.Headingf("Infracost has a %s recipe to follow by hand:", platform.name)
+	fmt.Println()
+	fmt.Printf("  %s\n", ui.Accent(platform.docsURL()))
+	fmt.Println()
+	fmt.Println("Every platform runs the same container:")
+	ui.Stepf("image  %s", ciImage)
+	ui.Step("on a pull request  infracost-ci diff --base-path base --head-path head")
+	ui.Step("on the default branch  infracost-ci scan --path .")
+	fmt.Println()
+	fmt.Println("It needs two secrets:")
+	ui.Step("INFRACOST_CLI_AUTHENTICATION_TOKEN — get a key at")
+	fmt.Printf("     %s\n", ui.Code(cliTokensURL(orgSlug)))
+	ui.Step("A VCS token the job comments with — the recipe names the one your platform uses")
+}
+
+// printCIBlockToPaste is the refusal in §4: a file whose shape we cannot place
+// into gets the rendered block printed, and nothing written.
+func printCIBlockToPaste(r ciWriteResult) {
+	fmt.Println()
+	ui.Warnf("Left %s alone because %s", r.path, r.reason)
+	fmt.Println()
+	fmt.Printf("Add this to %s by hand:\n", r.path)
+	fmt.Println()
+	fmt.Println(r.block)
+}
+
+func printCISteps(steps []string) {
+	if len(steps) == 0 {
+		return
+	}
+	fmt.Println()
+	ui.Heading("Remaining manual steps:")
+	for _, s := range steps {
+		fmt.Println(s)
+	}
+}
+
+func confirmCISetup() (bool, error) {
+	if !ui.IsInteractive() {
+		return false, fmt.Errorf("cannot confirm in a non-interactive terminal — re-run with --yes to skip the confirmation prompt")
+	}
+
+	var confirm bool
+	err := huh.NewConfirm().
+		Title("Ready?").
+		Affirmative("Yes").
+		Negative("No").
+		Value(&confirm).
+		WithTheme(ui.BrandTheme()).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return false, nil
+		}
+		return false, err
+	}
+	return confirm, nil
+}
+
+func anyConfigExists(repoRoot string, paths []string) bool {
+	for _, p := range paths {
+		if fileExists(filepath.Join(repoRoot, filepath.FromSlash(p))) {
+			return true
+		}
+	}
+	return false
+}
+
+func cliTokensURL(orgSlug string) string {
+	return fmt.Sprintf("https://dashboard.infracost.io/org/%s/settings/cli-tokens", orgSlug)
 }
 
 func promptExistingWorkflows(yes bool) (bool, error) {
@@ -431,26 +662,15 @@ func promptExistingWorkflows(yes bool) (bool, error) {
 	return selected == optionUpdate, nil
 }
 
-func printManualSecretInstructions(repo repoInfo) {
-	ui.Heading("One manual step remaining:")
-	fmt.Println("Set the API key as a GitHub secret:")
-	fmt.Println()
-	fmt.Printf("  gh secret set INFRACOST_API_KEY --body \"$INFRACOST_API_KEY\" \\\n")
-	fmt.Printf("      --repo %s\n", repo.slug())
-	fmt.Println()
-	fmt.Println("Or add it in GitHub:")
-	fmt.Printf("  https://github.com/%s/settings/secrets/actions/new\n", repo.slug())
-}
-
 func detectVCSProvider(repo repoInfo) string {
-	switch {
-	case strings.Contains(repo.host, "github.com"):
+	switch vcsHostKind(repo.host) {
+	case hostGitHub:
 		return "GitHub"
-	case strings.Contains(repo.host, "gitlab"):
+	case hostGitLab:
 		return "GitLab"
-	case strings.Contains(repo.host, "dev.azure.com"):
+	case hostAzure:
 		return "Azure DevOps"
-	case strings.Contains(repo.host, "bitbucket"):
+	case hostBitbucket:
 		return "Bitbucket"
 	default:
 		return repo.host
@@ -460,91 +680,4 @@ func detectVCSProvider(repo repoInfo) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-func diffWorkflowContent() string {
-	return `name: Infracost Diff
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
-  workflow_dispatch:
-    inputs:
-      pr-number:
-        description: "Pull request number to scan"
-        required: true
-        type: number
-
-permissions:
-  contents: read
-  pull-requests: write
-
-jobs:
-  infracost-diff:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Get PR details
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-          INPUT_PR_NUMBER: ${{ inputs.pr-number }}
-          PR_NUMBER: ${{ inputs.pr-number || github.event.pull_request.number }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          if [ -n "$INPUT_PR_NUMBER" ]; then
-            BASE_REF=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName -q .baseRefName)
-            HEAD_REF=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)
-          fi
-          echo "base-ref=${BASE_REF}" >> $GITHUB_OUTPUT
-          echo "head-ref=${HEAD_REF}" >> $GITHUB_OUTPUT
-          echo "pr-number=${PR_NUMBER}" >> $GITHUB_OUTPUT
-
-      - name: Checkout base branch
-        if: github.event.action != 'closed'
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.base-ref }}
-          path: base
-
-      - name: Checkout head branch
-        if: github.event.action != 'closed'
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.head-ref }}
-          path: head
-
-      - name: Run Infracost Diff
-        uses: infracost/actions/diff@` + actionsRef + `
-        with:
-          api-key: ${{ secrets.INFRACOST_API_KEY }}
-          base-path: ${{ github.event.action != 'closed' && 'base' || '' }}
-          head-path: ${{ github.event.action != 'closed' && 'head' || '' }}
-          pr-number: ${{ steps.pr.outputs.pr-number }}
-`
-}
-
-func scanWorkflowContent(defaultBranch string) string {
-	return `name: Infracost Scan
-
-on:
-  push:
-    branches: [` + defaultBranch + `]
-
-permissions:
-  contents: read
-
-jobs:
-  infracost-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run Infracost Scan
-        uses: infracost/actions/scan@` + actionsRef + `
-        with:
-          api-key: ${{ secrets.INFRACOST_API_KEY }}
-          path: .
-`
 }

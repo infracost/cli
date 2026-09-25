@@ -188,10 +188,13 @@ func Setup(cfg *config.Config) *cobra.Command {
 			// know whether to render a skip notice in the offered case
 			// AND whether to tailor the post-setup CTA toward CI.
 			ciSkipped := true
+			ciConfigured := false
 			if CISetupAvailable() {
 				if err := runSetupStep("Set up CI integration?", func() error {
 					ciSkipped = false
-					return RunCISetup(ctx, cfg, false, false)
+					var err error
+					ciConfigured, err = RunCISetup(ctx, cfg, CISetupOptions{})
+					return err
 				}); err != nil {
 					return err
 				}
@@ -203,7 +206,7 @@ func Setup(cfg *config.Config) *cobra.Command {
 			}
 
 			fmt.Println()
-			fmt.Print(ui.GradientCard(setupCompleteContent(agentName, ideName, !ciSkipped)))
+			fmt.Print(ui.GradientCard(setupCompleteContent(agentName, ideName, ciConfigured)))
 			return nil
 		},
 	}
