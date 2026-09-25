@@ -58,7 +58,24 @@ func TestGithubDiffWorkflowJobs(t *testing.T) {
 	require.Contains(t, wf.Jobs, "infracost-diff")
 	diff := wf.Jobs["infracost-diff"]
 	assert.Equal(t, "infracost-pr", diff.Needs)
-	assert.Equal(t, "${{ secrets.INFRACOST_API_KEY }}", diff.Env["INFRACOST_CLI_AUTHENTICATION_TOKEN"])
+
+	// Step-scoped, never job-scoped: a job-level token is handed to
+	// actions/checkout and to every step a user adds later.
+	for name, job := range wf.Jobs {
+		assert.Empty(t, job.Env, "job %s must not hold secrets at job scope", name)
+	}
+	for _, step := range diff.Steps {
+		env, _ := step["env"].(map[string]any)
+		if step["uses"] != nil {
+			assert.Nil(t, env["INFRACOST_CLI_AUTHENTICATION_TOKEN"], "checkout steps must not receive the Infracost token")
+			assert.Nil(t, env["GITHUB_TOKEN"], "checkout steps must not receive the PR-write token")
+			continue
+		}
+		if run, ok := step["run"].(string); ok && strings.Contains(run, "infracost-ci") {
+			assert.Equal(t, "${{ secrets.INFRACOST_API_KEY }}", env["INFRACOST_CLI_AUTHENTICATION_TOKEN"])
+			assert.Equal(t, "${{ secrets.GITHUB_TOKEN }}", env["GITHUB_TOKEN"])
+		}
+	}
 
 	// The closed-PR path still reports the final state to the dashboard.
 	var closedStep map[string]any
@@ -80,6 +97,32 @@ func TestGithubScanWorkflowQuotesTheBranch(t *testing.T) {
 	var parsed any
 	require.NoError(t, yaml.Unmarshal([]byte(content), &parsed))
 	assert.Contains(t, content, `branches: ["release]v1"]`)
+}
+
+func TestGithubScanWorkflowScopesTheToken(t *testing.T) {
+	var wf struct {
+		Jobs map[string]struct {
+			Env   map[string]string
+			Steps []map[string]any
+		} `yaml:"jobs"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(githubScanWorkflowContent(ciJobOpts{
+		image: ciImage, defaultBranch: "main", apiKeySecret: ciAPIKeySecret,
+	})), &wf))
+
+	for name, job := range wf.Jobs {
+		assert.Empty(t, job.Env, "job %s must not hold secrets at job scope", name)
+	}
+	for _, step := range wf.Jobs["infracost-scan"].Steps {
+		env, _ := step["env"].(map[string]any)
+		if step["uses"] != nil {
+			assert.Nil(t, env["INFRACOST_CLI_AUTHENTICATION_TOKEN"])
+			continue
+		}
+		if run, ok := step["run"].(string); ok && strings.Contains(run, "infracost-ci") {
+			assert.Equal(t, "${{ secrets.INFRACOST_API_KEY }}", env["INFRACOST_CLI_AUTHENTICATION_TOKEN"])
+		}
+	}
 }
 
 // A self-hosted remote must keep its host in --repo, or gh writes the key to

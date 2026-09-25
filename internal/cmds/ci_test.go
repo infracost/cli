@@ -3,6 +3,7 @@ package cmds_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,6 +25,7 @@ import (
 	"github.com/infracost/cli/pkg/auth"
 	"github.com/infracost/cli/pkg/logging"
 	"golang.org/x/oauth2"
+	"gopkg.in/yaml.v3"
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -244,12 +247,11 @@ func TestCISetup_PipelineNoAPIKey(t *testing.T) {
 	assert.Contains(t, output, "export INFRACOST_API_KEY=<your-key>")
 }
 
-// A GitLab repository is named and routed to its recipe rather than refused:
-// returning an error here is the bug this replaced.
-func TestCISetup_PipelineNoWriterYet(t *testing.T) {
+// A GitLab repository is written to, not refused: returning an error here is
+// the bug this replaced.
+func TestCISetup_PipelineGitLab(t *testing.T) {
 	dir := initGitRepo(t, "git@gitlab.com:acme-corp/platform-infra.git")
 	chdir(t, dir)
-	t.Setenv("INFRACOST_API_KEY", "test-api-key")
 
 	mockClient := mocks.NewMockClient(t)
 	mockClient.EXPECT().
@@ -269,26 +271,17 @@ func TestCISetup_PipelineNoWriterYet(t *testing.T) {
 	})
 
 	require.NoError(t, execErr)
+	assert.Contains(t, output, "✔  CI platform         GitLab CI")
+	assert.Contains(t, output, "✔  Created .gitlab-ci.yml")
+	assert.Contains(t, output, "GITLAB_TOKEN")
+	assert.Contains(t, output, "CI_JOB_TOKEN cannot post notes")
+	assert.Contains(t, output, "  git add .gitlab-ci.yml")
 
-	want := `
-Scanning repository
-  ✔  Git repository      acme-corp/platform-infra
-  ✔  CI platform         GitLab CI
-  ✔  Infracost org       acme-corp
-
-Set up GitLab CI by hand:
-
-  https://www.infracost.io/docs/integrations/gitlab_ci/
-
-The recipe needs two secrets:
-  →  INFRACOST_CLI_AUTHENTICATION_TOKEN — get a key at
-     https://dashboard.infracost.io/org/acme-corp/settings/cli-tokens
-  →  A VCS token the job comments with — the recipe names the one your platform uses
-`
-	assert.Equal(t, want, output)
-
-	// Nothing was configured, so the "Setup complete" card must not appear.
-	assert.NotContains(t, output, "Setup complete.")
+	content := requireYAMLFile(t, filepath.Join(dir, ".gitlab-ci.yml"))
+	assert.Contains(t, content, "image: ghcr.io/infracost/ci:0.1")
+	assert.Contains(t, content, "infracost-ci diff --base-path base --head-path head")
+	assert.Contains(t, content, "infracost-ci scan --path .")
+	assert.Contains(t, content, "INFRACOST_CLI_AUTHENTICATION_TOKEN: $INFRACOST_API_KEY")
 }
 
 // A Jenkinsfile is detected, named, routed to the docs, and left alone.
@@ -819,8 +812,9 @@ func TestCISetup_AppAlreadyConnected(t *testing.T) {
 
 	want := `
 Scanning repository
-  ✔  GitHub repository  acme-corp/platform-infra
-  ✔  Infracost org      acme-corp
+  ✔  Git repository      acme-corp/platform-infra
+  ✔  VCS provider        GitHub
+  ✔  Infracost org       acme-corp
   ✔  App integration already connected
 
 This repository is already sending PR cost estimates.
@@ -866,4 +860,280 @@ func TestCISetup_PipelineHTTPS(t *testing.T) {
 	require.NoError(t, execErr)
 	assert.Contains(t, output, "✔  Git repository      acme-corp/platform-infra")
 	assert.Contains(t, output, "✔  Created .github/workflows/infracost-diff.yml")
+}
+
+// Being handed a dashboard URL to click is not a finished setup, so the
+// completion card must not appear until the repository is connected.
+func TestCISetup_AppNotConnectedShowsNoCompletionCard(t *testing.T) {
+	dir := initGitRepo(t, "git@github.com:acme-corp/platform-infra.git")
+	chdir(t, dir)
+
+	mockClient := mocks.NewMockClient(t)
+	mockClient.EXPECT().
+		CurrentUser(mock.Anything).
+		Return(singleOrgUser(), nil)
+	mockClient.EXPECT().
+		HasRepo(mock.Anything, "org-1", "acme-corp/platform-infra").
+		Return(false, nil)
+
+	cfg := ciTestConfig(t, mockClient)
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+
+	require.NoError(t, execErr)
+	assert.Contains(t, output, "The recommended way to set up Infracost is the app integration.")
+	assert.NotContains(t, output, "Setup complete.")
+}
+
+// An Azure Repos remote reaches the platform registry instead of failing to
+// parse, and the org/project/repo name is what the dashboard is asked about.
+func TestCISetup_AzureReposRemote(t *testing.T) {
+	dir := initGitRepo(t, "https://dev.azure.com/acme-corp/platform/_git/infra")
+	chdir(t, dir)
+
+	mockClient := mocks.NewMockClient(t)
+	mockClient.EXPECT().
+		CurrentUser(mock.Anything).
+		Return(singleOrgUser(), nil)
+	mockClient.EXPECT().
+		HasRepo(mock.Anything, "org-1", "acme-corp/platform/infra").
+		Return(true, nil)
+
+	cfg := ciTestConfig(t, mockClient)
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+
+	require.NoError(t, execErr)
+	assert.True(t, cmds.CISetupAvailable())
+	assert.Contains(t, output, "✔  Git repository      acme-corp/platform/infra")
+	assert.Contains(t, output, "✔  VCS provider        Azure DevOps")
+}
+
+// Azure Repos gets a file it did not have, with a trigger outside the managed
+// block for the user to edit.
+func TestCISetup_PipelineAzureCreatesFile(t *testing.T) {
+	dir := initGitRepo(t, "git@ssh.dev.azure.com:v3/acme-corp/platform/infra")
+	chdir(t, dir)
+
+	mockClient := mocks.NewMockClient(t)
+	mockClient.EXPECT().
+		CurrentUser(mock.Anything).
+		Return(singleOrgUser(), nil)
+
+	cfg := ciTestConfig(t, mockClient)
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup", "--pipeline", "--yes"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+
+	require.NoError(t, execErr)
+	assert.Contains(t, output, "✔  Git repository      acme-corp/platform/infra")
+	assert.Contains(t, output, "✔  CI platform         Azure Pipelines")
+	assert.Contains(t, output, "✔  Created azure-pipelines.yml")
+	// Azure Repos comments with the build identity, not a token the user makes.
+	assert.Contains(t, output, "set Contribute to pull requests to Allow")
+	assert.Contains(t, output, "Azure Repos ignores a pr: trigger")
+
+	content := requireYAMLFile(t, filepath.Join(dir, "azure-pipelines.yml"))
+	assert.Contains(t, content, "container: ghcr.io/infracost/ci:0.1")
+	assert.Contains(t, content, "SYSTEM_ACCESSTOKEN: $(System.AccessToken)")
+	assert.NotContains(t, content, "GITHUB_TOKEN")
+	// The trigger is the user's, so it sits outside the sentinels.
+	trigger := strings.Index(content, "trigger:")
+	require.GreaterOrEqual(t, trigger, 0)
+	assert.Less(t, trigger, strings.Index(content, ">>> infracost ci setup"))
+}
+
+// Bitbucket nests under the pipelines: tree the user already has.
+func TestCISetup_PipelineBitbucketSplicesUnderPipelines(t *testing.T) {
+	dir := initGitRepo(t, "git@bitbucket.org:acme-corp/platform-infra.git")
+	chdir(t, dir)
+
+	existing := `image: atlassian/default-image:4
+
+pipelines:
+  branches:
+    develop:
+      - step:
+          name: Build
+          script:
+            - make build
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bitbucket-pipelines.yml"), []byte(existing), 0o644))
+
+	mockClient := mocks.NewMockClient(t)
+	mockClient.EXPECT().
+		CurrentUser(mock.Anything).
+		Return(singleOrgUser(), nil)
+
+	cfg := ciTestConfig(t, mockClient)
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup", "--pipeline", "--yes"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+
+	require.NoError(t, execErr)
+	assert.Contains(t, output, "✔  CI platform         Bitbucket Pipelines")
+	assert.Contains(t, output, "✔  Updated bitbucket-pipelines.yml")
+	assert.Contains(t, output, "BITBUCKET_TOKEN")
+
+	content := requireYAMLFile(t, filepath.Join(dir, "bitbucket-pipelines.yml"))
+	// The user's own pipeline and top-level image survive untouched.
+	assert.Contains(t, content, "image: atlassian/default-image:4")
+	assert.Contains(t, content, "    develop:")
+	assert.Contains(t, content, "  pull-requests:")
+
+	var parsed struct {
+		Pipelines map[string]any `yaml:"pipelines"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(content), &parsed))
+	assert.Contains(t, parsed.Pipelines, "pull-requests")
+	assert.Contains(t, parsed.Pipelines, "branches")
+}
+
+// requireYAMLFile reads a generated config and fails unless it parses.
+func requireYAMLFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var out map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &out), "generated %s does not parse", path)
+	return string(b)
+}
+
+// FIX-746: nothing the command writes or prints may carry a token — not the
+// generated workflows, not the terminal, not the gh argv.
+func TestCISetup_PipelineNeverEmitsTokens(t *testing.T) {
+	const (
+		apiKey      = "ik_APIKEYSECRET"
+		remoteToken = "ghp_REMOTESECRET"
+	)
+
+	dir := initGitRepo(t, "https://x-access-token:"+remoteToken+"@github.com/acme-corp/platform-infra.git")
+	chdir(t, dir)
+	t.Setenv("INFRACOST_API_KEY", apiKey)
+
+	binDir := t.TempDir()
+	argsFile := filepath.Join(binDir, "gh-args")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\n", argsFile)
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "gh"), []byte(script), 0o700))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	mockClient := mocks.NewMockClient(t)
+	mockClient.EXPECT().
+		CurrentUser(mock.Anything).
+		Return(singleOrgUser(), nil)
+
+	cfg := ciTestConfig(t, mockClient)
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup", "--pipeline", "--yes"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+	require.NoError(t, execErr)
+
+	// The remote's credential is dropped, so the host resolves and is printed clean.
+	assert.Contains(t, output, "✔  CI platform         GitHub Actions")
+	assert.NotContains(t, output, remoteToken)
+	assert.NotContains(t, output, apiKey)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(args), "github.com/acme-corp/platform-infra")
+	assert.NotContains(t, string(args), remoteToken)
+	assert.NotContains(t, string(args), apiKey)
+
+	// The generated files reference the secret; they never hold its value.
+	for _, name := range []string{"infracost-diff.yml", "infracost-scan.yml"} {
+		content, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", name))
+		require.NoError(t, err)
+		assert.Contains(t, string(content), "${{ secrets.INFRACOST_API_KEY }}")
+		assert.NotContains(t, string(content), apiKey)
+		assert.NotContains(t, string(content), remoteToken)
+	}
+}
+
+// FIX-744: an unrecognized platform gets usable instructions and exit 0, not
+// the "platform not supported" error this replaced.
+func TestCISetup_PipelineGenericPlatform(t *testing.T) {
+	dir := initGitRepo(t, "git@git.acme-internal.com:acme-corp/platform-infra.git")
+	chdir(t, dir)
+
+	mockClient := mocks.NewMockClient(t)
+	mockClient.EXPECT().
+		CurrentUser(mock.Anything).
+		Return(singleOrgUser(), nil)
+
+	cfg := ciTestConfig(t, mockClient)
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup", "--pipeline", "--yes"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+
+	require.NoError(t, execErr)
+
+	want := `
+Scanning repository
+  ✔  Git repository      acme-corp/platform-infra
+  ✔  CI platform         Generic CI/CD
+  ✔  Infracost org       acme-corp
+
+Infracost has a Generic CI/CD recipe to follow by hand:
+
+  https://www.infracost.io/docs/integrations/cicd/
+
+Every platform runs the same container:
+  →  image  ghcr.io/infracost/ci:0.1
+  →  on a pull request  infracost-ci diff --base-path base --head-path head
+  →  on the default branch  infracost-ci scan --path .
+
+It needs two secrets:
+  →  INFRACOST_CLI_AUTHENTICATION_TOKEN — get a key at
+     https://dashboard.infracost.io/org/acme-corp/settings/cli-tokens
+  →  A VCS token the job comments with — the recipe names the one your platform uses
+`
+	assert.Equal(t, want, output)
+
+	// Nothing is written, and no "Setup complete" card: the user still has work.
+	assert.NoDirExists(t, filepath.Join(dir, ".github"))
+	assert.NotContains(t, output, "Setup complete.")
 }

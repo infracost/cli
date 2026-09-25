@@ -146,6 +146,29 @@ func TestCIPlaceBlock_RefusesAJobUnderTheTargetKey(t *testing.T) {
 	assert.Equal(t, existing, readFile(t, root, "bitbucket-pipelines.yml"))
 }
 
+// Azure's jobs: and stages: are sequences, so the gate has to read the entry's
+// own name rather than a mapping key.
+func TestCIPlaceBlock_RefusesAnExistingJobInASequence(t *testing.T) {
+	for _, tt := range []struct {
+		key      string
+		existing string
+		want     string
+	}{
+		{"jobs", "jobs:\n  - job: infracost_diff\n    steps:\n      - script: echo hi\n", "infracost_diff"},
+		{"stages", "stages:\n  - stage: infracost\n    jobs: []\n", "infracost"},
+	} {
+		t.Run(tt.key, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "azure-pipelines.yml", tt.existing)
+
+			_, err := ciPlaceBlock(root, "azure-pipelines.yml", tt.key, "- job: infracost_scan\n  steps: []\n")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), `already defines "`+tt.want+`"`)
+			assert.Equal(t, tt.existing, readFile(t, root, "azure-pipelines.yml"))
+		})
+	}
+}
+
 // A hand-removed end sentinel would append a second copy of the block; the
 // result must not reach disk.
 func TestCIPlaceBlock_RefusesAResultThatWouldNotParse(t *testing.T) {

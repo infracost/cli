@@ -229,10 +229,19 @@ func ciExistingInfracostJob(content, under string) (string, int) {
 		return "", 0
 	}
 
+	inBlock := func(line int) bool { return hasBlock && line-1 >= start && line-1 < end }
+
 	mappings := []*yaml.Node{doc}
-	if under != "" {
-		if m := ciMappingUnderKey(doc, under); m != nil {
-			mappings = append(mappings, m)
+	if n := ciNodeUnderKey(doc, under); n != nil {
+		switch n.Kind {
+		case yaml.MappingNode:
+			mappings = append(mappings, n)
+		case yaml.SequenceNode:
+			// Azure's jobs: and stages: are sequences, so the name is a value
+			// on the entry rather than the key it is stored under.
+			if name, line := ciInfracostSeqEntry(n, inBlock); name != "" {
+				return name, line
+			}
 		}
 	}
 
@@ -246,7 +255,7 @@ func ciExistingInfracostJob(content, under string) (string, int) {
 			if v.Kind != yaml.MappingNode && v.Kind != yaml.SequenceNode {
 				continue
 			}
-			if hasBlock && k.Line-1 >= start && k.Line-1 < end {
+			if inBlock(k.Line) {
 				continue
 			}
 			return k.Value, k.Line
@@ -255,10 +264,45 @@ func ciExistingInfracostJob(content, under string) (string, int) {
 	return "", 0
 }
 
+// ciInfracostSeqEntry reports an Infracost-named entry in a sequence of
+// mappings, by the fields Azure names a job, stage or deployment with.
+func ciInfracostSeqEntry(seq *yaml.Node, inBlock func(int) bool) (string, int) {
+	for _, item := range seq.Content {
+		if item.Kind != yaml.MappingNode {
+			continue
+		}
+		for i := 0; i+1 < len(item.Content); i += 2 {
+			k, v := item.Content[i], item.Content[i+1]
+			switch k.Value {
+			case "job", "stage", "deployment":
+			default:
+				continue
+			}
+			if !strings.HasPrefix(strings.ToLower(v.Value), "infracost") || inBlock(k.Line) {
+				continue
+			}
+			return v.Value, k.Line
+		}
+	}
+	return "", 0
+}
+
 // ciMappingUnderKey returns the mapping doc[key] maps to, or nil.
 func ciMappingUnderKey(doc *yaml.Node, key string) *yaml.Node {
+	n := ciNodeUnderKey(doc, key)
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	return n
+}
+
+// ciNodeUnderKey returns the value doc[key] maps to, of whatever kind, or nil.
+func ciNodeUnderKey(doc *yaml.Node, key string) *yaml.Node {
+	if key == "" {
+		return nil
+	}
 	for i := 0; i+1 < len(doc.Content); i += 2 {
-		if doc.Content[i].Value == key && doc.Content[i+1].Kind == yaml.MappingNode {
+		if doc.Content[i].Value == key {
 			return doc.Content[i+1]
 		}
 	}

@@ -32,8 +32,9 @@ type ciWriter interface {
 	ConfigPaths(repoRoot string) ([]string, error)
 	Write(repoRoot string, opts ciJobOpts) ([]ciWriteResult, error)
 	// Steps are the manual token and secret instructions this platform still
-	// needs from the user, printed after the write.
-	Steps(opts ciJobOpts) []string
+	// needs from the user, printed after the write. It takes repoRoot because
+	// what is left to do can depend on what the user's config already has.
+	Steps(repoRoot string, opts ciJobOpts) []string
 }
 
 // ciSecretSetter is implemented only by platforms where the CLI can set the API
@@ -61,9 +62,9 @@ type ciWriteResult struct {
 }
 
 const (
-	// ciImage is the pinned infracost/ci container written into generated CI
-	// jobs. The floating minor, so a patch release reaches users without a CLI
-	// release or a PR in their repo.
+	// ciImage is the infracost/ci container written into generated CI jobs.
+	// The floating minor tag, so a patch release reaches users without a CLI
+	// release or a PR in their repo, at the cost of a non-reproducible job.
 	ciImage = "ghcr.io/infracost/ci:0.1"
 
 	// ciAPIKeySecret names both the secret the job reads and the environment
@@ -93,20 +94,23 @@ var supportedCIPlatforms = []ciPlatform{
 	{
 		id:          hostGitLab,
 		name:        "GitLab CI",
-		configPaths: []string{".gitlab-ci.yml"},
+		configPaths: []string{gitlabConfigPath},
 		docsPath:    "gitlab_ci",
+		writer:      gitlabWriter{},
 	},
 	{
 		id:          hostAzure,
 		name:        "Azure Pipelines",
-		configPaths: []string{"azure-pipelines.yml", "azure-pipelines.yaml", ".azure-pipelines.yml"},
+		configPaths: azureConfigPaths,
 		docsPath:    "azure_pipelines",
+		writer:      azureWriter{},
 	},
 	{
 		id:          hostBitbucket,
 		name:        "Bitbucket Pipelines",
-		configPaths: []string{"bitbucket-pipelines.yml"},
+		configPaths: []string{bitbucketConfigPath},
 		docsPath:    "bitbucket_pipelines",
+		writer:      bitbucketWriter{},
 	},
 	{
 		// A Jenkinsfile is hand-written Groovy owned by whoever runs the

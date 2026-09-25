@@ -56,7 +56,7 @@ func (githubWriter) Write(repoRoot string, opts ciJobOpts) ([]ciWriteResult, err
 	return results, nil
 }
 
-func (githubWriter) Steps(opts ciJobOpts) []string {
+func (githubWriter) Steps(_ string, opts ciJobOpts) []string {
 	return []string{
 		"Set the API key as a GitHub secret:",
 		"",
@@ -101,6 +101,15 @@ func (githubWriter) SetSecret(ctx context.Context, opts ciJobOpts) error {
 		return err
 	}
 	return nil
+}
+
+// githubStepEnv is the env the two infracost-ci steps share. Step-scoped rather
+// than job-scoped so actions/checkout never receives either token.
+func githubStepEnv(opts ciJobOpts) string {
+	return `
+          INFRACOST_CLI_AUTHENTICATION_TOKEN: ${{ secrets.` + opts.apiKeySecret + ` }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INFRACOST_VCS_PULL_REQUEST_ID: ${{ needs.infracost-pr.outputs.pr-number }}`
 }
 
 func githubDiffWorkflowContent(opts ciJobOpts) string {
@@ -152,10 +161,6 @@ jobs:
     needs: infracost-pr
     runs-on: ubuntu-latest
     container: ` + opts.image + `
-    env:
-      INFRACOST_CLI_AUTHENTICATION_TOKEN: ${{ secrets.` + opts.apiKeySecret + ` }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      INFRACOST_VCS_PULL_REQUEST_ID: ${{ needs.infracost-pr.outputs.pr-number }}
     steps:
       - name: Checkout base branch
         if: github.event.action != 'closed'
@@ -173,12 +178,13 @@ jobs:
 
       - name: Run Infracost Diff
         if: github.event.action != 'closed'
+        env:` + githubStepEnv(opts) + `
         run: infracost-ci diff --base-path base --head-path head
 
       # Without this the dashboard leaves every merged pull request at OPEN.
       - name: Update pull request status
         if: github.event.action == 'closed'
-        env:
+        env:` + githubStepEnv(opts) + `
           PR_STATUS: ${{ github.event.pull_request.merged && 'MERGED' || 'CLOSED' }}
         run: infracost-ci status --status "$PR_STATUS"
 `
@@ -201,13 +207,13 @@ jobs:
   infracost-scan:
     runs-on: ubuntu-latest
     container: ` + opts.image + `
-    env:
-      INFRACOST_CLI_AUTHENTICATION_TOKEN: ${{ secrets.` + opts.apiKeySecret + ` }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Run Infracost Scan
+        env:
+          INFRACOST_CLI_AUTHENTICATION_TOKEN: ${{ secrets.` + opts.apiKeySecret + ` }}
         run: infracost-ci scan --path .
 `
 }

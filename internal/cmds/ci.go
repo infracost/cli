@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,19 +38,118 @@ func (r repoInfo) hostSlug() string {
 }
 
 func parseRemoteURL(remoteURL string) (repoInfo, error) {
-	// SSH: git@github.com:owner/repo.git
-	sshRe := regexp.MustCompile(`^git@([^:]+):([^/]+)/([^/]+?)(?:\.git)?$`)
+	remoteURL = normalizeSSHURL(remoteURL)
+
+	if info, ok := parseAzureRemoteURL(remoteURL); ok {
+		return info, nil
+	}
+
+	// SSH: git@github.com:owner/repo.git. The owner is greedy so a GitLab
+	// subgroup remote keeps every level of its path.
+	sshRe := regexp.MustCompile(`^git@([^:]+):(.+)/([^/]+?)(?:\.git)?$`)
 	if m := sshRe.FindStringSubmatch(remoteURL); m != nil {
 		return repoInfo{host: m[1], owner: m[2], repo: m[3]}, nil
 	}
 
-	// HTTPS: https://github.com/owner/repo.git
-	httpsRe := regexp.MustCompile(`^https?://([^/]+)/([^/]+)/([^/]+?)(?:\.git)?$`)
+	// HTTPS: https://github.com/owner/repo.git. The userinfo is dropped, not
+	// captured — repoInfo.host is printed and passed to gh — and matched
+	// greedily, so an @ in a password cannot spill into the host.
+	httpsRe := regexp.MustCompile(`^https?://(?:[^/]*@)?([^/@]+)/(.+)/([^/]+?)(?:\.git)?$`)
 	if m := httpsRe.FindStringSubmatch(remoteURL); m != nil {
 		return repoInfo{host: m[1], owner: m[2], repo: m[3]}, nil
 	}
 
 	return repoInfo{}, fmt.Errorf("could not parse remote URL %q — expected SSH (git@host:owner/repo.git) or HTTPS (https://host/owner/repo.git) format", remoteURL)
+}
+
+// sshURLRe matches the ssh:// form, which `url.<base>.insteadOf` rewrites
+// remotes into and which Azure also documents.
+var sshURLRe = regexp.MustCompile(`^(?:ssh|git)://(?:[^/]*@)?([^/:]+)(?::\d+)?/+(.+)$`)
+
+// normalizeSSHURL rewrites an ssh:// remote into the scp-style form the parsers
+// take. The port is SSH-only, so it is dropped rather than carried into
+// repoInfo.host, which builds web URLs.
+func normalizeSSHURL(remoteURL string) string {
+	m := sshURLRe.FindStringSubmatch(remoteURL)
+	if m == nil {
+		return remoteURL
+	}
+	return "git@" + m[1] + ":" + m[2]
+}
+
+// azureHTTPSRe splits an Azure DevOps HTTPS clone URL on its _git marker. What
+// precedes the marker is captured whole and read by parseAzureRemoteURL. The
+// org@ userinfo is matched greedily, so an @ in a password stays out of the host.
+var azureHTTPSRe = regexp.MustCompile(`^https?://(?:[^/]*@)?([^/@]+)/(?:(.+)/)?_git/([^/]+?)(?:\.git)?/?$`)
+
+// azureSSHRe matches git@ssh.dev.azure.com:v3/org/project/repo and the legacy
+// org@vs-ssh.visualstudio.com:v3/org/project/repo.
+var azureSSHRe = regexp.MustCompile(`^(?:[^:/]*@)?([^:/@]+):v3/([^/]+)/([^/]+)/([^/]+?)(?:\.git)?$`)
+
+// parseAzureRemoteURL handles the Azure DevOps remote forms, which carry a
+// project between the organization and the repository. The dashboard keys
+// Azure repositories on org/project/repo, so the project rides in repoInfo.repo
+// and slug() renders all three.
+func parseAzureRemoteURL(remoteURL string) (repoInfo, bool) {
+	if m := azureSSHRe.FindStringSubmatch(remoteURL); m != nil && vcsHostKind(m[1]) == hostAzure {
+		return repoInfo{
+			host:  m[1],
+			owner: unescapePathSegment(m[2]),
+			repo:  unescapePathSegment(m[3]) + "/" + unescapePathSegment(m[4]),
+		}, true
+	}
+
+	m := azureHTTPSRe.FindStringSubmatch(remoteURL)
+	if m == nil || vcsHostKind(m[1]) != hostAzure {
+		return repoInfo{}, false
+	}
+
+	host, repo := m[1], m[3]
+	var segments []string
+	if m[2] != "" {
+		segments = strings.Split(m[2], "/")
+	}
+
+	var org string
+	if strings.HasSuffix(normalizedHost(host), ".visualstudio.com") {
+		// The legacy host names the org, and may carry a collection segment
+		// ahead of the project.
+		org, _, _ = strings.Cut(host, ".")
+		if len(segments) > 0 && strings.EqualFold(segments[0], "DefaultCollection") {
+			segments = segments[1:]
+		}
+	} else {
+		if len(segments) == 0 {
+			return repoInfo{}, false
+		}
+		org, segments = segments[0], segments[1:]
+	}
+
+	if len(segments) > 1 {
+		return repoInfo{}, false
+	}
+	// The project is left out of the URL when it shares the repository's name.
+	project := repo
+	if len(segments) == 1 {
+		project = segments[0]
+	}
+
+	return repoInfo{
+		host:  host,
+		owner: unescapePathSegment(org),
+		repo:  unescapePathSegment(project) + "/" + unescapePathSegment(repo),
+	}, true
+}
+
+// unescapePathSegment decodes the percent-encoding an HTTPS clone URL puts on
+// an Azure project name with spaces; the dashboard stores the decoded name. A
+// segment holding a separator or a dot segment stays encoded: the slug is a path.
+func unescapePathSegment(s string) string {
+	decoded, err := url.PathUnescape(s)
+	if err != nil || strings.Contains(decoded, "/") || decoded == "." || decoded == ".." {
+		return s
+	}
+	return decoded
 }
 
 // resolveSetupOrgWithSpinner resolves the user's organization for setup
@@ -226,35 +326,41 @@ func RunCISetup(ctx context.Context, cfg *config.Config, opts CISetupOptions) (b
 	if opts.Pipeline {
 		return runCIPipelineSetup(ctx, cfg, repo, repoRoot, defaultBranch, opts)
 	}
-	return true, runCIAppSetup(ctx, cfg, repo)
+	return runCIAppSetup(ctx, cfg, repo)
 }
 
-func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error {
+// runCIAppSetup reports true only when the repository is already connected.
+// Handing the user a dashboard URL to click is not a finished setup.
+func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) (bool, error) {
 	fmt.Println()
 	ui.Heading("Scanning repository")
 
-	provider := detectVCSProvider(repo)
-	ui.Successf("%s repository  %s", provider, repo.slug())
+	// Fixed labels, so a long provider name does not stagger the value column.
+	ui.Successf("Git repository      %s", repo.slug())
+	ui.Successf("VCS provider        %s", detectVCSProvider(repo))
 
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
-		return fmt.Errorf("authenticating: %w", err)
+		return false, fmt.Errorf("authenticating: %w", err)
 	}
 
 	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
-		return err
+		return false, err
 	}
-	ui.Successf("Infracost org      %s", org.Slug)
+	ui.Successf("Infracost org       %s", org.Slug)
 
 	// Check if the repo is already connected via the app integration.
 	orgClient := cfg.Dashboard.Client(api.Client(ctx, source, org.ID))
 	var connected bool
 	if err := ui.RunWithSpinnerErr(ctx, "Checking repository connection...", "", func(ctx context.Context) error {
-		connected, _ = orgClient.HasRepo(ctx, org.ID, repo.slug())
-		return nil
-	}); err != nil {
+		var err error
+		connected, err = orgClient.HasRepo(ctx, org.ID, repo.slug())
 		return err
+	}); err != nil {
+		// A dashboard blip is not a reason to fail the whole setup: an
+		// unanswered check just means the pitch below is shown.
+		ui.Warnf("Could not check whether this repository is connected: %v", err)
 	}
 	if connected {
 		ui.Success("App integration already connected")
@@ -262,7 +368,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 		fmt.Println("This repository is already sending PR cost estimates.")
 		fmt.Println("To manage settings, visit:")
 		fmt.Printf("  %s\n", ui.Accentf("https://dashboard.infracost.io/org/%s/repos", org.Slug))
-		return nil
+		return true, nil
 	}
 
 	fmt.Println()
@@ -288,7 +394,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) error
 	fmt.Println("To use CI pipeline mode instead, run:")
 	fmt.Println("  infracost ci setup --pipeline")
 
-	return nil
+	return false, nil
 }
 
 func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, repoRoot, defaultBranch string, opts CISetupOptions) (bool, error) {
@@ -419,7 +525,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		}
 	}
 	if !secretSet {
-		printCISteps(platform.writer.Steps(jobOpts))
+		printCISteps(platform.writer.Steps(repoRoot, jobOpts))
 	}
 
 	fmt.Println()
@@ -445,13 +551,21 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 
 // printCIRecipe is the nil-writer path: name the platform, point at its recipe
 // and exit 0. Refusing here would just reword the bug this replaced.
+//
+// The container lines are printed as well as the URL because this is also the
+// generic platform's only output, and a bare link is not instructions.
 func printCIRecipe(platform ciPlatform, orgSlug string) {
 	fmt.Println()
-	ui.Headingf("Set up %s by hand:", platform.name)
+	ui.Headingf("Infracost has a %s recipe to follow by hand:", platform.name)
 	fmt.Println()
 	fmt.Printf("  %s\n", ui.Accent(platform.docsURL()))
 	fmt.Println()
-	fmt.Println("The recipe needs two secrets:")
+	fmt.Println("Every platform runs the same container:")
+	ui.Stepf("image  %s", ciImage)
+	ui.Step("on a pull request  infracost-ci diff --base-path base --head-path head")
+	ui.Step("on the default branch  infracost-ci scan --path .")
+	fmt.Println()
+	fmt.Println("It needs two secrets:")
 	ui.Step("INFRACOST_CLI_AUTHENTICATION_TOKEN — get a key at")
 	fmt.Printf("     %s\n", ui.Code(cliTokensURL(orgSlug)))
 	ui.Step("A VCS token the job comments with — the recipe names the one your platform uses")
