@@ -53,6 +53,10 @@ func (githubWriter) Write(repoRoot string, opts ciJobOpts) ([]ciWriteResult, err
 		}
 		results = append(results, ciWriteResult{path: f.path, created: created, unchanged: unchanged})
 	}
+
+	// Whole-file ownership leaves nothing to splice, so the only upgrade here
+	// is telling the user about a workflow of theirs that comments too.
+	results[0].warnings = ciForeignWorkflowWarnings(repoRoot)
 	return results, nil
 }
 

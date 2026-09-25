@@ -12,8 +12,13 @@ func (gitlabWriter) ConfigPaths(string) ([]string, error) {
 	return []string{gitlabConfigPath}, nil
 }
 
+// Upgrades lists the hand-written Infracost jobs a write would replace.
+func (gitlabWriter) Upgrades(repoRoot string) []ciLegacyJob {
+	return ciPlannedUpgrades(repoRoot, gitlabConfigPath, ciJobsTopLevel)
+}
+
 func (gitlabWriter) Write(repoRoot string, opts ciJobOpts) ([]ciWriteResult, error) {
-	res, err := ciPlaceBlock(repoRoot, gitlabConfigPath, "", gitlabJobBlock(opts))
+	res, err := ciPlaceBlock(repoRoot, gitlabConfigPath, "", gitlabJobBlock(opts), ciJobsTopLevel)
 	if err != nil {
 		return nil, err
 	}

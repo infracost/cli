@@ -432,7 +432,7 @@ func TestCISetup_PipelineWithoutYesNeedsConfirmation(t *testing.T) {
 
 	require.Error(t, execErr)
 	assert.Contains(t, execErr.Error(), "cannot confirm in a non-interactive terminal")
-	assert.Contains(t, output, "→  Create  .github/workflows/infracost-diff.yml")
+	assert.Contains(t, output, "→  Create   .github/workflows/infracost-diff.yml")
 	assert.NotContains(t, output, "✔  Created")
 	assert.NoDirExists(t, filepath.Join(dir, ".github", "workflows"))
 }
@@ -470,8 +470,8 @@ Scanning repository
   ✔  Infracost org       acme-corp
 
 This will:
-  →  Create  .github/workflows/infracost-diff.yml
-  →  Create  .github/workflows/infracost-scan.yml
+  →  Create   .github/workflows/infracost-diff.yml
+  →  Create   .github/workflows/infracost-scan.yml
   ✔  Created .github/workflows/infracost-diff.yml
   ✔  Created .github/workflows/infracost-scan.yml
 
@@ -574,7 +574,7 @@ func TestCISetup_PipelineSetsTheSecret(t *testing.T) {
 
 	require.NoError(t, execErr)
 	assert.Contains(t, output, "✔  Infracost API key   ready (from INFRACOST_API_KEY)")
-	assert.Contains(t, output, "→  Set     INFRACOST_API_KEY secret on acme-corp/platform-infra")
+	assert.Contains(t, output, "→  Set      INFRACOST_API_KEY secret on acme-corp/platform-infra")
 	assert.Contains(t, output, "✔  Set INFRACOST_API_KEY secret")
 	assert.NotContains(t, output, "Remaining manual steps:")
 	assert.Contains(t, output, "Setup complete.")
@@ -1136,4 +1136,134 @@ It needs two secrets:
 	// Nothing is written, and no "Setup complete" card: the user still has work.
 	assert.NoDirExists(t, filepath.Join(dir, ".github"))
 	assert.NotContains(t, output, "Setup complete.")
+}
+
+// A repository already running the v0.1 GitLab recipe is moved onto the
+// managed block: the replacements are listed before the confirmation, --yes is
+// the opt-in, and the jobs are gone afterwards.
+func TestCISetup_PipelineUpgradesLegacyGitLab(t *testing.T) {
+	dir := initGitRepo(t, "git@gitlab.com:acme-corp/platform-infra.git")
+	chdir(t, dir)
+
+	legacy := `stages:
+  - infracost:merge-request-checks
+
+unit-tests:
+  script:
+    - make test
+
+# Run Infracost on merge requests.
+infracost:merge-request-checks:
+  stage: infracost:merge-request-checks
+  image:
+    name: infracost/infracost:ci-0.10
+    entrypoint: [""]
+  script:
+    - infracost breakdown --path=${TF_ROOT} --format=json --out-file=/tmp/infracost.json
+    - infracost comment gitlab --path=/tmp/infracost.json --gitlab-token=$GITLAB_TOKEN
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".gitlab-ci.yml"), []byte(legacy), 0o644))
+
+	cfg := ciTestConfig(t, freshSingleOrgClient(t))
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup", "--pipeline", "--yes"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+	require.NoError(t, execErr)
+
+	assert.Contains(t, output, "→  Update   .gitlab-ci.yml")
+	assert.Contains(t, output, "→  Replace  infracost:merge-request-checks (line 9)")
+	assert.Contains(t, output, "✔  Updated .gitlab-ci.yml")
+	assert.Contains(t, output, "✔  Replaced infracost:merge-request-checks")
+	assert.Contains(t, output, "The replaced job scanned $TF_ROOT")
+	assert.Contains(t, output, `git commit -m "chore: upgrade Infracost CI integration"`)
+
+	content := requireYAMLFile(t, filepath.Join(dir, ".gitlab-ci.yml"))
+	assert.NotContains(t, content, "infracost/infracost:ci-0.10")
+	assert.Contains(t, content, "unit-tests:")
+	assert.Contains(t, content, "infracost-ci diff --base-path base --head-path head")
+}
+
+// Re-running over the workflows we wrote is an update, not an overwrite, so
+// the "workflow already exists" prompt does not fire. Without --yes the run
+// still stops at the confirmation — that is the prompt this is not.
+func TestCISetup_PipelineManagedGitHubRerunDoesNotPrompt(t *testing.T) {
+	dir := initGitRepo(t, "git@github.com:acme-corp/platform-infra.git")
+	chdir(t, dir)
+	restrictPATH(t)
+
+	workflowDir := filepath.Join(dir, ".github", "workflows")
+	require.NoError(t, os.MkdirAll(workflowDir, 0o755))
+	for _, name := range []string{"infracost-diff.yml", "infracost-scan.yml"} {
+		require.NoError(t, os.WriteFile(filepath.Join(workflowDir, name),
+			[]byte("name: Infracost\n# Managed by infracost ci setup v1 — re-run `infracost ci setup --pipeline` to update.\n\njobs: {}\n"), 0o644))
+	}
+
+	cfg := ciTestConfig(t, freshSingleOrgClient(t))
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup", "--pipeline"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+
+	require.Error(t, execErr)
+	assert.Contains(t, execErr.Error(), "cannot confirm in a non-interactive terminal")
+	assert.NotContains(t, execErr.Error(), "already exist")
+	assert.Contains(t, output, "→  Update   .github/workflows/infracost-diff.yml")
+
+	// A file without the marker is hand-written, and keeps the prompt.
+	require.NoError(t, os.WriteFile(filepath.Join(workflowDir, "infracost-diff.yml"), []byte("name: Infracost\njobs: {}\n"), 0o644))
+	cmd = cmds.CI(ciTestConfig(t, freshSingleOrgClient(t)))
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup", "--pipeline"})
+	cmd.SetContext(context.Background())
+	captureOutput(t, func() { execErr = cmd.Execute() })
+
+	require.Error(t, execErr)
+	assert.Contains(t, execErr.Error(), "already exist")
+}
+
+// Another workflow that comments means two comments per pull request, but its
+// name may be pinned in branch protection, so it is named and never touched.
+func TestCISetup_PipelineWarnsAboutOtherInfracostWorkflows(t *testing.T) {
+	dir := initGitRepo(t, "git@github.com:acme-corp/platform-infra.git")
+	chdir(t, dir)
+	restrictPATH(t)
+
+	workflowDir := filepath.Join(dir, ".github", "workflows")
+	require.NoError(t, os.MkdirAll(workflowDir, 0o755))
+	handWritten := "name: Infracost\non: pull_request\njobs:\n  infracost:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: infracost/actions/setup@v3\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workflowDir, "infracost.yml"), []byte(handWritten), 0o644))
+
+	cfg := ciTestConfig(t, freshSingleOrgClient(t))
+	cmd := cmds.CI(cfg)
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"setup", "--pipeline", "--yes"})
+	cmd.SetContext(context.Background())
+
+	var execErr error
+	output := captureOutput(t, func() {
+		execErr = cmd.Execute()
+	})
+	require.NoError(t, execErr)
+
+	assert.Contains(t, output, ".github/workflows/infracost.yml also runs Infracost")
+	assert.Contains(t, output, "Two workflows means two comments on every pull request")
+
+	content, err := os.ReadFile(filepath.Join(workflowDir, "infracost.yml"))
+	require.NoError(t, err)
+	assert.Equal(t, handWritten, string(content))
 }
