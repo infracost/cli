@@ -59,6 +59,11 @@ type ciWriteResult struct {
 	unchanged bool   // the file already matched what we would write
 	block     string // set when the block could not be placed; nothing was written
 	reason    string // why the block could not be placed
+	replaced  []string
+	// notes are what the replaced jobs did that the managed block does not
+	// carry over; warnings name what was left in place and why that matters.
+	notes    []string
+	warnings []string
 }
 
 const (

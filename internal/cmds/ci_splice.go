@@ -27,10 +27,12 @@ var (
 )
 
 // ciPlaceBlock splices body into repoRoot/relPath — under key when key is set,
-// at the top level otherwise — through a temp file and rename. It refuses a
-// file that already defines an Infracost job outside the managed block, and
-// returns the block unwritten when the file's shape rules out a safe edit.
-func ciPlaceBlock(repoRoot, relPath, key, body string) (ciWriteResult, error) {
+// at the top level otherwise — through a temp file and rename. shape says where
+// that platform's jobs live, which is what a recognised hand-written Infracost
+// job is removed from on the way. It refuses a file that defines an Infracost
+// job it did not publish, and returns the block unwritten when the file's shape
+// rules out a safe edit.
+func ciPlaceBlock(repoRoot, relPath, key, body string, shape ciJobShape) (ciWriteResult, error) {
 	path := filepath.Join(repoRoot, filepath.FromSlash(relPath))
 
 	var content string
@@ -48,11 +50,20 @@ func ciPlaceBlock(repoRoot, relPath, key, body string) (ciWriteResult, error) {
 		return ciWriteResult{path: relPath, block: block, reason: reason.Error()}, nil
 	}
 
-	if existing, line := ciExistingInfracostJob(content, key); existing != "" {
+	scan := ciScanJobs(content, shape)
+	for _, existing := range ciExistingInfracostJobs(content, key) {
+		if ciJobsCover(scan.replace, existing.line) {
+			continue
+		}
 		return ciWriteResult{}, fmt.Errorf(
 			"%s already defines %q at line %d, outside the Infracost managed block — remove it and re-run, or keep editing it by hand",
-			relPath, existing, line)
+			relPath, existing.name, existing.line)
 	}
+
+	// Removal happens on the same string the splice then edits, so the re-parse
+	// check below guards both: a removal that leaves invalid YAML is reported
+	// as unplaceable and nothing reaches disk.
+	content = ciRemoveJobs(content, scan.replace, shape, key)
 
 	var updated string
 	if key != "" {
@@ -72,7 +83,19 @@ func ciPlaceBlock(repoRoot, relPath, key, body string) (ciWriteResult, error) {
 	if err != nil {
 		return ciWriteResult{}, err
 	}
-	return ciWriteResult{path: relPath, created: created, unchanged: unchanged}, nil
+
+	var warnings []string
+	for _, j := range scan.warn {
+		warnings = append(warnings, ciDuplicateJobWarning(j.name, relPath))
+	}
+	return ciWriteResult{
+		path:      relPath,
+		created:   created,
+		unchanged: unchanged,
+		replaced:  ciJobNames(scan.replace),
+		notes:     ciUpgradeNotes(scan.replace),
+		warnings:  warnings,
+	}, nil
 }
 
 // ciManagedBlock wraps body in the sentinel comments that make a re-run replace
@@ -212,25 +235,35 @@ func ciShallowestKeys(lines []string) []string {
 	return keys
 }
 
-// ciExistingInfracostJob reports an Infracost job defined outside the managed
-// block, with the line it sits on. Appending beside it would duplicate the key
-// and stop the whole pipeline parsing, so callers refuse rather than merge.
-// Only the levels the block is spliced into are checked — a nested
-// infracost_settings: elsewhere in the file is not a job.
-func ciExistingInfracostJob(content, under string) (string, int) {
+// ciFoundJob is an Infracost-named job found outside the managed block, with
+// the 1-indexed line it is declared on.
+type ciFoundJob struct {
+	name string
+	line int
+}
+
+// ciExistingInfracostJobs reports every Infracost job defined outside the
+// managed block, with the line each sits on. Appending beside one would
+// duplicate the key and stop the whole pipeline parsing, so callers refuse
+// rather than merge. All of them are returned because a caller that clears the
+// first — it is being replaced — still has to answer for the rest. Only the
+// levels the block is spliced into are checked — a nested infracost_settings:
+// elsewhere in the file is not a job.
+func ciExistingInfracostJobs(content, under string) []ciFoundJob {
 	start, end, hasBlock := findCIManagedSpan(strings.Split(content, "\n"))
 
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(content), &root); err != nil || len(root.Content) == 0 {
-		return "", 0
+		return nil
 	}
 	doc := root.Content[0]
 	if doc.Kind != yaml.MappingNode {
-		return "", 0
+		return nil
 	}
 
 	inBlock := func(line int) bool { return hasBlock && line-1 >= start && line-1 < end }
 
+	var found []ciFoundJob
 	mappings := []*yaml.Node{doc}
 	if n := ciNodeUnderKey(doc, under); n != nil {
 		switch n.Kind {
@@ -239,9 +272,7 @@ func ciExistingInfracostJob(content, under string) (string, int) {
 		case yaml.SequenceNode:
 			// Azure's jobs: and stages: are sequences, so the name is a value
 			// on the entry rather than the key it is stored under.
-			if name, line := ciInfracostSeqEntry(n, inBlock); name != "" {
-				return name, line
-			}
+			found = append(found, ciInfracostSeqEntries(n, inBlock)...)
 		}
 	}
 
@@ -258,15 +289,16 @@ func ciExistingInfracostJob(content, under string) (string, int) {
 			if inBlock(k.Line) {
 				continue
 			}
-			return k.Value, k.Line
+			found = append(found, ciFoundJob{name: k.Value, line: k.Line})
 		}
 	}
-	return "", 0
+	return found
 }
 
-// ciInfracostSeqEntry reports an Infracost-named entry in a sequence of
+// ciInfracostSeqEntries reports the Infracost-named entries in a sequence of
 // mappings, by the fields Azure names a job, stage or deployment with.
-func ciInfracostSeqEntry(seq *yaml.Node, inBlock func(int) bool) (string, int) {
+func ciInfracostSeqEntries(seq *yaml.Node, inBlock func(int) bool) []ciFoundJob {
+	var found []ciFoundJob
 	for _, item := range seq.Content {
 		if item.Kind != yaml.MappingNode {
 			continue
@@ -281,10 +313,10 @@ func ciInfracostSeqEntry(seq *yaml.Node, inBlock func(int) bool) (string, int) {
 			if !strings.HasPrefix(strings.ToLower(v.Value), "infracost") || inBlock(k.Line) {
 				continue
 			}
-			return v.Value, k.Line
+			found = append(found, ciFoundJob{name: v.Value, line: k.Line})
 		}
 	}
-	return "", 0
+	return found
 }
 
 // ciMappingUnderKey returns the mapping doc[key] maps to, or nil.
