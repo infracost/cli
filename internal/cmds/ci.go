@@ -456,12 +456,21 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	}
 
 	writeConfigs := true
-	if platform.ownsFiles && anyConfigExists(repoRoot, paths) {
+	// A file we wrote is an update, not an overwrite, so the prompt is only for
+	// one the user or an older composite-action setup left behind.
+	if platform.ownsFiles && anyConfigExists(repoRoot, paths) && !ciFilesAreManaged(repoRoot, paths) {
 		overwrite, err := promptExistingWorkflows(opts.Yes)
 		if err != nil {
 			return false, err
 		}
 		writeConfigs = overwrite
+	}
+
+	// Removing a user's YAML is the one irreversible thing this command does,
+	// so it is listed ahead of the confirmation and --yes is an opt-in to it.
+	var upgrades []ciLegacyJob
+	if upgrader, ok := platform.writer.(ciUpgrader); ok && writeConfigs {
+		upgrades = upgrader.Upgrades(repoRoot)
 	}
 
 	fmt.Println()
@@ -472,11 +481,14 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 			if fileExists(filepath.Join(repoRoot, filepath.FromSlash(p))) {
 				verb = "Update"
 			}
-			ui.Stepf("%s  %s", verb, p)
+			ui.Stepf("%-7s  %s", verb, p)
+		}
+		for _, j := range upgrades {
+			ui.Stepf("%-7s  %s (line %d)", "Replace", j.name, j.line)
 		}
 	}
 	if canSetSecret {
-		ui.Stepf("Set     %s secret on %s", ciAPIKeySecret, repo.slug())
+		ui.Stepf("%-7s  %s secret on %s", "Set", ciAPIKeySecret, repo.slug())
 	}
 
 	if !opts.Yes {
@@ -486,8 +498,8 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		}
 	}
 
-	var written []string
-	var changed bool
+	var written, notes, warnings []string
+	var changed, replaced bool
 	if writeConfigs {
 		results, writeErr := platform.writer.Write(repoRoot, jobOpts)
 		// Report what reached disk before surfacing the failure, so a partial
@@ -508,6 +520,16 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 				ui.Successf("Updated %s", r.path)
 				changed = true
 			}
+			for _, name := range r.replaced {
+				ui.Successf("Replaced %s", name)
+				replaced = true
+			}
+			notes = append(notes, r.notes...)
+			warnings = append(warnings, r.warnings...)
+		}
+		for _, w := range warnings {
+			fmt.Println()
+			ui.Warn(w)
 		}
 		if writeErr != nil {
 			return false, writeErr
@@ -524,17 +546,34 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 			secretSet = true
 		}
 	}
-	if !secretSet {
-		printCISteps(platform.writer.Steps(repoRoot, jobOpts))
+	// Each note is a paragraph of its own, so it is separated the way the
+	// writers separate theirs.
+	var steps []string
+	for _, n := range notes {
+		if len(steps) > 0 {
+			steps = append(steps, "")
+		}
+		steps = append(steps, n)
 	}
+	if !secretSet {
+		if len(steps) > 0 {
+			steps = append(steps, "")
+		}
+		steps = append(steps, platform.writer.Steps(repoRoot, jobOpts)...)
+	}
+	printCISteps(steps)
 
 	fmt.Println()
 	switch {
 	case changed:
 		ui.Heading("Done. Push this commit to see Infracost on your next PR:")
 		fmt.Println()
+		message := "chore: add Infracost CI integration"
+		if replaced {
+			message = "chore: upgrade Infracost CI integration"
+		}
 		fmt.Printf("  git add %s\n", strings.Join(written, " "))
-		fmt.Println("  git commit -m \"chore: add Infracost CI integration\"")
+		fmt.Printf("  git commit -m %q\n", message)
 		fmt.Println("  git push")
 	case len(written) > 0:
 		ui.Heading("Done. Your CI config is already up to date.")

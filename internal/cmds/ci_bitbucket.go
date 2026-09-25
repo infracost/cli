@@ -45,7 +45,10 @@ func (bitbucketWriter) Write(repoRoot string, opts ciJobOpts) ([]ciWriteResult, 
 		}}, nil
 	}
 
-	res, err := ciPlaceBlock(repoRoot, bitbucketConfigPath, "pipelines", strings.Join(parts, "\n"))
+	// ciJobsNone: Bitbucket's recipes put their step under the user's own
+	// pull-requests: key, so replacing one means replacing a pipeline they may
+	// share with other steps.
+	res, err := ciPlaceBlock(repoRoot, bitbucketConfigPath, "pipelines", strings.Join(parts, "\n"), ciJobsNone)
 	if err != nil {
 		return nil, err
 	}

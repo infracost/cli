@@ -27,6 +27,15 @@ func (azureWriter) ConfigPaths(repoRoot string) ([]string, error) {
 	return []string{azureConfigPaths[0]}, nil
 }
 
+// Upgrades lists the hand-written Infracost jobs a write would replace.
+func (w azureWriter) Upgrades(repoRoot string) []ciLegacyJob {
+	paths, err := w.ConfigPaths(repoRoot)
+	if err != nil || len(paths) == 0 {
+		return nil
+	}
+	return ciPlannedUpgrades(repoRoot, paths[0], ciJobsSequence)
+}
+
 func (w azureWriter) Write(repoRoot string, opts ciJobOpts) ([]ciWriteResult, error) {
 	paths, err := w.ConfigPaths(repoRoot)
 	if err != nil {
@@ -60,7 +69,7 @@ func (w azureWriter) Write(repoRoot string, opts ciJobOpts) ([]ciWriteResult, er
 		body = azureStageBlock(opts)
 	}
 
-	res, err := ciPlaceBlock(repoRoot, rel, key, body)
+	res, err := ciPlaceBlock(repoRoot, rel, key, body, ciJobsSequence)
 	if err != nil {
 		return nil, err
 	}
