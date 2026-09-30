@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/dashboard"
+	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/vcs"
@@ -59,7 +62,7 @@ func parseRemoteURL(remoteURL string) (repoInfo, error) {
 		return repoInfo{host: m[1], owner: m[2], repo: m[3]}, nil
 	}
 
-	return repoInfo{}, fmt.Errorf("could not parse remote URL %q — expected SSH (git@host:owner/repo.git) or HTTPS (https://host/owner/repo.git) format", remoteURL)
+	return repoInfo{}, fmt.Errorf("%w %q — expected SSH (git@host:owner/repo.git) or HTTPS (https://host/owner/repo.git) format", errCIRemoteURLUnparsed, remoteURL)
 }
 
 // sshURLRe matches the ssh:// form, which `url.<base>.insteadOf` rewrites
@@ -174,7 +177,7 @@ func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source 
 	}
 
 	if len(user.Organizations) == 0 {
-		return dashboard.Organization{}, fmt.Errorf("no organizations found for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost auth login'")
+		return dashboard.Organization{}, fmt.Errorf("%w for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost auth login'", errCINoOrganizations)
 	}
 
 	if cfg.OrgID != "" {
@@ -183,7 +186,7 @@ func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source 
 				return org, nil
 			}
 		}
-		return dashboard.Organization{}, fmt.Errorf("organization %q not found — check the value passed to --org", cfg.Org)
+		return dashboard.Organization{}, fmt.Errorf("%w: %q — check the value passed to --org", errCIOrgNotFound, cfg.Org)
 	}
 
 	if len(user.Organizations) == 1 {
@@ -217,6 +220,144 @@ type CISetupOptions struct {
 	Yes bool
 }
 
+// CISetupResult reports how a CI setup run ended, for the caller's closing
+// card and for the outcome event.
+type CISetupResult struct {
+	Outcome    string
+	Configured bool
+	Platform   string
+
+	stage          string
+	mode           string
+	vcsProvider    string
+	platformPinned bool
+	yes            bool
+	startedAt      time.Time
+}
+
+// The stages a run passes through. The outcome event names the one it was in
+// when it ended, so a failure points at a phase rather than just "error".
+const (
+	ciStagePreflight = "preflight"
+	ciStageAuth      = "auth"
+	ciStageOrg       = "org"
+	ciStageConnected = "app-connection-check"
+	ciStagePlatform  = "platform"
+	ciStageAPIKey    = "api-key"
+	ciStageConfirm   = "confirm"
+	ciStageWrite     = "write"
+	ciStageSecret    = "secret"
+)
+
+// Sentinels for the setup failures worth telling apart in telemetry. Error
+// text carries repo paths and job names, so only these labels are sent.
+var (
+	errCINotGitRepo          = errors.New("not inside a git repository")
+	errCINoGitRemote         = errors.New("no git remote found")
+	errCIRemoteURLUnparsed   = errors.New("could not parse remote URL")
+	errCINoOrganizations     = errors.New("no organizations found")
+	errCIOrgNotFound         = errors.New("organization not found")
+	errCIPlatformUnknown     = errors.New("unknown CI platform")
+	errCIPlatformNotSelected = errors.New("no CI platform selected")
+	errCIAPIKeyMissing       = errors.New("API key environment variable not set")
+	errCINotInteractive      = errors.New("non-interactive terminal")
+)
+
+// ciSetupEventTimeout bounds the outcome event, which sits in a defer on the
+// way out of an interactive command. Losing an event beats stalling the exit.
+const ciSetupEventTimeout = 500 * time.Millisecond
+
+func pushCISetupEvent(ctx context.Context, cfg *config.Config, event string, extra ...interface{}) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ciSetupEventTimeout)
+	defer cancel()
+	// Same attribution as every other events push: without the token and org
+	// the drop-outs being measured arrive unattributed.
+	client := api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID)
+	cfg.Events.Client(client).Push(ctx, event, extra...)
+}
+
+func pushCISetupOutcome(ctx context.Context, cfg *config.Config, result *CISetupResult, err error) {
+	if result.Outcome == "" {
+		result.Outcome = "error"
+	}
+	// A run that failed before startedAt was set has no duration to report.
+	var duration float64
+	if !result.startedAt.IsZero() {
+		duration = time.Since(result.startedAt).Seconds()
+	}
+	stage := result.stage
+	if stage == "" {
+		stage = ciStagePreflight
+	}
+	mode := result.mode
+	if mode == "" {
+		mode = "unknown"
+	}
+	vcsProvider := result.vcsProvider
+	if vcsProvider == "" {
+		vcsProvider = "unknown"
+	}
+	extra := []interface{}{
+		"outcome", result.Outcome,
+		"configured", result.Configured,
+		"stage", stage,
+		"mode", mode,
+		"vcsProvider", vcsProvider,
+		"platformPinned", result.platformPinned,
+		"yes", result.yes,
+		// Not "ciPlatform": that key already carries the CI we are running
+		// in, and an extra of the same name would overwrite it.
+		"targetCIPlatform", result.Platform,
+		"durationSeconds", duration,
+	}
+	if err != nil {
+		extra = append(extra, "errorKind", CISetupErrorKind(err))
+	}
+	pushCISetupEvent(ctx, cfg, "infracost-ci-setup-outcome", extra...)
+}
+
+// CISetupErrorKind buckets an error into a bounded label. Never send
+// err.Error(): it embeds local paths and the user's own YAML.
+func CISetupErrorKind(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, errCIPlatformNotSelected):
+		return "platform-not-selected"
+	case errors.Is(err, errCIPlatformUnknown):
+		return "platform-unknown"
+	case errors.Is(err, errCINotGitRepo):
+		return "not-git-repo"
+	case errors.Is(err, errCINoGitRemote):
+		return "no-git-remote"
+	case errors.Is(err, errCIRemoteURLUnparsed):
+		return "remote-url-unparsed"
+	case errors.Is(err, errCINoOrganizations):
+		return "no-organizations"
+	case errors.Is(err, errCIOrgNotFound):
+		return "org-not-found"
+	case errors.Is(err, errCIAPIKeyMissing):
+		return "api-key-missing"
+	case errors.Is(err, errCINotInteractive):
+		return "not-interactive"
+	case errors.Is(err, huh.ErrUserAborted):
+		return "aborted"
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "canceled"
+	case errors.Is(err, os.ErrPermission):
+		return "permission-denied"
+	case errors.Is(err, os.ErrNotExist):
+		return "file-not-found"
+	case errors.Is(err, os.ErrExist):
+		return "file-exists"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return "network"
+	}
+	return "other"
+}
+
 func ciSetup(cfg *config.Config) *cobra.Command {
 	var opts CISetupOptions
 	var ciPipeline bool
@@ -234,13 +375,13 @@ func ciSetup(cfg *config.Config) *cobra.Command {
 				return err
 			}
 			opts.Pipeline = opts.Pipeline || ciPipeline
-			configured, err := RunCISetup(cmd.Context(), cfg, opts)
+			result, err := RunCISetup(cmd.Context(), cfg, opts)
 			if err != nil {
 				return err
 			}
 			// No card when the user was handed a by-hand recipe: nothing is
 			// set up yet, so "Setup complete" would be a lie.
-			if !configured {
+			if !result.Configured {
 				return nil
 			}
 			// Mirror the unified `infracost setup` flow's closing card —
@@ -289,25 +430,33 @@ func CISetupAvailable() bool {
 // RunCISetup is the core logic for `infracost ci setup`, callable from the
 // unified `infracost setup` flow (DEV-230). It reports whether CI was actually
 // configured — false means the user was left with manual steps to follow.
-func RunCISetup(ctx context.Context, cfg *config.Config, opts CISetupOptions) (bool, error) {
+func RunCISetup(ctx context.Context, cfg *config.Config, opts CISetupOptions) (result CISetupResult, err error) {
+	// The lifecycle opens before preflight so a run that never gets as far as
+	// a repository still reports why.
+	result.startedAt = time.Now()
+	result.stage = ciStagePreflight
+	defer func() {
+		pushCISetupOutcome(ctx, cfg, &result, err)
+	}()
+
 	cwd, err := os.Getwd()
 	if err != nil {
-		return false, fmt.Errorf("getting working directory: %w", err)
+		return result, fmt.Errorf("getting working directory: %w", err)
 	}
 
 	repoRoot := vcs.GetRepoRoot(cwd)
 	if repoRoot == "" {
-		return false, fmt.Errorf("not inside a git repository — run this command from within a git repo")
+		return result, fmt.Errorf("%w — run this command from within a git repo", errCINotGitRepo)
 	}
 
 	remoteURL := vcs.GetRemoteURL(repoRoot)
 	if remoteURL == "" {
-		return false, fmt.Errorf("no git remote found — run this from a repository with an origin remote")
+		return result, fmt.Errorf("%w — run this from a repository with an origin remote", errCINoGitRemote)
 	}
 
 	repo, err := parseRemoteURL(remoteURL)
 	if err != nil {
-		return false, err
+		return result, err
 	}
 
 	defaultBranch := vcs.GetDefaultBranch(repoRoot)
@@ -323,15 +472,28 @@ func RunCISetup(ctx context.Context, cfg *config.Config, opts CISetupOptions) (b
 		opts.Pipeline = true
 	}
 
+	result.mode = "app"
 	if opts.Pipeline {
-		return runCIPipelineSetup(ctx, cfg, repo, repoRoot, defaultBranch, opts)
+		result.mode = "pipeline"
 	}
-	return runCIAppSetup(ctx, cfg, repo)
+	result.vcsProvider = vcsHostKind(repo.host)
+	if result.vcsProvider == "" {
+		result.vcsProvider = "unknown"
+	}
+	result.platformPinned = opts.Platform != ""
+	result.yes = opts.Yes
+
+	if opts.Pipeline {
+		result.Configured, err = runCIPipelineSetup(ctx, cfg, repo, repoRoot, defaultBranch, opts, &result)
+		return result, err
+	}
+	result.Configured, err = runCIAppSetup(ctx, cfg, repo, &result)
+	return result, err
 }
 
 // runCIAppSetup reports true only when the repository is already connected.
 // Handing the user a dashboard URL to click is not a finished setup.
-func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) (bool, error) {
+func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo, result *CISetupResult) (bool, error) {
 	fmt.Println()
 	ui.Heading("Scanning repository")
 
@@ -339,17 +501,21 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) (bool
 	ui.Successf("Git repository      %s", repo.slug())
 	ui.Successf("VCS provider        %s", detectVCSProvider(repo))
 
+	result.stage = ciStageAuth
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
 		return false, fmt.Errorf("authenticating: %w", err)
 	}
 
+	result.stage = ciStageOrg
 	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
 		return false, err
 	}
+	events.RegisterMetadata("orgId", org.ID)
 	ui.Successf("Infracost org       %s", org.Slug)
 
+	result.stage = ciStageConnected
 	// Check if the repo is already connected via the app integration.
 	orgClient := cfg.Dashboard.Client(api.Client(ctx, source, org.ID))
 	var connected bool
@@ -363,6 +529,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) (bool
 		ui.Warnf("Could not check whether this repository is connected: %v", err)
 	}
 	if connected {
+		result.Outcome = "app-connected"
 		ui.Success("App integration already connected")
 		fmt.Println()
 		fmt.Println("This repository is already sending PR cost estimates.")
@@ -394,32 +561,42 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo) (bool
 	fmt.Println("To use CI pipeline mode instead, run:")
 	fmt.Println("  infracost ci setup --pipeline")
 
+	result.Outcome = "app-pitched"
 	return false, nil
 }
 
-func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, repoRoot, defaultBranch string, opts CISetupOptions) (bool, error) {
+func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, repoRoot, defaultBranch string, opts CISetupOptions, result *CISetupResult) (bool, error) {
 	fmt.Println()
 	ui.Heading("Scanning repository")
 	ui.Successf("Git repository      %s", repo.slug())
 
+	result.stage = ciStagePlatform
 	platform, err := resolveCIPlatform(repoRoot, repo, opts.Platform)
 	if err != nil {
+		if errors.Is(err, errCIPlatformNotSelected) {
+			result.Outcome = "platform-not-selected"
+		}
 		return false, err
 	}
+	result.Platform = platform.id
 	ui.Successf("CI platform         %s", platform.name)
 
+	result.stage = ciStageAuth
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
 		return false, fmt.Errorf("authenticating: %w", err)
 	}
 
+	result.stage = ciStageOrg
 	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
 		return false, err
 	}
+	events.RegisterMetadata("orgId", org.ID)
 	ui.Successf("Infracost org       %s", org.Slug)
 
 	if platform.writer == nil {
+		result.Outcome = "recipe-printed"
 		printCIRecipe(platform, org.Slug)
 		return false, nil
 	}
@@ -434,10 +611,12 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	// Only a run that will set the secret itself needs the key's value — with
 	// gh missing the value is never read, so demanding it would refuse a setup
 	// the manual steps can finish.
+	result.stage = ciStageAPIKey
 	setter, canSetSecret := platform.writer.(ciSecretSetter)
 	canSetSecret = canSetSecret && setter.CanSetSecret()
 	if canSetSecret {
 		if os.Getenv(ciAPIKeySecret) == "" {
+			result.Outcome = "api-key-missing"
 			ui.Fail("Infracost API key   not found")
 			fmt.Println()
 			fmt.Println("To get an API key, visit your organization's CLI tokens page:")
@@ -445,7 +624,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 			fmt.Println()
 			fmt.Println("Once you have a key, set it as an environment variable and retry:")
 			fmt.Printf("  export %s=<your-key>\n", ciAPIKeySecret)
-			return false, fmt.Errorf("%s environment variable not set", ciAPIKeySecret)
+			return false, fmt.Errorf("%s: %w", ciAPIKeySecret, errCIAPIKeyMissing)
 		}
 		ui.Successf("Infracost API key   ready (from %s)", ciAPIKeySecret)
 	}
@@ -455,12 +634,16 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		return false, err
 	}
 
+	result.stage = ciStageConfirm
 	writeConfigs := true
 	// A file we wrote is an update, not an overwrite, so the prompt is only for
 	// one the user or an older composite-action setup left behind.
 	if platform.ownsFiles && anyConfigExists(repoRoot, paths) && !ciFilesAreManaged(repoRoot, paths) {
 		overwrite, err := promptExistingWorkflows(opts.Yes)
 		if err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				result.Outcome = "declined"
+			}
 			return false, err
 		}
 		writeConfigs = overwrite
@@ -494,10 +677,15 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	if !opts.Yes {
 		confirmed, err := confirmCISetup()
 		if err != nil || !confirmed {
+			// Answering No and backing out are the same funnel step.
+			if err == nil || errors.Is(err, huh.ErrUserAborted) {
+				result.Outcome = "declined"
+			}
 			return false, err
 		}
 	}
 
+	result.stage = ciStageWrite
 	var written, notes, warnings []string
 	var changed, replaced bool
 	if writeConfigs {
@@ -536,11 +724,13 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		}
 	}
 
+	result.stage = ciStageSecret
 	secretSet, secretFailed := false, false
 	if canSetSecret {
 		if err := setter.SetSecret(ctx, jobOpts); err != nil {
 			ui.Warnf("Failed to set the %s secret: %v", ciAPIKeySecret, err)
 			secretFailed = true
+			result.Outcome = "secret-failed"
 		} else {
 			ui.Successf("Set %s secret", ciAPIKeySecret)
 			secretSet = true
@@ -585,7 +775,15 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 
 	// A declined prompt, a block we could not place, or a secret we tried and
 	// failed to set all leave work for the user, so they are not "configured".
-	return (len(written) > 0 || secretSet) && !secretFailed, nil
+	configured := (len(written) > 0 || secretSet) && !secretFailed
+	if result.Outcome == "" {
+		if configured {
+			result.Outcome = "configured"
+		} else {
+			result.Outcome = "nothing-changed"
+		}
+	}
+	return configured, nil
 }
 
 // printCIRecipe is the nil-writer path: name the platform, point at its recipe
@@ -634,7 +832,7 @@ func printCISteps(steps []string) {
 
 func confirmCISetup() (bool, error) {
 	if !ui.IsInteractive() {
-		return false, fmt.Errorf("cannot confirm in a non-interactive terminal — re-run with --yes to skip the confirmation prompt")
+		return false, fmt.Errorf("cannot confirm in a %w — re-run with --yes to skip the confirmation prompt", errCINotInteractive)
 	}
 
 	var confirm bool
@@ -673,7 +871,7 @@ func promptExistingWorkflows(yes bool) (bool, error) {
 	}
 
 	if !ui.IsInteractive() {
-		return false, fmt.Errorf("infracost workflow files already exist and there is no interactive terminal to confirm overwriting — re-run with --yes to overwrite, or remove the existing files first")
+		return false, fmt.Errorf("infracost workflow files already exist and this is a %w, so overwriting cannot be confirmed — re-run with --yes to overwrite, or remove the existing files first", errCINotInteractive)
 	}
 
 	const (

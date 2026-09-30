@@ -192,8 +192,8 @@ func Setup(cfg *config.Config) *cobra.Command {
 			if CISetupAvailable() {
 				if err := runSetupStep("Set up CI integration?", func() error {
 					ciSkipped = false
-					var err error
-					ciConfigured, err = RunCISetup(ctx, cfg, CISetupOptions{})
+					result, err := RunCISetup(ctx, cfg, CISetupOptions{})
+					ciConfigured = result.Configured
 					return err
 				}); err != nil {
 					return err

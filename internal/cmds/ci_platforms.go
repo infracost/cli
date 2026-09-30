@@ -144,7 +144,7 @@ func resolveCIPlatform(repoRoot string, repo repoInfo, id string) (ciPlatform, e
 	if id != "" {
 		p, ok := ciPlatformByID(id)
 		if !ok {
-			return ciPlatform{}, fmt.Errorf("unknown CI platform %q — expected one of: %s", id, strings.Join(ciPlatformIDs(), ", "))
+			return ciPlatform{}, fmt.Errorf("%w %q — expected one of: %s", errCIPlatformUnknown, id, strings.Join(ciPlatformIDs(), ", "))
 		}
 		return p, nil
 	}
@@ -265,8 +265,8 @@ func promptCIPlatform(matched []ciPlatform) (ciPlatform, error) {
 
 	if !ui.IsInteractive() {
 		return ciPlatform{}, fmt.Errorf(
-			"this repository has config for %s and there is no interactive terminal to choose between them — re-run with --ci-platform set to one of: %s",
-			strings.Join(names, ", "), strings.Join(ids, ", "))
+			"this repository has config for %s and this is a %w, so it cannot choose between them — re-run with --ci-platform set to one of: %s",
+			strings.Join(names, ", "), errCINotInteractive, strings.Join(ids, ", "))
 	}
 
 	opts := make([]huh.Option[string], 0, len(matched))
@@ -283,7 +283,7 @@ func promptCIPlatform(matched []ciPlatform) (ciPlatform, error) {
 		Run()
 	if err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			return ciPlatform{}, fmt.Errorf("no CI platform selected")
+			return ciPlatform{}, errCIPlatformNotSelected
 		}
 		return ciPlatform{}, err
 	}
