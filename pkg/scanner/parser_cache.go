@@ -5,14 +5,17 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/pkg/logging"
+	"github.com/infracost/proto/gen/go/infracost/parser/options"
 	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"google.golang.org/protobuf/proto"
 )
@@ -21,34 +24,115 @@ import (
 // fingerprint stored at the head of every parser-results cache file.
 const fingerprintHexLen = 64
 
-// fingerprintProject walks projectDir recursively and produces a hex
-// SHA256 of every file's (relative-path, mtime-ns, size). Skip dirs
-// come from [cache.SkipDirs] so the parser-result cache and the
-// source-freshness check stay in lockstep. The extra argument is mixed
-// in first so the fingerprint also changes when parser inputs
-// (RawOptions / RawOptionsFormat) change — otherwise a tfvars file
-// swap that doesn't touch any *.tf would be a cache hit.
+// fingerprintProject produces a hex SHA256 of every file's
+// (path, mtime-ns, size) under projectDir and each of depPaths. depPaths
+// are relative to rootDir and may be files, dirs or globs; a missing one
+// hashes a marker so it appearing later is a cache miss. Hashed paths are
+// relative to rootDir. Skip dirs come from [cache.SkipDirs] so the
+// parser-result cache and the source-freshness check stay in lockstep.
+// extra is mixed in first so parser input changes (RawOptions) also
+// change the fingerprint.
 //
 // mtime-based fingerprinting is deliberately content-blind: a re-save
 // with identical content invalidates the cache, and an upstream module
 // bump (within a >= constraint) that doesn't touch local files
-// doesn't. Both trade-offs are acceptable for the typical "edit one
-// project in a 10k-project repo" case; the escape hatch is
-// `infracost cache clear`.
-func fingerprintProject(projectDir string, extra []byte) (string, error) {
+// doesn't. The escape hatch is `infracost cache clear`.
+func fingerprintProject(rootDir, projectDir string, depPaths []string, extra []byte) (string, error) {
 	h := sha256.New()
 	if len(extra) > 0 {
 		h.Write(extra)
 		h.Write([]byte{0})
 	}
 
+	projectRel, err := filepath.Rel(rootDir, projectDir)
+	if err != nil {
+		return "", err
+	}
+	if err := hashTree(h, projectDir, projectRel); err != nil {
+		return "", err
+	}
+
+	for _, dep := range resolveDependencyPaths(rootDir, projectDir, depPaths) {
+		if dep.target == "" {
+			h.Write([]byte("missing:" + dep.rel))
+			h.Write([]byte{0})
+			continue
+		}
+		if err := hashTree(h, dep.target, dep.rel); err != nil {
+			return "", err
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// dependencyPath is a dep keyed by its rootDir-relative path. target is
+// the symlink-resolved path to walk, or "" when the dep is missing.
+type dependencyPath struct {
+	rel    string
+	target string
+}
+
+// resolveDependencyPaths expands depPaths into sorted, de-duplicated
+// rootDir-relative paths, dropping any inside projectDir. Symlinks are
+// resolved; a dangling one is missing.
+func resolveDependencyPaths(rootDir, projectDir string, depPaths []string) []dependencyPath {
+	seen := make(map[string]bool)
+	var out []dependencyPath
+	add := func(abs string) {
+		abs = filepath.Clean(abs)
+		if isWithin(projectDir, abs) {
+			return
+		}
+		rel, err := filepath.Rel(rootDir, abs)
+		if err != nil {
+			rel = abs
+		}
+		if seen[rel] {
+			return
+		}
+		seen[rel] = true
+		target, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			target = ""
+		}
+		out = append(out, dependencyPath{rel: rel, target: target})
+	}
+
+	for _, dep := range depPaths {
+		abs := filepath.Join(rootDir, dep)
+		if _, err := os.Lstat(abs); err == nil {
+			add(abs)
+			continue
+		}
+		matches, err := filepath.Glob(abs)
+		if err != nil || len(matches) == 0 {
+			add(abs)
+			continue
+		}
+		for _, m := range matches {
+			add(m)
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
+	return out
+}
+
+func isWithin(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// hashTree hashes every file under root (or root itself, if a file),
+// naming each by label joined with its path relative to root.
+func hashTree(h hash.Hash, root, label string) error {
 	var sizeBuf, nsBuf [8]byte
-	err := filepath.WalkDir(projectDir, func(path string, d fs.DirEntry, walkErr error) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
-			if path != projectDir && cache.SkipDirs[d.Name()] {
+			if path != root && cache.SkipDirs[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
@@ -57,11 +141,11 @@ func fingerprintProject(projectDir string, extra []byte) (string, error) {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(projectDir, path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		h.Write([]byte(rel))
+		h.Write([]byte(filepath.Join(label, rel)))
 		h.Write([]byte{0})
 		binary.BigEndian.PutUint64(nsBuf[:], uint64(info.ModTime().UnixNano())) //nolint:gosec // G115: bit-pattern cast for hashing, sign irrelevant
 		h.Write(nsBuf[:])
@@ -69,10 +153,21 @@ func fingerprintProject(projectDir string, extra []byte) (string, error) {
 		h.Write(sizeBuf[:])
 		return nil
 	})
-	if err != nil {
-		return "", err
+}
+
+// genericOptionsFingerprint returns the parts of GenericOptions that can
+// change a parse, deterministically marshaled. Per-run and auth fields
+// are cleared.
+func genericOptionsFingerprint(g *options.GenericOptions) ([]byte, error) {
+	if g == nil {
+		return nil, nil
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	c := proto.Clone(g).(*options.GenericOptions) //nolint:errcheck,forcetypeassert // Clone returns the input's type
+	c.TemporaryDirectory = ""
+	c.FetchAuth = nil
+	c.CredentialSets = nil
+	c.AwsCredentials = nil
+	return proto.MarshalOptions{Deterministic: true}.Marshal(c)
 }
 
 // parserCacheDir returns the subdirectory of parser-results that holds

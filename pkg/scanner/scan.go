@@ -141,14 +141,20 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		return nil, fmt.Errorf("failed to build parser plugin options: %w", err)
 	}
 
-	// Try the parser-results cache first. The fingerprint folds in RawOptions so e.g. a different
-	// workspace or tfvars file invalidates correctly. Skipping the gRPC + HCL parse + module load
-	// is the entire point of this cache; the typical hot path on a 10k-project repo where one
-	// project changed is N-1 hits + 1 miss.
+	// Try the parser-results cache first. The fingerprint folds in the parse options and the
+	// project's dependency paths so e.g. a different env, tfvars file or local module edit
+	// invalidates correctly. Skipping the gRPC + HCL parse + module load is the entire point of
+	// this cache; the typical hot path on a 10k-project repo where one project changed is N-1
+	// hits + 1 miss.
 	pluginName := parserPlugin.Info.GetName()
 	pluginVersion := parserPlugin.Info.GetVersion()
 
-	fingerprint, fpErr := fingerprintProject(absoluteProjectPath, rawOptions)
+	var fingerprint string
+	genericFingerprint, fpErr := genericOptionsFingerprint(genericOptions)
+	if fpErr == nil {
+		extra := append(append(genericFingerprint, 0), rawOptions...)
+		fingerprint, fpErr = fingerprintProject(opts.RootDir, absoluteProjectPath, opts.Project.DependencyPaths, extra)
+	}
 	if fpErr != nil {
 		logging.Debugf("parser fingerprint failed for %q: %s", absoluteProjectPath, fpErr)
 	}
