@@ -32,7 +32,8 @@ type client struct {
 }
 
 func (c *client) Push(ctx context.Context, event string, extra ...interface{}) {
-	if isTest, ok := metadata["isTest"].(bool); ok && isTest {
+	env := Snapshot()
+	if isTest, ok := env["isTest"].(bool); ok && isTest {
 		return
 	}
 
@@ -40,10 +41,6 @@ func (c *client) Push(ctx context.Context, event string, extra ...interface{}) {
 		panic("events.Push: extra args must be key-value pairs")
 	}
 
-	env := make(map[string]interface{}, len(metadata)+len(extra)/2)
-	for k, v := range metadata {
-		env[k] = v
-	}
 	for i := 0; i < len(extra); i += 2 {
 		key, ok := extra[i].(string)
 		if !ok {

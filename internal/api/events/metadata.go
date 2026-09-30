@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -12,13 +13,18 @@ import (
 	"github.com/infracost/cli/version"
 )
 
-var metadata map[string]interface{}
+// metadataMu guards the map itself. Snapshot is a shallow copy, so slice and
+// map values stay shared with it — nothing mutates those after registration.
+var (
+	metadataMu sync.RWMutex
+	metadata   map[string]interface{}
+)
 
 func init() {
 	metadata = map[string]interface{}{
 		"caller":      getCaller(),
-		"ciPlatform":  getCIPlatform(),
-		"cliPlatform": os.Getenv("INFRACOST_CLI_PLATFORM"),
+		"ciPlatform":  NormalizedCIPlatform(),
+		"cliPlatform": normalizeEnvLabel(os.Getenv("INFRACOST_CLI_PLATFORM")),
 		"version":     stripVersion(version.Version),
 		"fullVersion": version.Version,
 		"isDev":       version.Version == "dev",
@@ -33,6 +39,8 @@ func init() {
 // Other packages should call this during initialization to attach metadata
 // that will be included with every event.
 func RegisterMetadata(key string, value interface{}) {
+	metadataMu.Lock()
+	defer metadataMu.Unlock()
 	metadata[key] = value
 }
 
@@ -40,6 +48,8 @@ func RegisterMetadata(key string, value interface{}) {
 // long-running processes (the MCP stdio server) to capture a baseline
 // they can roll back to between per-request mutations.
 func Snapshot() map[string]interface{} {
+	metadataMu.RLock()
+	defer metadataMu.RUnlock()
 	out := make(map[string]interface{}, len(metadata))
 	for k, v := range metadata {
 		out[k] = v
@@ -56,12 +66,16 @@ func Restore(snapshot map[string]interface{}) {
 	for k, v := range snapshot {
 		next[k] = v
 	}
+	metadataMu.Lock()
+	defer metadataMu.Unlock()
 	metadata = next
 }
 
 // GetMetadata retrieves the value for the specified metadata, and false if it doesn't
 // exist or the type is wrong.
 func GetMetadata[V any](key string) (V, bool) {
+	metadataMu.RLock()
+	defer metadataMu.RUnlock()
 	value, ok := metadata[key]
 	if !ok {
 		var v V
@@ -115,12 +129,23 @@ func getCaller() string {
 	return ""
 }
 
-func getCIPlatform() string {
-	if ciPlatform, ok := os.LookupEnv("INFRACOST_CI_PLATFORM"); ok {
-		return ciPlatform
+// normalizeEnvLabel bounds a label set by the environment, the same way
+// ciPlatform is: an unbounded value here rides on every event.
+func normalizeEnvLabel(raw string) string {
+	label := strings.ToLower(raw)
+	if label == "" {
+		return ""
 	}
+	if !isPlatformLabel(label) {
+		return "unknown"
+	}
+	return label
+}
 
-	for env, platform := range map[string]string{
+// CI detection reads these; tests scrub the ambient environment from the
+// same lists, so keep them here rather than inline.
+var (
+	ciPlatformEnvs = map[string]string{
 		"GITHUB_ACTIONS":      "github_actions",
 		"GITLAB_CI":           "gitlab_ci",
 		"CIRCLECI":            "circleci",
@@ -144,18 +169,9 @@ func getCIPlatform() string {
 		"GREENHOUSE":          "greenhouse",
 		"CIRRUS_CI":           "cirrusci",
 		"TS_ENV":              "terraspace",
-	} {
-		if _, ok := os.LookupEnv(env); ok {
-			return platform
-		}
 	}
 
-	// Azure DevOps uses a dynamic platform name based on the repository provider.
-	if _, ok := os.LookupEnv("SYSTEM_COLLECTIONURI"); ok {
-		return fmt.Sprintf("azure_devops_%s", os.Getenv("BUILD_REPOSITORY_PROVIDER"))
-	}
-
-	for prefix, platform := range map[string]string{
+	ciPlatformEnvPrefixes = map[string]string{
 		"ATLANTIS_":       "atlantis",
 		"BITBUCKET_":      "bitbucket",
 		"CONCOURSE_":      "concourse",
@@ -164,17 +180,60 @@ func getCIPlatform() string {
 		"TERRATEAM_":      "terrateam",
 		"KEPTN_":          "keptn",
 		"CLOUDCONCIERGE_": "cloudconcierge",
-	} {
+	}
+
+	// ciPlatformOtherEnvs are read by getCIPlatform outside the two maps.
+	ciPlatformOtherEnvs = []string{
+		"INFRACOST_CI_PLATFORM",
+		"SYSTEM_COLLECTIONURI",
+		"BUILD_REPOSITORY_PROVIDER",
+		"CI",
+	}
+)
+
+// ciPlatformSource records who set the value, because that decides how far it
+// is trusted. Our own tooling names a platform; a bare CI var is user data.
+type ciPlatformSource int
+
+const (
+	ciPlatformNone ciPlatformSource = iota
+	// ciPlatformProducer: INFRACOST_CI_PLATFORM, set by our dashboard run-task,
+	// runner and action images to name a CI that detection cannot see.
+	ciPlatformProducer
+	// ciPlatformDetected: derived from our own lists, so already bounded.
+	ciPlatformDetected
+	// ciPlatformCIVar: the bare CI variable, whose value is whatever the user's
+	// environment happens to hold.
+	ciPlatformCIVar
+)
+
+func getCIPlatform() (string, ciPlatformSource) {
+	if ciPlatform, ok := os.LookupEnv("INFRACOST_CI_PLATFORM"); ok {
+		return ciPlatform, ciPlatformProducer
+	}
+
+	for env, platform := range ciPlatformEnvs {
+		if _, ok := os.LookupEnv(env); ok {
+			return platform, ciPlatformDetected
+		}
+	}
+
+	// Azure DevOps uses a dynamic platform name based on the repository provider.
+	if _, ok := os.LookupEnv("SYSTEM_COLLECTIONURI"); ok {
+		return fmt.Sprintf("azure_devops_%s", os.Getenv("BUILD_REPOSITORY_PROVIDER")), ciPlatformDetected
+	}
+
+	for prefix, platform := range ciPlatformEnvPrefixes {
 		for _, k := range os.Environ() {
 			if strings.HasPrefix(k, prefix) {
-				return platform
+				return platform, ciPlatformDetected
 			}
 		}
 	}
 
 	if ciPlatform, ok := os.LookupEnv("CI"); ok {
-		return ciPlatform
+		return ciPlatform, ciPlatformCIVar
 	}
 
-	return ""
+	return "", ciPlatformNone
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/infracost/cli/internal/api"
@@ -34,6 +35,27 @@ var runTrackedCommands = map[string]bool{
 var localCommandPaths = map[string]bool{
 	"infracost plugins":      true,
 	"infracost plugins list": true,
+}
+
+// boundedErrorCommandPaths lists commands whose raw error text names local
+// paths and user config. They report a fixed label instead.
+var boundedErrorCommandPaths = map[string]bool{
+	"infracost setup":    true,
+	"infracost ci setup": true,
+}
+
+// hasBoundedErrors falls back to the raw args because commandPath is only
+// registered in PersistentPreRun, which a flag-parse failure never reaches.
+func hasBoundedErrors() bool {
+	if path, ok := events.GetMetadata[string]("commandPath"); ok {
+		return boundedErrorCommandPaths[path]
+	}
+	for path := range boundedErrorCommandPaths {
+		if strings.HasPrefix(strings.Join(os.Args, " "), path+" ") || strings.Join(os.Args, " ") == path {
+			return true
+		}
+	}
+	return false
 }
 
 // agentNagSkipCommands lists leaf commands where the outdated-agent-skill
@@ -119,7 +141,13 @@ func run() (exitCode int) {
 	defer func() {
 		if r := recover(); r != nil {
 			client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
-			client.Push(context.Background(), "infracost-error", "error", r, "stacktrace", stacktrace.Sanitize(debug.Stack(), "github.com/infracost/cli/"))
+			// A panic value from a bounded command can carry the path or
+			// config that panicked, so only its type is reported.
+			panicValue := any(fmt.Sprintf("%T", r))
+			if !hasBoundedErrors() {
+				panicValue = r
+			}
+			client.Push(context.Background(), "infracost-error", "error", panicValue, "stacktrace", stacktrace.Sanitize(debug.Stack(), "github.com/infracost/cli/"))
 			_, _ = fmt.Fprintf(os.Stderr, "An unexpected error occurred. This is a bug in Infracost, please report it at https://github.com/infracost/infracost/issues\n\n")
 			_, _ = fmt.Fprintf(os.Stderr, "panic: %v\n\n%s\n", r, debug.Stack())
 			os.Exit(1)
@@ -256,11 +284,17 @@ func run() (exitCode int) {
 			"durationSeconds", time.Since(startTime).Seconds(),
 		}
 		if err != nil {
-			msg := err.Error()
-			if len(msg) > 200 {
-				msg = msg[:200]
+			// Classify rather than drop, so a failure before a command's own
+			// outcome event still says something.
+			if hasBoundedErrors() {
+				extra = append(extra, "errorKind", cmds.CISetupErrorKind(err))
+			} else {
+				msg := err.Error()
+				if len(msg) > 200 {
+					msg = msg[:200]
+				}
+				extra = append(extra, "errorMessage", msg)
 			}
-			extra = append(extra, "errorMessage", msg)
 		}
 		client.Push(context.Background(), "infracost-command", extra...)
 	}
