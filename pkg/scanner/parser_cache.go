@@ -15,6 +15,7 @@ import (
 
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/pkg/logging"
+	"github.com/infracost/proto/gen/go/infracost/parser/options"
 	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"google.golang.org/protobuf/proto"
 )
@@ -43,34 +44,41 @@ func fingerprintProject(rootDir, projectDir string, depPaths []string, extra []b
 		h.Write([]byte{0})
 	}
 
-	if err := hashTree(h, rootDir, projectDir); err != nil {
+	projectRel, err := filepath.Rel(rootDir, projectDir)
+	if err != nil {
+		return "", err
+	}
+	if err := hashTree(h, projectDir, projectRel); err != nil {
 		return "", err
 	}
 
 	for _, dep := range resolveDependencyPaths(rootDir, projectDir, depPaths) {
-		if dep.missing {
+		if dep.target == "" {
 			h.Write([]byte("missing:" + dep.rel))
 			h.Write([]byte{0})
 			continue
 		}
-		if err := hashTree(h, rootDir, filepath.Join(rootDir, dep.rel)); err != nil {
+		if err := hashTree(h, dep.target, dep.rel); err != nil {
 			return "", err
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// dependencyPath is a dep keyed by its rootDir-relative path. target is
+// the symlink-resolved path to walk, or "" when the dep is missing.
 type dependencyPath struct {
-	rel     string
-	missing bool
+	rel    string
+	target string
 }
 
 // resolveDependencyPaths expands depPaths into sorted, de-duplicated
-// rootDir-relative paths, dropping any inside projectDir.
+// rootDir-relative paths, dropping any inside projectDir. Symlinks are
+// resolved; a dangling one is missing.
 func resolveDependencyPaths(rootDir, projectDir string, depPaths []string) []dependencyPath {
 	seen := make(map[string]bool)
 	var out []dependencyPath
-	add := func(abs string, missing bool) {
+	add := func(abs string) {
 		abs = filepath.Clean(abs)
 		if isWithin(projectDir, abs) {
 			return
@@ -83,22 +91,26 @@ func resolveDependencyPaths(rootDir, projectDir string, depPaths []string) []dep
 			return
 		}
 		seen[rel] = true
-		out = append(out, dependencyPath{rel: rel, missing: missing})
+		target, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			target = ""
+		}
+		out = append(out, dependencyPath{rel: rel, target: target})
 	}
 
 	for _, dep := range depPaths {
 		abs := filepath.Join(rootDir, dep)
 		if _, err := os.Lstat(abs); err == nil {
-			add(abs, false)
+			add(abs)
 			continue
 		}
 		matches, err := filepath.Glob(abs)
 		if err != nil || len(matches) == 0 {
-			add(abs, true)
+			add(abs)
 			continue
 		}
 		for _, m := range matches {
-			add(m, false)
+			add(m)
 		}
 	}
 
@@ -111,8 +123,9 @@ func isWithin(dir, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// hashTree hashes every file under root (or root itself, if a file).
-func hashTree(h hash.Hash, rootDir, root string) error {
+// hashTree hashes every file under root (or root itself, if a file),
+// naming each by label joined with its path relative to root.
+func hashTree(h hash.Hash, root, label string) error {
 	var sizeBuf, nsBuf [8]byte
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -128,11 +141,11 @@ func hashTree(h hash.Hash, rootDir, root string) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(rootDir, path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		h.Write([]byte(rel))
+		h.Write([]byte(filepath.Join(label, rel)))
 		h.Write([]byte{0})
 		binary.BigEndian.PutUint64(nsBuf[:], uint64(info.ModTime().UnixNano())) //nolint:gosec // G115: bit-pattern cast for hashing, sign irrelevant
 		h.Write(nsBuf[:])
@@ -140,6 +153,21 @@ func hashTree(h hash.Hash, rootDir, root string) error {
 		h.Write(sizeBuf[:])
 		return nil
 	})
+}
+
+// genericOptionsFingerprint returns the parts of GenericOptions that can
+// change a parse, deterministically marshaled. Per-run and auth fields
+// are cleared.
+func genericOptionsFingerprint(g *options.GenericOptions) ([]byte, error) {
+	if g == nil {
+		return nil, nil
+	}
+	c := proto.Clone(g).(*options.GenericOptions) //nolint:errcheck,forcetypeassert // Clone returns the input's type
+	c.TemporaryDirectory = ""
+	c.FetchAuth = nil
+	c.CredentialSets = nil
+	c.AwsCredentials = nil
+	return proto.MarshalOptions{Deterministic: true}.Marshal(c)
 }
 
 // parserCacheDir returns the subdirectory of parser-results that holds

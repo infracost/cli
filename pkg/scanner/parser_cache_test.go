@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/infracost/proto/gen/go/infracost/parser/options"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -102,4 +104,46 @@ func TestFingerprintProject_DependencyGlob(t *testing.T) {
 	touch(t, filepath.Join(root, "vars", "prod.tfvars"))
 
 	require.NotEqual(t, before, fingerprint(t, root, project, "vars/*.tfvars"))
+}
+
+func TestFingerprintProject_DanglingSymlinkIsMissing(t *testing.T) {
+	root, project := setupRepo(t)
+	link := filepath.Join(root, "modules", "shared")
+	require.NoError(t, os.Symlink(filepath.Join(root, "modules", "gone"), link))
+
+	require.Equal(t, []dependencyPath{{rel: "modules/shared"}}, resolveDependencyPaths(root, project, []string{"modules/shared"}))
+
+	before := fingerprint(t, root, project, "modules/shared")
+	writeFile(t, filepath.Join(root, "modules", "gone", "main.tf"), `resource "aws_instance" "d" {}`)
+
+	require.NotEqual(t, before, fingerprint(t, root, project, "modules/shared"))
+}
+
+func TestFingerprintProject_SymlinkedDependencyDir(t *testing.T) {
+	root, project := setupRepo(t)
+	require.NoError(t, os.Symlink(filepath.Join(root, "modules", "x"), filepath.Join(root, "modules", "link")))
+	before := fingerprint(t, root, project, "modules/link")
+
+	writeFile(t, filepath.Join(root, "modules", "x", "main.tf"), `resource "aws_instance" "e" { instance_type = "t3.micro" }`)
+	touch(t, filepath.Join(root, "modules", "x", "main.tf"))
+
+	require.NotEqual(t, before, fingerprint(t, root, project, "modules/link"))
+}
+
+func TestGenericOptionsFingerprint(t *testing.T) {
+	base := &options.GenericOptions{ProjectName: "p", Env: map[string]string{"A": "1"}, TemporaryDirectory: "/tmp/run-1"}
+	a, err := genericOptionsFingerprint(base)
+	require.NoError(t, err)
+
+	sameButNewTmp := proto.Clone(base).(*options.GenericOptions)
+	sameButNewTmp.TemporaryDirectory = "/tmp/run-2"
+	b, err := genericOptionsFingerprint(sameButNewTmp)
+	require.NoError(t, err)
+	require.Equal(t, a, b)
+
+	newEnv := proto.Clone(base).(*options.GenericOptions)
+	newEnv.Env["A"] = "2"
+	c, err := genericOptionsFingerprint(newEnv)
+	require.NoError(t, err)
+	require.NotEqual(t, a, c)
 }
