@@ -61,6 +61,7 @@ func (o *Output) TrackRun(ctx context.Context, client events.Client, runSeconds 
 		"runSeconds", runSeconds,
 		"outputFormat", outputFormat,
 		"projectType", o.projectTypes,
+		"sourceFormats", o.sourceFormats,
 		"totalResources", totalResources,
 		"totalSupportedResources", totalSupported,
 		"totalNoPriceResources", totalNoPrice,
