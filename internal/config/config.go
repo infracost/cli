@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/infracost/cli/internal/api/agents"
 	"github.com/infracost/cli/internal/api/dashboard"
@@ -137,6 +138,13 @@ func (config *Config) Process() {
 		config.PricingAPIKey = legacyKey
 	}
 
+	// Bicep support is a capability of the ARM parser plugin, gated off by
+	// default behind this env var. There is no flag to wire: plugin
+	// subprocesses inherit the CLI's environment, so the plugin reads the var
+	// itself. Registering it here is what makes the gate visible in telemetry
+	// — the projects it unlocks are typed "arm" like any other, so without
+	// this nothing in an event distinguishes a run with Bicep enabled.
+	events.RegisterMetadata("bicepEnabled", bicepEnabled())
 	events.RegisterMetadata("cloudEnabled", os.Getenv("INFRACOST_ENABLE_CLOUD") == "true")
 	events.RegisterMetadata("dashboardEnabled", os.Getenv("INFRACOST_ENABLE_DASHBOARD") == "true")
 	events.RegisterMetadata("environment", config.Environment.String())
@@ -150,6 +158,21 @@ func (config *Config) Process() {
 	// overwrites it.
 	config.Auth.Disabled = config.SelfHostedPricing()
 	config.Events.Disabled = config.SelfHostedPricing()
+}
+
+// bicepEnabled reports whether the ARM parser plugin will claim Bicep files.
+//
+// This has to accept the same spellings the plugin's own bicepEnabled does, and
+// for the same reason the LSP copy exists: the plugin inherits this process's
+// environment and reads the variable itself, so anything stricter here would
+// report bicepEnabled=false on a run that priced Bicep — telemetry that
+// contradicts behavior. Keep in step with parser/plugin/arm/server.
+func bicepEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("INFRACOST_ENABLE_BICEP"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // SelfHostedPricing reports whether the CLI is in self-hosted pricing mode:
