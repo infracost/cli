@@ -1,10 +1,12 @@
 package scanner
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	repoconfig "github.com/infracost/config"
 	"github.com/infracost/go-proto/pkg/rat"
 	"github.com/infracost/proto/gen/go/infracost/parser/event"
 	"github.com/infracost/proto/gen/go/infracost/parser/terraform"
@@ -455,12 +457,13 @@ func TestLoadOrGenerateRepositoryConfig(t *testing.T) {
 projects:
   - path: .
     name: my-project
+    type: terraform
 `
 		if err := os.WriteFile(filepath.Join(dir, "infracost.yml"), []byte(configContent), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, "")
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -472,35 +475,13 @@ projects:
 		}
 	})
 
-	t.Run("loads infracost.yml.tmpl when present", func(t *testing.T) {
-		dir := t.TempDir()
-		templateContent := `version: "0.3"
-projects:
-  - path: .
-    name: from-template
-`
-		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(templateContent), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(cfg.Projects) != 1 {
-			t.Fatalf("expected 1 project, got %d", len(cfg.Projects))
-		}
-		if cfg.Projects[0].Name != "from-template" {
-			t.Errorf("expected project name %q, got %q", "from-template", cfg.Projects[0].Name)
-		}
-	})
-
 	t.Run("config file takes precedence over template", func(t *testing.T) {
 		dir := t.TempDir()
 		configContent := `version: "0.3"
 projects:
   - path: .
     name: from-config
+    type: terraform
 `
 		templateContent := `version: "0.3"
 projects:
@@ -514,7 +495,7 @@ projects:
 			t.Fatal(err)
 		}
 
-		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, "")
+		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -523,15 +504,15 @@ projects:
 		}
 	})
 
-	t.Run("auto-generates config for empty directory", func(t *testing.T) {
+	t.Run("generation fails without parser plugins", func(t *testing.T) {
 		dir := t.TempDir()
-
-		cfg, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, "")
-		if err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "infracost.yml.tmpl"), []byte(`version: "0.3"`), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if cfg == nil {
-			t.Fatal("expected non-nil config")
+
+		_, err := LoadOrGenerateRepositoryConfig(t.Context(), dir, t.TempDir())
+		if !errors.Is(err, repoconfig.ErrNoParserPlugins) {
+			t.Fatalf("expected ErrNoParserPlugins, got %v", err)
 		}
 	})
 }
