@@ -70,7 +70,7 @@ const (
 	// ciImage is the infracost/ci container written into generated CI jobs.
 	// The floating minor tag, so a patch release reaches users without a CLI
 	// release or a PR in their repo, at the cost of a non-reproducible job.
-	ciImage = "ghcr.io/infracost/ci:0.1"
+	ciImage = "ghcr.io/infracost/ci:2"
 
 	// ciAPIKeySecret names both the secret the job reads and the environment
 	// variable the CLI takes its value from.
