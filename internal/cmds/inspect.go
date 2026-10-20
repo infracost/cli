@@ -1,7 +1,6 @@
 package cmds
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -82,20 +81,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			startTime := time.Now()
 
-			defer func() {
-				if runErr != nil {
-					msg := runErr.Error()
-					if len(msg) > 200 {
-						msg = msg[:200]
-					}
-					eventsClient := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
-					eventsClient.Push(context.Background(), "infracost-error",
-						"error", msg,
-						"runSeconds", time.Since(startTime).Seconds(),
-						"outputFormat", "inspect",
-					)
-				}
-			}()
+			defer func() { pushRunError(cfg, "inspect", startTime, runErr) }()
 
 			var data *format.Output
 			var err error

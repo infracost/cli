@@ -1,0 +1,40 @@
+Key: ~ changed, + added, - removed
+
+──────────────────────────────────
+Project: main
+
+~ aws_instance.web_app
+  +$496 ($70 → $566)
+
+    ~ Instance usage (Linux/UNIX, on-demand, m5.large) → Instance usage (Linux/UNIX, on-demand, m5.4xlarge)
+      +$491 ($70 → $561)
+
+    + root_block_device
+
+        + Storage (general purpose SSD, gp2)
+          +$5 ($0 → $5)
+
+- aws_db_instance.old
+  -$120 ($120 → $0)
+
+    - Database instance (on-demand, db.t3.micro)
+      -$120 ($120 → $0)
+
++ aws_lambda_function.hello
+  Monthly cost depends on usage
+
+    + Requests
+      Monthly cost depends on usage
+        +$0.20 per 1M requests
+
+Monthly cost change for main
+Amount:  +$376 ($190 → $566)
+Percent: +198%
+
+──────────────────────────────────
+Key: ~ changed, + added, - removed
+
+Infracost estimate: Monthly estimate increased by $376 ($190 → $566)
+
+Changed project  Before  After  Change
+main               $190   $566   +$376
