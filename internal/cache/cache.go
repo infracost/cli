@@ -113,10 +113,8 @@ func (c *Config) ForPathAllowStale(absPath string) (*format.Output, error) {
 	return readDataFile(c.Cache, key)
 }
 
-// ForPathAny returns cached results for the given absolute path regardless of
-// the entry's age or whether source files changed. Use it when an old entry is
-// still the right thing to read (e.g. the `diff` baseline, which is the run
-// before the user's edit); [Prune] bounds how old an entry can get.
+// ForPathAny returns cached results for a path regardless of age or source
+// changes. Used for the `diff` baseline; [Prune] bounds the age.
 func (c *Config) ForPathAny(absPath string) (*format.Output, error) {
 	m, err := c.LoadManifest()
 	if err != nil {

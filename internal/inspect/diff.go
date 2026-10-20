@@ -16,7 +16,7 @@ var diffKey = fmt.Sprintf("Key: %s changed, %s added, %s removed",
 	opChar(format.DiffChanged), opChar(format.DiffAdded), opChar(format.DiffRemoved))
 
 // WriteDiff renders a cost diff as the v1 CLI did: a per-resource tree of
-// what changed, then a per-project change summary.
+// changes, then a per-project summary.
 func WriteDiff(w io.Writer, d *format.DiffOutput) error {
 	var b strings.Builder
 
@@ -77,8 +77,8 @@ func WriteDiff(w io.Writer, d *format.DiffOutput) error {
 	return err
 }
 
-// diffResource renders one resource and recurses into its components and
-// subresources. Only the top level prints the resource's own total.
+// diffResource renders one resource and recurses. Only the top level prints
+// the resource's own total.
 func diffResource(currency string, r format.DiffResource, topLevel bool) string {
 	var b strings.Builder
 
@@ -116,8 +116,7 @@ func diffCostComponent(currency string, c format.DiffCostComponent) string {
 
 	fmt.Fprintf(&b, "%s %s\n", opChar(c.Op), c.Name)
 
-	// Both sides unpriced means the component is usage-driven, so the price
-	// per unit is the only honest number to show.
+	// Both sides unpriced: the component is usage-driven, so show unit price.
 	if c.CostDependsOnUsage {
 		b.WriteString("  Monthly cost depends on usage\n")
 		fmt.Fprintf(&b, "    %s per %s\n", priceChange(currency, c.DiffPrice), c.Unit)
@@ -169,8 +168,8 @@ func opChar(op format.DiffOp) string {
 	}
 }
 
-// costChange formats a delta with an explicit sign, so a zero-width change
-// is still distinguishable from an absolute cost.
+// costChange formats a delta with an explicit sign, to distinguish it from an
+// absolute cost.
 func costChange(currency string, d *rat.Rat) string {
 	if d == nil || d.IsZero() {
 		return humanMoney(rat.Zero, currency)
@@ -181,8 +180,8 @@ func costChange(currency string, d *rat.Rat) string {
 	return ui.Positive("-" + humanMoney(d.Abs(), currency))
 }
 
-// priceChange keeps small unit prices legible: humanMoney drops cents, which
-// turns a $0.0000166667 per-GB-second price into $0.
+// priceChange keeps small unit prices legible: humanMoney drops cents, turning
+// $0.0000166667 per GB-second into $0.
 func priceChange(currency string, d *rat.Rat) string {
 	if d == nil || d.IsZero() {
 		return currencySymbol(currency) + "0"
@@ -219,7 +218,7 @@ func changeSentence(d *format.DiffOutput) string {
 		humanMoney(d.PastTotalMonthlyCost, d.Currency),
 		humanMoney(d.TotalMonthlyCost, d.Currency)))
 
-	// Resources can change while the totals cancel out, so a zero net change
+	// Totals can cancel out while resources changed, so a zero net change
 	// still needs a summary line.
 	if d.DiffTotalMonthlyCost.IsZero() {
 		return fmt.Sprintf("Monthly estimate unchanged %s", totals)

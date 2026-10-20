@@ -10,8 +10,7 @@ import (
 )
 
 // pushRunError reports a failed command run as an infracost-error event.
-// The message is truncated to keep the payload small; ToValidUTF8 drops a
-// rune the cut may have split.
+// The message is truncated; ToValidUTF8 drops a rune the cut may have split.
 func pushRunError(cfg *config.Config, outputFormat string, startTime time.Time, runErr error) {
 	if runErr == nil {
 		return

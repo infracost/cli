@@ -83,8 +83,7 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 				out = f
 			}
 
-			// Resolved before scanning: a missing baseline is the common
-			// mistake, and failing after a full scan wastes the user's time.
+			// Before scanning: a missing baseline should fail fast.
 			baseline, err := resolveBaseline(cfg, compareTo, in.Path)
 			if err != nil {
 				return err
@@ -108,9 +107,8 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
-			// The scan's store drops writes: overwriting the cache here would
-			// replace the baseline, so the next diff would compare the code
-			// against itself.
+			// Drops writes: a cache write here would replace the baseline,
+			// so the next diff would compare the code against itself.
 			store := readOnlyStore{Store: &cfg.Cache}
 
 			var current ScanResult
@@ -129,8 +127,8 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 			if err := writeStructured(cfg, out, format.Diff(baseline, current), diffRenderers()); err != nil {
 				return err
 			}
-			// A project that failed to parse has no resources, which would
-			// otherwise read as every resource being removed.
+			// A project that failed to parse has no resources, which reads
+			// as every resource being removed.
 			return criticalDiagnosticsErr(current)
 		},
 	}
@@ -145,8 +143,8 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 	return cmd
 }
 
-// legacyDiffFlags are the v0.10 `infracost diff` flags. They are kept so
-// existing CI scripts get a deprecation notice rather than "unknown flag".
+// legacyDiffFlags are the v0.10 `infracost diff` flags, kept so existing CI
+// scripts get a deprecation notice rather than "unknown flag".
 type legacyDiffFlags struct {
 	path    string
 	format  string
@@ -195,10 +193,8 @@ func sameCurrency(past, current *format.Output) error {
 		past.Currency, current.Currency, past.Currency)
 }
 
-// resolveBaseline loads --compare-to, or falls back to the cached result for
-// this path. Age and source-file changes are ignored: the point is to compare
-// against the run before the edit. `infracost cache prune` and the automatic
-// 24h prune bound how old that run can be.
+// resolveBaseline loads --compare-to, else the cached result for this path.
+// Age and source changes are ignored: compare against the run before the edit.
 func resolveBaseline(cfg *config.Config, compareTo, path string) (*format.Output, error) {
 	if compareTo != "" {
 		return loadBaselineFile(compareTo)
@@ -231,8 +227,8 @@ func loadBaselineFile(path string) (*format.Output, error) {
 	if err := json.NewDecoder(f).Decode(&out); err != nil {
 		return nil, fmt.Errorf("failed to parse --compare-to file %q as Infracost JSON: %w", path, err)
 	}
-	// Unknown fields decode silently, so an unrelated JSON file (a v0.10
-	// breakdown, say) would otherwise read as an empty baseline.
+	// Unknown fields decode silently, so an unrelated JSON file would
+	// otherwise read as an empty baseline.
 	if len(out.Projects) == 0 {
 		return nil, fmt.Errorf("--compare-to file %q has no projects: it is not an `infracost scan --json` output", path)
 	}

@@ -18,8 +18,8 @@ const (
 	DiffChanged DiffOp = "changed"
 )
 
-// DiffOutput is the top-level structure produced by the diff command. Costs
-// named Diff* are current minus baseline; a missing side counts as zero.
+// DiffOutput is what the diff command produces. Diff* costs are current minus
+// baseline; a missing side counts as zero.
 type DiffOutput struct {
 	Currency             string        `json:"currency"`
 	Projects             []DiffProject `json:"projects"`
@@ -32,8 +32,8 @@ type DiffProject struct {
 	ProjectName string `json:"project_name"`
 	Path        string `json:"path,omitempty"`
 	Op          DiffOp `json:"op"`
-	// Resources holds only what changed. A project with no changed resources
-	// is still listed so the caller can report it as unchanged.
+	// Resources holds only what changed. A project with none is still listed
+	// so the caller can report it as unchanged.
 	Resources            []DiffResource `json:"resources"`
 	PastTotalMonthlyCost *rat.Rat       `json:"past_total_monthly_cost,omitempty"`
 	TotalMonthlyCost     *rat.Rat       `json:"total_monthly_cost,omitempty"`
@@ -49,14 +49,14 @@ type DiffResource struct {
 	DiffMonthlyCost *rat.Rat            `json:"diff_monthly_cost,omitempty"`
 	CostComponents  []DiffCostComponent `json:"cost_components,omitempty"`
 	Subresources    []DiffResource      `json:"subresources,omitempty"`
-	// CostDependsOnUsage is true when no component on either side carries a
-	// monthly cost, so the only honest total is "depends on usage".
+	// CostDependsOnUsage is true when no component on either side has a
+	// monthly cost, so the only total is "depends on usage".
 	CostDependsOnUsage bool `json:"cost_depends_on_usage,omitempty"`
 }
 
 type DiffCostComponent struct {
-	// Name is "old → new" when the baseline and current names differ but
-	// matched on the part before the bracket, e.g. an instance type change.
+	// Name is "old → new" when the two sides matched on the part before the
+	// bracket, e.g. an instance type change.
 	Name            string   `json:"name"`
 	Unit            string   `json:"unit,omitempty"`
 	Op              DiffOp   `json:"op"`
@@ -69,14 +69,13 @@ type DiffCostComponent struct {
 	PastQuantity    *rat.Rat `json:"past_quantity,omitempty"`
 	Quantity        *rat.Rat `json:"quantity,omitempty"`
 	DiffQuantity    *rat.Rat `json:"diff_quantity,omitempty"`
-	// CostDependsOnUsage is true when neither side carries a monthly cost, so
-	// the price per unit is the only honest number to show.
+	// CostDependsOnUsage is true when neither side has a monthly cost, so the
+	// price per unit is the only number to show.
 	CostDependsOnUsage bool `json:"cost_depends_on_usage,omitempty"`
 }
 
-// Diff compares a current scan against a baseline. Projects are matched by
-// name, resources and subresources by name within their parent, and cost
-// components by name with a fallback on the part before " (".
+// Diff compares a current scan against a baseline. Projects, resources and
+// subresources match by name; cost components fall back to the part before " (".
 func Diff(past, current *Output) *DiffOutput {
 	currency := current.Currency
 	if currency == "" {
@@ -87,8 +86,7 @@ func Diff(past, current *Output) *DiffOutput {
 	}
 	out := &DiffOutput{Currency: currency}
 
-	// Baseline indexes per name, so repeated project names pair up one by one
-	// instead of collapsing onto a single entry.
+	// Indexes per name, so repeated project names pair up one by one.
 	pastByName := make(map[string][]int, len(past.Projects))
 	for i := range past.Projects {
 		name := past.Projects[i].ProjectName
@@ -110,8 +108,7 @@ func Diff(past, current *Output) *DiffOutput {
 		out.Projects = append(out.Projects, diffProject(op, prev, cur))
 	}
 
-	// Anything left in the baseline is gone from the current scan. Ordered by
-	// the baseline's own order so the output is stable.
+	// Anything left in the baseline is gone, in the baseline's own order.
 	for i := range past.Projects {
 		if matched[i] {
 			continue
@@ -183,8 +180,8 @@ func diffProject(op DiffOp, past, current *ProjectOutput) DiffProject {
 	return p
 }
 
-// diffResources walks the baseline's resources first so removals keep their
-// original position, then appends resources only the current scan has.
+// diffResources walks the baseline first so removals keep their position,
+// then appends resources only the current scan has.
 func diffResources(past, current []ResourceOutput) []DiffResource {
 	currentByName := make(map[string]*ResourceOutput, len(current))
 	for i := range current {
@@ -303,10 +300,8 @@ func diffCostComponent(past, current *CostComponentOutput) (DiffCostComponent, b
 	return d, changed
 }
 
-// findMatchingCostComponent matches on the full name, then on everything
-// before " (" so a resized instance reads as a change, not an add and remove.
-// Only components not already paired are considered, and the bracket fallback
-// needs a single candidate so sibling pricing tiers are never paired.
+// findMatchingCostComponent matches on the full name, then on the part before
+// " (". The fallback needs a single candidate so pricing tiers never pair.
 func findMatchingCostComponent(components []CostComponentOutput, matched []bool, name string) *CostComponentOutput {
 	for i := range components {
 		if !matched[i] && components[i].Name == name {
@@ -412,8 +407,8 @@ func quantityOf(c *CostComponentOutput) *rat.Rat {
 	return orZero(c.Quantity)
 }
 
-// unpriced reports whether a resource has no monthly cost anywhere in its
-// tree. A nil resource is unpriced: the other side decides.
+// unpriced reports whether a resource has no monthly cost in its tree.
+// A nil resource is unpriced: the other side decides.
 func unpriced(r *ResourceOutput) bool {
 	if r == nil {
 		return true
