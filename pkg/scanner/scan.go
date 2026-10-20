@@ -474,7 +474,7 @@ func GetRequiredProvidersFromTree(tree *treepb.Tree) []provider.Provider {
 		}
 		p := providerconv.ToProto(raw)
 		if p == provider.Provider_PROVIDER_UNSPECIFIED {
-			logging.Warnf("skipping unsupported provider: %s", raw)
+			logging.Debugf("skipping unsupported provider: %s", raw)
 			continue
 		}
 		seen[p] = struct{}{}
