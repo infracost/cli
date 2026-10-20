@@ -280,16 +280,14 @@ func TestDiffUsageStateTransitions(t *testing.T) {
 			"the current cost is unknown, so -$100 is not a real saving")
 	})
 
-	t.Run("zero usage becoming unknown is still a change", func(t *testing.T) {
+	t.Run("zero becoming unknown at no cost is not a change", func(t *testing.T) {
+		// A baseline saved before `usage_unknown` existed is indistinguishable
+		// from an explicit zero, so this flip must stay quiet or every legacy
+		// baseline reports every usage-driven component as changed.
 		past := out("main", res("aws_lambda_function.fn", requests(0, false)))
 		current := out("main", res("aws_lambda_function.fn", requests(0, true)))
 
-		d := Diff(past, current)
-		require.True(t, d.HasChanges(), "every numeric delta is zero, but the usage state flipped")
-
-		components := d.Projects[0].Resources[0].CostComponents
-		require.Len(t, components, 1)
-		assert.True(t, components[0].CostDependsOnUsage)
+		assert.False(t, Diff(past, current).HasChanges())
 	})
 
 	t.Run("added priced component does not depend on usage", func(t *testing.T) {

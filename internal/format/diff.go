@@ -77,6 +77,8 @@ type DiffCostComponent struct {
 // Diff compares a current scan against a baseline. Projects, resources and
 // subresources match by name; cost components fall back to the part before " (".
 func Diff(past, current *Output) *DiffOutput {
+	current = matchBaselineRounding(current)
+
 	currency := current.Currency
 	if currency == "" {
 		currency = past.Currency
@@ -126,6 +128,21 @@ func Diff(past, current *Output) *DiffOutput {
 	out.DiffTotalMonthlyCost = out.TotalMonthlyCost.Sub(out.PastTotalMonthlyCost)
 
 	return out
+}
+
+// matchBaselineRounding re-reads the live scan through JSON, because every
+// baseline has been through it. rat.Rat marshals via float64, so a live
+// 0.0208 and a saved 0.0208 differ and every component reads as changed.
+func matchBaselineRounding(o *Output) *Output {
+	b, err := json.Marshal(o)
+	if err != nil {
+		return o
+	}
+	var rounded Output
+	if err := json.Unmarshal(b, &rounded); err != nil {
+		return o
+	}
+	return &rounded
 }
 
 // matchProject claims the first unmatched baseline project with the same name,
@@ -326,8 +343,10 @@ func diffCostComponent(past, current *CostComponentOutput) (DiffCostComponent, b
 	pastUnknown, currentUnknown := usageUnknown(past), usageUnknown(current)
 	d.CostDependsOnUsage = pastUnknown || currentUnknown
 
-	changed := !d.DiffMonthlyCost.IsZero() || !d.DiffPrice.IsZero() || !d.DiffQuantity.IsZero() ||
-		pastUnknown != currentUnknown
+	// A usage-state flip always moves money, so the numeric deltas catch it.
+	// Flagging the flip itself would mark every component in a baseline saved
+	// before `usage_unknown` existed as changed.
+	changed := !d.DiffMonthlyCost.IsZero() || !d.DiffPrice.IsZero() || !d.DiffQuantity.IsZero()
 	return d, changed
 }
 

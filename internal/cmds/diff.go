@@ -238,14 +238,13 @@ func resolveBaseline(cfg *config.Config, compareTo, path string) (*format.Output
 }
 
 func loadBaselineFile(path string) (*format.Output, error) {
-	f, err := os.Open(path) // #nosec G304 -- user-specified baseline file
+	b, err := os.ReadFile(path) // #nosec G304 -- user-specified baseline file
 	if err != nil {
 		return nil, fmt.Errorf("failed to open --compare-to file %q: %w", path, err)
 	}
-	defer func() { _ = f.Close() }()
 
 	var out format.Output
-	if err := json.NewDecoder(f).Decode(&out); err != nil {
+	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, fmt.Errorf("failed to parse --compare-to file %q as Infracost JSON: %w", path, err)
 	}
 	// Unknown fields decode silently, so an unrelated JSON file would
@@ -253,7 +252,29 @@ func loadBaselineFile(path string) (*format.Output, error) {
 	if len(out.Projects) == 0 {
 		return nil, fmt.Errorf("--compare-to file %q has no projects: it is not an `infracost scan --json` output", path)
 	}
+	if isDiffJSON(b) {
+		return nil, fmt.Errorf("--compare-to file %q is `infracost diff` output, not `infracost scan --json` output: its costs would read as zero.\n\n%s", path, baselineHint)
+	}
 	return &out, nil
+}
+
+// isDiffJSON reports whether a baseline file is this command's own output.
+// It shares the `projects` key with a scan, but names costs differently, so
+// decoding it as a scan silently zeroes every cost.
+func isDiffJSON(b []byte) bool {
+	var probe struct {
+		DiffTotal json.RawMessage `json:"diff_total_monthly_cost"`
+		Projects  []struct {
+			Op json.RawMessage `json:"op"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(b, &probe); err != nil {
+		return false
+	}
+	if len(probe.DiffTotal) > 0 {
+		return true
+	}
+	return len(probe.Projects) > 0 && len(probe.Projects[0].Op) > 0
 }
 
 func diffRenderers() Renderers[*format.DiffOutput] {
