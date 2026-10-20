@@ -237,6 +237,7 @@ func run() (exitCode int) {
 	addCmd(cmds.PluginsCmd(cfg), "setup")
 
 	addCmd(cmds.ScanCmd(cfg), "analyze")
+	addCmd(cmds.DiffCmd(cfg), "analyze")
 	addCmd(cmds.Inspect(cfg), "analyze")
 	addCmd(cmds.PriceCmd(cfg), "analyze")
 

@@ -113,6 +113,23 @@ func (c *Config) ForPathAllowStale(absPath string) (*format.Output, error) {
 	return readDataFile(c.Cache, key)
 }
 
+// ForPathAny returns cached results for a path regardless of age or source
+// changes. Used for the `diff` baseline; [Prune] bounds the age.
+func (c *Config) ForPathAny(absPath string) (*format.Output, error) {
+	m, err := c.LoadManifest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	key := Key(absPath)
+
+	if _, ok := m.Entries[key]; !ok {
+		return nil, fmt.Errorf("no cached results found")
+	}
+
+	return readDataFile(c.Cache, key)
+}
+
 // Latest returns the most recent cached result within TTL.
 //
 // When allowStale is false, the entry is also rejected if any source file has

@@ -217,20 +217,7 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 				outputFormat = "json"
 			}
 
-			defer func() {
-				if runErr != nil {
-					msg := runErr.Error()
-					if len(msg) > 200 {
-						msg = msg[:200]
-					}
-					eventsClient := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
-					eventsClient.Push(context.Background(), "infracost-error",
-						"error", msg,
-						"runSeconds", time.Since(startTime).Seconds(),
-						"outputFormat", outputFormat,
-					)
-				}
-			}()
+			defer func() { pushRunError(cfg, outputFormat, startTime, runErr) }()
 
 			// Self-hosted pricing mode needs no login or org: the static
 			// pricing API key is the only credential used, and no Infracost
