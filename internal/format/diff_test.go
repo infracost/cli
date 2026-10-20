@@ -185,6 +185,130 @@ func TestDiffDuplicateProjectNames(t *testing.T) {
 	assert.Equal(t, "-90", d.DiffTotalMonthlyCost.StringFixed(0))
 }
 
+func TestDiffPrefersExactComponentMatchOverBracketPrefix(t *testing.T) {
+	// The removed component comes first, so a per-component fallback would
+	// consume m5.large before the exact match for it is tried.
+	past := out("main", res("aws_instance.web",
+		cc("Instance usage (m5.small)", 4),
+		cc("Instance usage (m5.large)", 10),
+	))
+	current := out("main", res("aws_instance.web", cc("Instance usage (m5.large)", 10)))
+
+	d := Diff(past, current)
+	components := d.Projects[0].Resources[0].CostComponents
+	require.Len(t, components, 1)
+	assert.Equal(t, "Instance usage (m5.small)", components[0].Name)
+	assert.Equal(t, DiffRemoved, components[0].Op)
+	assert.Equal(t, "-4", d.Projects[0].DiffTotalMonthlyCost.StringFixed(0))
+}
+
+func TestDiffDuplicateProjectNamesMatchOnPath(t *testing.T) {
+	project := func(path string, cost float64) ProjectOutput {
+		return ProjectOutput{
+			ProjectName: "main",
+			Path:        path,
+			Resources:   []ResourceOutput{res("aws_instance.web", cc("Instance usage", cost))},
+		}
+	}
+	past := &Output{Currency: "USD", Projects: []ProjectOutput{project("a", 10), project("b", 90)}}
+
+	t.Run("removing the first duplicate", func(t *testing.T) {
+		d := Diff(past, &Output{Currency: "USD", Projects: []ProjectOutput{project("b", 90)}})
+		require.Len(t, d.Projects, 2)
+		assert.Equal(t, "b", d.Projects[0].Path)
+		assert.Equal(t, DiffChanged, d.Projects[0].Op)
+		assert.Equal(t, "a", d.Projects[1].Path)
+		assert.Equal(t, DiffRemoved, d.Projects[1].Op)
+		assert.Equal(t, "-10", d.DiffTotalMonthlyCost.StringFixed(0))
+	})
+
+	t.Run("reordering duplicates is not a change", func(t *testing.T) {
+		d := Diff(past, &Output{Currency: "USD", Projects: []ProjectOutput{project("b", 90), project("a", 10)}})
+		require.Len(t, d.Projects, 2)
+		assert.False(t, d.HasChanges())
+		assert.Equal(t, "0", d.DiffTotalMonthlyCost.StringFixed(0))
+	})
+}
+
+func TestDiffUsesUsageUnknownNotNilCost(t *testing.T) {
+	// Scan output never has nil costs: convertCostComponent emits zero and
+	// flags the missing usage instead.
+	requests := func(price float64) CostComponentOutput {
+		return CostComponentOutput{
+			Name: "Requests", Unit: "1M requests",
+			Price:            rat.New(price),
+			Quantity:         rat.Zero,
+			TotalMonthlyCost: rat.Zero,
+			UsageUnknown:     true,
+		}
+	}
+	past := out("main", res("aws_lambda_function.fn", requests(0.2)))
+	current := out("main", res("aws_lambda_function.fn", requests(0.4)))
+
+	d := Diff(past, current)
+	require.Len(t, d.Projects[0].Resources, 1)
+	assert.True(t, d.Projects[0].Resources[0].CostDependsOnUsage)
+
+	components := d.Projects[0].Resources[0].CostComponents
+	require.Len(t, components, 1)
+	assert.True(t, components[0].CostDependsOnUsage)
+	assert.Equal(t, "0.2", components[0].DiffPrice.StringFixed(1))
+}
+
+func TestDiffUsageStateTransitions(t *testing.T) {
+	requests := func(cost float64, unknown bool) CostComponentOutput {
+		return CostComponentOutput{
+			Name: "Requests", Unit: "1M requests",
+			Price:            rat.New(0.2),
+			Quantity:         rat.New(cost / 0.2),
+			TotalMonthlyCost: rat.New(cost),
+			UsageUnknown:     unknown,
+		}
+	}
+
+	t.Run("known cost becoming usage-driven is not a saving", func(t *testing.T) {
+		past := out("main", res("aws_lambda_function.fn", requests(100, false)))
+		current := out("main", res("aws_lambda_function.fn", requests(0, true)))
+
+		d := Diff(past, current)
+		resource := d.Projects[0].Resources[0]
+		assert.True(t, resource.CostDependsOnUsage)
+
+		components := resource.CostComponents
+		require.Len(t, components, 1)
+		assert.True(t, components[0].CostDependsOnUsage,
+			"the current cost is unknown, so -$100 is not a real saving")
+	})
+
+	t.Run("zero usage becoming unknown is still a change", func(t *testing.T) {
+		past := out("main", res("aws_lambda_function.fn", requests(0, false)))
+		current := out("main", res("aws_lambda_function.fn", requests(0, true)))
+
+		d := Diff(past, current)
+		require.True(t, d.HasChanges(), "every numeric delta is zero, but the usage state flipped")
+
+		components := d.Projects[0].Resources[0].CostComponents
+		require.Len(t, components, 1)
+		assert.True(t, components[0].CostDependsOnUsage)
+	})
+
+	t.Run("added priced component does not depend on usage", func(t *testing.T) {
+		d := Diff(out("main"), out("main", res("aws_lambda_function.fn", requests(100, false))))
+		resource := d.Projects[0].Resources[0]
+		assert.False(t, resource.CostDependsOnUsage)
+		assert.False(t, resource.CostComponents[0].CostDependsOnUsage)
+		assert.Equal(t, "100", d.DiffTotalMonthlyCost.StringFixed(0))
+	})
+
+	t.Run("removed priced component does not depend on usage", func(t *testing.T) {
+		d := Diff(out("main", res("aws_lambda_function.fn", requests(100, false))), out("main"))
+		resource := d.Projects[0].Resources[0]
+		assert.False(t, resource.CostDependsOnUsage)
+		assert.False(t, resource.CostComponents[0].CostDependsOnUsage)
+		assert.Equal(t, "-100", d.DiffTotalMonthlyCost.StringFixed(0))
+	})
+}
+
 func TestDiffEmptyBaseline(t *testing.T) {
 	d := Diff(&Output{}, out("main", res("aws_instance.web", cc("Instance usage", 10))))
 	require.Len(t, d.Projects, 1)

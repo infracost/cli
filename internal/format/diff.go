@@ -49,8 +49,8 @@ type DiffResource struct {
 	DiffMonthlyCost *rat.Rat            `json:"diff_monthly_cost,omitempty"`
 	CostComponents  []DiffCostComponent `json:"cost_components,omitempty"`
 	Subresources    []DiffResource      `json:"subresources,omitempty"`
-	// CostDependsOnUsage is true when no component on either side has a
-	// monthly cost, so the only total is "depends on usage".
+	// CostDependsOnUsage is true when either side's costs are all
+	// usage-driven, so the total delta is not a real change.
 	CostDependsOnUsage bool `json:"cost_depends_on_usage,omitempty"`
 }
 
@@ -69,7 +69,7 @@ type DiffCostComponent struct {
 	PastQuantity    *rat.Rat `json:"past_quantity,omitempty"`
 	Quantity        *rat.Rat `json:"quantity,omitempty"`
 	DiffQuantity    *rat.Rat `json:"diff_quantity,omitempty"`
-	// CostDependsOnUsage is true when neither side has a monthly cost, so the
+	// CostDependsOnUsage is true when either side is usage-driven, so the
 	// price per unit is the only number to show.
 	CostDependsOnUsage bool `json:"cost_depends_on_usage,omitempty"`
 }
@@ -87,25 +87,26 @@ func Diff(past, current *Output) *DiffOutput {
 	out := &DiffOutput{Currency: currency}
 
 	// Indexes per name, so repeated project names pair up one by one.
-	pastByName := make(map[string][]int, len(past.Projects))
-	for i := range past.Projects {
-		name := past.Projects[i].ProjectName
-		pastByName[name] = append(pastByName[name], i)
-	}
 	matched := make([]bool, len(past.Projects))
 
+	// Name and path first, so reordering or removing one of two same-named
+	// projects does not pair the survivor with the wrong baseline entry.
+	pairs := make([]*ProjectOutput, len(current.Projects))
 	for i := range current.Projects {
-		cur := &current.Projects[i]
+		pairs[i] = matchProject(past.Projects, matched, &current.Projects[i], true)
+	}
+	for i := range current.Projects {
+		if pairs[i] == nil {
+			pairs[i] = matchProject(past.Projects, matched, &current.Projects[i], false)
+		}
+	}
 
-		var prev *ProjectOutput
+	for i := range current.Projects {
 		op := DiffAdded
-		if queue := pastByName[cur.ProjectName]; len(queue) > 0 {
-			prev = &past.Projects[queue[0]]
-			matched[queue[0]] = true
-			pastByName[cur.ProjectName] = queue[1:]
+		if pairs[i] != nil {
 			op = DiffChanged
 		}
-		out.Projects = append(out.Projects, diffProject(op, prev, cur))
+		out.Projects = append(out.Projects, diffProject(op, pairs[i], &current.Projects[i]))
 	}
 
 	// Anything left in the baseline is gone, in the baseline's own order.
@@ -125,6 +126,22 @@ func Diff(past, current *Output) *DiffOutput {
 	out.DiffTotalMonthlyCost = out.TotalMonthlyCost.Sub(out.PastTotalMonthlyCost)
 
 	return out
+}
+
+// matchProject claims the first unmatched baseline project with the same name,
+// requiring an equal path when withPath is set.
+func matchProject(past []ProjectOutput, matched []bool, cur *ProjectOutput, withPath bool) *ProjectOutput {
+	for i := range past {
+		if matched[i] || past[i].ProjectName != cur.ProjectName {
+			continue
+		}
+		if withPath && past[i].Path != cur.Path {
+			continue
+		}
+		matched[i] = true
+		return &past[i]
+	}
+	return nil
 }
 
 // HasChanges reports whether any project has a changed resource.
@@ -231,7 +248,7 @@ func diffResource(past, current *ResourceOutput) (DiffResource, bool) {
 		MonthlyCost:     monthlyCostOf(current),
 	}
 	d.DiffMonthlyCost = d.MonthlyCost.Sub(d.PastMonthlyCost)
-	d.CostDependsOnUsage = unpriced(past) && unpriced(current)
+	d.CostDependsOnUsage = (past != nil && unpriced(past)) || (current != nil && unpriced(current))
 
 	components, componentsChanged := diffCostComponents(componentsOf(past), componentsOf(current))
 	d.CostComponents = components
@@ -246,12 +263,23 @@ func diffResource(past, current *ResourceOutput) (DiffResource, bool) {
 // and appending the ones only the current scan has.
 func diffCostComponents(past, current []CostComponentOutput) ([]DiffCostComponent, bool) {
 	matched := make([]bool, len(current))
+	pairs := make([]*CostComponentOutput, len(past))
+
+	// Exact names across the whole list first, so the bracket fallback can
+	// never consume a component that a later baseline entry matches exactly.
+	for i := range past {
+		pairs[i] = matchExactName(current, matched, past[i].Name)
+	}
+	for i := range past {
+		if pairs[i] == nil {
+			pairs[i] = matchBracketPrefix(current, matched, past[i].Name)
+		}
+	}
 
 	var out []DiffCostComponent
 
 	for i := range past {
-		prev := &past[i]
-		if d, changed := diffCostComponent(prev, findMatchingCostComponent(current, matched, prev.Name)); changed {
+		if d, changed := diffCostComponent(&past[i], pairs[i]); changed {
 			out = append(out, d)
 		}
 	}
@@ -293,23 +321,29 @@ func diffCostComponent(past, current *CostComponentOutput) (DiffCostComponent, b
 	d.DiffMonthlyCost = d.MonthlyCost.Sub(d.PastMonthlyCost)
 	d.DiffPrice = d.Price.Sub(d.PastPrice)
 	d.DiffQuantity = d.Quantity.Sub(d.PastQuantity)
-	d.CostDependsOnUsage = (past == nil || past.TotalMonthlyCost == nil) &&
-		(current == nil || current.TotalMonthlyCost == nil)
+	// Either side being usage-driven makes the cost delta meaningless, so a
+	// $100 component losing its usage must not read as a $100 saving.
+	pastUnknown, currentUnknown := usageUnknown(past), usageUnknown(current)
+	d.CostDependsOnUsage = pastUnknown || currentUnknown
 
-	changed := !d.DiffMonthlyCost.IsZero() || !d.DiffPrice.IsZero() || !d.DiffQuantity.IsZero()
+	changed := !d.DiffMonthlyCost.IsZero() || !d.DiffPrice.IsZero() || !d.DiffQuantity.IsZero() ||
+		pastUnknown != currentUnknown
 	return d, changed
 }
 
-// findMatchingCostComponent matches on the full name, then on the part before
-// " (". The fallback needs a single candidate so pricing tiers never pair.
-func findMatchingCostComponent(components []CostComponentOutput, matched []bool, name string) *CostComponentOutput {
+func matchExactName(components []CostComponentOutput, matched []bool, name string) *CostComponentOutput {
 	for i := range components {
 		if !matched[i] && components[i].Name == name {
 			matched[i] = true
 			return &components[i]
 		}
 	}
+	return nil
+}
 
+// matchBracketPrefix pairs on the part before " (" so a resized instance reads
+// as a change. It needs a single candidate, so pricing tiers never pair.
+func matchBracketPrefix(components []CostComponentOutput, matched []bool, name string) *CostComponentOutput {
 	wanted, _, bracketed := strings.Cut(name, " (")
 	if !bracketed {
 		return nil
@@ -407,14 +441,14 @@ func quantityOf(c *CostComponentOutput) *rat.Rat {
 	return orZero(c.Quantity)
 }
 
-// unpriced reports whether a resource has no monthly cost in its tree.
-// A nil resource is unpriced: the other side decides.
+// unpriced reports whether every cost in a resource's tree is usage-driven.
+// Callers check for nil first: a missing side has no usage to be unsure of.
 func unpriced(r *ResourceOutput) bool {
 	if r == nil {
 		return true
 	}
-	for _, c := range r.CostComponents {
-		if c.TotalMonthlyCost != nil {
+	for i := range r.CostComponents {
+		if !usageUnknown(&r.CostComponents[i]) {
 			return false
 		}
 	}
@@ -424,6 +458,12 @@ func unpriced(r *ResourceOutput) bool {
 		}
 	}
 	return true
+}
+
+// usageUnknown reports whether a component that exists is usage-driven. A
+// missing side is not unknown: it has no usage to be uncertain about.
+func usageUnknown(c *CostComponentOutput) bool {
+	return c != nil && (c.UsageUnknown || c.TotalMonthlyCost == nil)
 }
 
 func orZero(r *rat.Rat) *rat.Rat {

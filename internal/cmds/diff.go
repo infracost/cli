@@ -73,6 +73,16 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 
 			defer func() { pushRunError(cfg, outputFormat, startTime, runErr) }()
 
+			// Before scanning: a missing baseline should fail fast, and the
+			// baseline must be read before --out-file can truncate it.
+			baseline, err := resolveBaseline(cfg, compareTo, in.Path)
+			if err != nil {
+				return err
+			}
+			if err := diffDiagnosticsErr(cmd.ErrOrStderr(), "baseline", baseline); err != nil {
+				return err
+			}
+
 			out := io.Writer(os.Stdout)
 			if legacy.outFile != "" {
 				f, err := os.Create(legacy.outFile) // #nosec G304 -- user-specified output file
@@ -81,12 +91,6 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 				}
 				defer func() { _ = f.Close() }()
 				out = f
-			}
-
-			// Before scanning: a missing baseline should fail fast.
-			baseline, err := resolveBaseline(cfg, compareTo, in.Path)
-			if err != nil {
-				return err
 			}
 
 			var source oauth2.TokenSource
@@ -124,12 +128,13 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
-			if err := writeStructured(cfg, out, format.Diff(baseline, current), diffRenderers()); err != nil {
+			// Before rendering, unlike `scan`: a project that failed to parse
+			// has no resources, so the diff would read as a mass deletion.
+			if err := diffDiagnosticsErr(cmd.ErrOrStderr(), "current scan", current); err != nil {
 				return err
 			}
-			// A project that failed to parse has no resources, which reads
-			// as every resource being removed.
-			return criticalDiagnosticsErr(current)
+
+			return writeStructured(cfg, out, format.Diff(baseline, current), diffRenderers())
 		},
 	}
 
@@ -181,6 +186,22 @@ func (l *legacyDiffFlags) apply(cfg *config.Config, in *ScanInput) {
 	if l.format == "json" {
 		cfg.JSON.Value = true
 	}
+}
+
+// diffDiagnosticsErr stops the diff when either side has a critical
+// diagnostic, printing the messages the diff model would otherwise drop.
+func diffDiagnosticsErr(stderr io.Writer, side string, r *format.Output) error {
+	entries := inspect.CollectDiagnostics(r, false)
+	if len(entries) == 0 {
+		return nil
+	}
+	inspect.WriteSummaryDiagnostics(stderr, r, false)
+	word := "diagnostics"
+	if len(entries) == 1 {
+		word = "diagnostic"
+	}
+	return fmt.Errorf("the %s has %d critical %s, so the comparison would be wrong: fix the errors above, then save a new baseline.\n\n%s",
+		side, len(entries), word, baselineHint)
 }
 
 // sameCurrency rejects a baseline priced in another currency: the diff

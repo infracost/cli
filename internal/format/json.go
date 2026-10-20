@@ -97,6 +97,9 @@ type CostComponentOutput struct {
 	TotalMonthlyCost              *rat.Rat `json:"total_monthly_cost,omitempty"`
 	MonthlyCarbonSavingsGramsCo2E *rat.Rat `json:"monthly_carbon_savings_grams_co2e,omitempty"`
 	MonthlyWaterSavingsLiters     *rat.Rat `json:"monthly_water_savings_liters,omitempty"`
+	// UsageUnknown is true when the provider gave no quantity, so the zero
+	// costs above mean "depends on usage" rather than "free".
+	UsageUnknown bool `json:"usage_unknown,omitempty"`
 }
 
 type DiagnosticOutput struct {
@@ -541,6 +544,7 @@ func convertCostComponent(c *provider.CostComponent) CostComponentOutput {
 		TotalMonthlyCost:              monthlyBaseCost.Add(monthlyUsageCost),
 		MonthlyCarbonSavingsGramsCo2E: monthlyCarbonGramsCo2e,
 		MonthlyWaterSavingsLiters:     monthlyWaterLitres,
+		UsageUnknown:                  c.Quantity == nil,
 	}
 }
 
