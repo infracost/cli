@@ -15,6 +15,19 @@ const diffDivider = "───────────────────�
 var diffKey = fmt.Sprintf("Key: %s changed, %s added, %s removed",
 	opChar(format.DiffChanged), opChar(format.DiffAdded), opChar(format.DiffRemoved))
 
+const (
+	incompleteMark = " *"
+	incompleteNote = "* part of this change depends on usage that only one side has, so the amount is not the whole change"
+)
+
+// incomplete marks a total that is partly guesswork.
+func incomplete(b bool) string {
+	if b {
+		return ui.Dim(incompleteMark)
+	}
+	return ""
+}
+
 // WriteDiff renders a cost diff as the v1 CLI did: a per-resource tree of
 // changes, then a per-project summary.
 func WriteDiff(w io.Writer, d *format.DiffOutput) error {
@@ -37,13 +50,14 @@ func WriteDiff(w io.Writer, d *format.DiffOutput) error {
 			b.WriteString("\n")
 		}
 
-		fmt.Fprintf(&b, "%s %s\nAmount:  %s %s\n",
+		fmt.Fprintf(&b, "%s %s\nAmount:  %s %s%s\n",
 			ui.Bold("Monthly cost change for"),
 			ui.Bold(p.ProjectName),
 			costChange(d.Currency, p.DiffTotalMonthlyCost),
 			ui.Dim(fmt.Sprintf("(%s → %s)",
 				humanMoney(p.PastTotalMonthlyCost, d.Currency),
 				humanMoney(p.TotalMonthlyCost, d.Currency))),
+			incomplete(p.CostChangeIncomplete),
 		)
 		if pct := percentChange(p.PastTotalMonthlyCost, p.TotalMonthlyCost); pct != "" {
 			fmt.Fprintf(&b, "Percent: %s\n", pct)
@@ -70,7 +84,11 @@ func WriteDiff(w io.Writer, d *format.DiffOutput) error {
 			len(unchanged), word, strings.Join(unchanged, ", "))
 	}
 
-	fmt.Fprintf(&b, "\nInfracost estimate: %s\n\n", changeSentence(d))
+	fmt.Fprintf(&b, "\nInfracost estimate: %s%s\n", changeSentence(d), incomplete(d.CostChangeIncomplete))
+	if d.CostChangeIncomplete {
+		fmt.Fprintf(&b, "%s\n", ui.Dim(incompleteNote))
+	}
+	b.WriteString("\n")
 	writeDiffTable(&b, d)
 
 	_, err := io.WriteString(w, b.String())
@@ -91,11 +109,12 @@ func diffResource(currency string, r format.DiffResource, topLevel bool) string 
 	if topLevel && r.CostDependsOnUsage {
 		b.WriteString("  Monthly cost depends on usage\n")
 	} else if topLevel {
-		fmt.Fprintf(&b, "  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s%s\n",
 			costChange(currency, r.DiffMonthlyCost),
 			ui.Dim(fmt.Sprintf("(%s → %s)",
 				humanMoney(r.PastMonthlyCost, currency),
-				humanMoney(r.MonthlyCost, currency))))
+				humanMoney(r.MonthlyCost, currency))),
+			incomplete(r.CostChangeIncomplete))
 	}
 
 	for _, c := range r.CostComponents {
@@ -149,7 +168,7 @@ func writeDiffTable(w io.Writer, d *format.DiffOutput) {
 			p.ProjectName,
 			humanMoney(p.PastTotalMonthlyCost, d.Currency),
 			humanMoney(p.TotalMonthlyCost, d.Currency),
-			costChange(d.Currency, p.DiffTotalMonthlyCost),
+			costChange(d.Currency, p.DiffTotalMonthlyCost) + incomplete(p.CostChangeIncomplete),
 		})
 	}
 

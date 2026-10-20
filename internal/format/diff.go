@@ -26,6 +26,9 @@ type DiffOutput struct {
 	PastTotalMonthlyCost *rat.Rat      `json:"past_total_monthly_cost,omitempty"`
 	TotalMonthlyCost     *rat.Rat      `json:"total_monthly_cost,omitempty"`
 	DiffTotalMonthlyCost *rat.Rat      `json:"diff_total_monthly_cost,omitempty"`
+	// CostChangeIncomplete is true when part of the change comes from usage
+	// that only one side knows, so the total understates or overstates it.
+	CostChangeIncomplete bool `json:"cost_change_incomplete,omitempty"`
 }
 
 type DiffProject struct {
@@ -38,6 +41,9 @@ type DiffProject struct {
 	PastTotalMonthlyCost *rat.Rat       `json:"past_total_monthly_cost,omitempty"`
 	TotalMonthlyCost     *rat.Rat       `json:"total_monthly_cost,omitempty"`
 	DiffTotalMonthlyCost *rat.Rat       `json:"diff_total_monthly_cost,omitempty"`
+	// CostChangeIncomplete is true when any resource's change is partly
+	// usage-driven, so this total is not the whole story.
+	CostChangeIncomplete bool `json:"cost_change_incomplete,omitempty"`
 }
 
 type DiffResource struct {
@@ -50,8 +56,12 @@ type DiffResource struct {
 	CostComponents  []DiffCostComponent `json:"cost_components,omitempty"`
 	Subresources    []DiffResource      `json:"subresources,omitempty"`
 	// CostDependsOnUsage is true when either side's costs are all
-	// usage-driven, so the total delta is not a real change.
+	// usage-driven, so there is no total worth printing.
 	CostDependsOnUsage bool `json:"cost_depends_on_usage,omitempty"`
+	// CostChangeIncomplete is true when the resource has a real total but
+	// part of its change is usage-driven, e.g. a fixed charge beside a
+	// component that lost its usage.
+	CostChangeIncomplete bool `json:"cost_change_incomplete,omitempty"`
 }
 
 type DiffCostComponent struct {
@@ -72,6 +82,9 @@ type DiffCostComponent struct {
 	// CostDependsOnUsage is true when either side is usage-driven, so the
 	// price per unit is the only number to show.
 	CostDependsOnUsage bool `json:"cost_depends_on_usage,omitempty"`
+	// UsageBased is true when this cost is priced per unit of usage, so it
+	// rests on assumed usage unless the user supplied their own.
+	UsageBased bool `json:"usage_based,omitempty"`
 }
 
 // Diff compares a current scan against a baseline. Projects, resources and
@@ -124,6 +137,9 @@ func Diff(past, current *Output) *DiffOutput {
 	for _, p := range out.Projects {
 		out.PastTotalMonthlyCost = out.PastTotalMonthlyCost.Add(orZero(p.PastTotalMonthlyCost))
 		out.TotalMonthlyCost = out.TotalMonthlyCost.Add(orZero(p.TotalMonthlyCost))
+		if p.CostChangeIncomplete {
+			out.CostChangeIncomplete = true
+		}
 	}
 	out.DiffTotalMonthlyCost = out.TotalMonthlyCost.Sub(out.PastTotalMonthlyCost)
 
@@ -211,6 +227,13 @@ func diffProject(op DiffOp, past, current *ProjectOutput) DiffProject {
 	p.DiffTotalMonthlyCost = p.TotalMonthlyCost.Sub(p.PastTotalMonthlyCost)
 	p.Resources = diffResources(resourcesOf(past), resourcesOf(current))
 
+	for _, r := range p.Resources {
+		if r.CostDependsOnUsage || r.CostChangeIncomplete {
+			p.CostChangeIncomplete = true
+			break
+		}
+	}
+
 	return p
 }
 
@@ -272,6 +295,19 @@ func diffResource(past, current *ResourceOutput) (DiffResource, bool) {
 
 	subresources := diffResources(subresourcesOf(past), subresourcesOf(current))
 	d.Subresources = subresources
+
+	// A resource keeps its total when only some of its costs are usage-driven,
+	// but the total is then part guess, so say so rather than print a saving.
+	for _, c := range components {
+		if c.CostDependsOnUsage && !c.DiffMonthlyCost.IsZero() {
+			d.CostChangeIncomplete = true
+		}
+	}
+	for _, s := range subresources {
+		if s.CostDependsOnUsage || s.CostChangeIncomplete {
+			d.CostChangeIncomplete = true
+		}
+	}
 
 	return d, componentsChanged || len(subresources) > 0
 }
@@ -342,6 +378,7 @@ func diffCostComponent(past, current *CostComponentOutput) (DiffCostComponent, b
 	// $100 component losing its usage must not read as a $100 saving.
 	pastUnknown, currentUnknown := usageUnknown(past), usageUnknown(current)
 	d.CostDependsOnUsage = pastUnknown || currentUnknown
+	d.UsageBased = (past != nil && past.UsageBased) || (current != nil && current.UsageBased)
 
 	// A usage-state flip always moves money, so the numeric deltas catch it.
 	// Flagging the flip itself would mark every component in a baseline saved

@@ -24,6 +24,12 @@ const baselineHint = `To show a diff:
   2. Change your code
   3. Show the diff:    infracost diff --compare-to infracost-base.json`
 
+// Sides of the comparison, used in the diagnostics error.
+const (
+	diffSideBaseline = "baseline"
+	diffSideCurrent  = "current scan"
+)
+
 // readOnlyStore reads through to the wrapped store but drops writes, so a
 // diff never replaces the cached baseline it just compared against.
 type readOnlyStore struct{ cache.Store }
@@ -63,34 +69,25 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
-			outputFormat := "text"
+			// Distinct from `scan`'s labels so diff adoption is visible in
+			// telemetry instead of inflating scan counts.
+			outputFormat := "diff"
 			switch {
 			case cfg.LLM.Value:
-				outputFormat = "llm"
+				outputFormat = "diff-llm"
 			case cfg.JSON.Value:
-				outputFormat = "json"
+				outputFormat = "diff-json"
 			}
 
 			defer func() { pushRunError(cfg, outputFormat, startTime, runErr) }()
 
-			// Before scanning: a missing baseline should fail fast, and the
-			// baseline must be read before --out-file can truncate it.
+			// Before scanning: a missing baseline should fail fast.
 			baseline, err := resolveBaseline(cfg, compareTo, in.Path)
 			if err != nil {
 				return err
 			}
-			if err := diffDiagnosticsErr(cmd.ErrOrStderr(), "baseline", baseline); err != nil {
+			if err := diffDiagnosticsErr(cmd.ErrOrStderr(), diffSideBaseline, baseline); err != nil {
 				return err
-			}
-
-			out := io.Writer(os.Stdout)
-			if legacy.outFile != "" {
-				f, err := os.Create(legacy.outFile) // #nosec G304 -- user-specified output file
-				if err != nil {
-					return fmt.Errorf("failed to create --out-file %q: %w", legacy.outFile, err)
-				}
-				defer func() { _ = f.Close() }()
-				out = f
 			}
 
 			var source oauth2.TokenSource
@@ -130,8 +127,21 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 
 			// Before rendering, unlike `scan`: a project that failed to parse
 			// has no resources, so the diff would read as a mass deletion.
-			if err := diffDiagnosticsErr(cmd.ErrOrStderr(), "current scan", current); err != nil {
+			if err := diffDiagnosticsErr(cmd.ErrOrStderr(), diffSideCurrent, current); err != nil {
 				return err
+			}
+
+			// Opened last: a failed login, plugin check or scan must not leave
+			// an empty file behind, which for `--out-file base.json --compare-to
+			// base.json` would destroy the baseline.
+			out := io.Writer(os.Stdout)
+			if legacy.outFile != "" {
+				f, err := os.Create(legacy.outFile) // #nosec G304 -- user-specified output file
+				if err != nil {
+					return fmt.Errorf("failed to create --out-file %q: %w", legacy.outFile, err)
+				}
+				defer func() { _ = f.Close() }()
+				out = f
 			}
 
 			return writeStructured(cfg, out, format.Diff(baseline, current), diffRenderers())
@@ -200,8 +210,15 @@ func diffDiagnosticsErr(stderr io.Writer, side string, r *format.Output) error {
 	if len(entries) == 1 {
 		word = "diagnostic"
 	}
-	return fmt.Errorf("the %s has %d critical %s, so the comparison would be wrong: fix the errors above, then save a new baseline.\n\n%s",
-		side, len(entries), word, baselineHint)
+
+	// Only the baseline is worth re-saving. Saving one from broken current
+	// code would fail the same way, or hide the change the user came for.
+	advice := "fix the errors above and re-run."
+	if side == diffSideBaseline {
+		advice = "fix the errors above, then save a new baseline.\n\n" + baselineHint
+	}
+	return fmt.Errorf("the %s has %d critical %s, so the comparison would be wrong: %s",
+		side, len(entries), word, advice)
 }
 
 // sameCurrency rejects a baseline priced in another currency: the diff

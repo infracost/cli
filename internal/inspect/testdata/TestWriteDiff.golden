@@ -28,13 +28,14 @@ Project: main
         +$0.20 per 1M requests
 
 Monthly cost change for main
-Amount:  +$376 ($190 → $566)
+Amount:  +$376 ($190 → $566) *
 Percent: +198%
 
 ──────────────────────────────────
 Key: ~ changed, + added, - removed
 
-Infracost estimate: Monthly estimate increased by $376 ($190 → $566)
+Infracost estimate: Monthly estimate increased by $376 ($190 → $566) *
+* part of this change depends on usage that only one side has, so the amount is not the whole change
 
-Changed project  Before  After  Change
-main               $190   $566   +$376
+Changed project  Before  After   Change
+main               $190   $566  +$376 *

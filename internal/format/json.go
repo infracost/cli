@@ -100,6 +100,9 @@ type CostComponentOutput struct {
 	// UsageUnknown is true when the provider gave no quantity, so the zero
 	// costs above mean "depends on usage" rather than "free".
 	UsageUnknown bool `json:"usage_unknown,omitempty"`
+	// UsageBased is true when the cost is priced per unit of usage, so it
+	// rests on assumed usage unless the user supplied their own.
+	UsageBased bool `json:"usage_based,omitempty"`
 }
 
 type DiagnosticOutput struct {
@@ -545,6 +548,7 @@ func convertCostComponent(c *provider.CostComponent) CostComponentOutput {
 		MonthlyCarbonSavingsGramsCo2E: monthlyCarbonGramsCo2e,
 		MonthlyWaterSavingsLiters:     monthlyWaterLitres,
 		UsageUnknown:                  c.Quantity == nil,
+		UsageBased:                    c.UsageBased,
 	}
 }
 

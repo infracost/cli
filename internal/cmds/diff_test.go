@@ -59,22 +59,32 @@ func TestDiffDiagnosticsErr(t *testing.T) {
 		}}}
 	}
 
-	t.Run("critical stops the diff and prints the message", func(t *testing.T) {
+	t.Run("a broken baseline is worth re-saving", func(t *testing.T) {
 		var stderr bytes.Buffer
-		err := diffDiagnosticsErr(&stderr, "baseline", withDiagnostic("critical"))
+		err := diffDiagnosticsErr(&stderr, diffSideBaseline, withDiagnostic("critical"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "the baseline has 1 critical diagnostic")
+		assert.Contains(t, err.Error(), "save a new baseline")
 		assert.Contains(t, stderr.String(), "invalid block")
+	})
+
+	t.Run("a broken current scan is not", func(t *testing.T) {
+		var stderr bytes.Buffer
+		err := diffDiagnosticsErr(&stderr, diffSideCurrent, withDiagnostic("critical"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "fix the errors above and re-run")
+		assert.NotContains(t, err.Error(), "save a new baseline",
+			"the baseline is fine; re-saving from broken code would hide the change")
 	})
 
 	t.Run("warnings do not stop the diff", func(t *testing.T) {
 		var stderr bytes.Buffer
-		assert.NoError(t, diffDiagnosticsErr(&stderr, "current scan", withDiagnostic("warning")))
+		assert.NoError(t, diffDiagnosticsErr(&stderr, diffSideCurrent, withDiagnostic("warning")))
 		assert.Empty(t, stderr.String())
 	})
 
 	t.Run("no diagnostics", func(t *testing.T) {
 		var stderr bytes.Buffer
-		assert.NoError(t, diffDiagnosticsErr(&stderr, "baseline", &format.Output{}))
+		assert.NoError(t, diffDiagnosticsErr(&stderr, diffSideBaseline, &format.Output{}))
 	})
 }

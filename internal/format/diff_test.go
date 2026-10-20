@@ -290,6 +290,31 @@ func TestDiffUsageStateTransitions(t *testing.T) {
 		assert.False(t, Diff(past, current).HasChanges())
 	})
 
+	t.Run("a fixed charge beside lost usage marks the totals", func(t *testing.T) {
+		fixed := cc("Instance usage", 70)
+		past := out("main", res("aws_instance.web", fixed, requests(100, false)))
+		current := out("main", res("aws_instance.web", fixed, requests(0, true)))
+
+		d := Diff(past, current)
+		resource := d.Projects[0].Resources[0]
+
+		// The $70 charge is known, so the resource keeps its total.
+		assert.False(t, resource.CostDependsOnUsage)
+		assert.True(t, resource.CostChangeIncomplete, "-$100 is not a real saving")
+		assert.True(t, d.Projects[0].CostChangeIncomplete)
+		assert.True(t, d.CostChangeIncomplete)
+	})
+
+	t.Run("a wholly known change is complete", func(t *testing.T) {
+		past := out("main", res("aws_instance.web", cc("Instance usage", 70)))
+		current := out("main", res("aws_instance.web", cc("Instance usage", 561)))
+
+		d := Diff(past, current)
+		assert.False(t, d.Projects[0].Resources[0].CostChangeIncomplete)
+		assert.False(t, d.Projects[0].CostChangeIncomplete)
+		assert.False(t, d.CostChangeIncomplete)
+	})
+
 	t.Run("added priced component does not depend on usage", func(t *testing.T) {
 		d := Diff(out("main"), out("main", res("aws_lambda_function.fn", requests(100, false))))
 		resource := d.Projects[0].Resources[0]
