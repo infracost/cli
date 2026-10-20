@@ -241,9 +241,7 @@ func loadBaselineFile(path string) (*format.Output, error) {
 
 func diffRenderers() Renderers[*format.DiffOutput] {
 	return Renderers[*format.DiffOutput]{
-		Human: func(w io.Writer, d *format.DiffOutput) error {
-			return inspect.WriteDiff(w, d)
-		},
+		Human: inspect.WriteDiff,
 		JSON: func(w io.Writer, d *format.DiffOutput) error {
 			if err := d.ToJSON(w); err != nil {
 				return fmt.Errorf("failed to write JSON output: %w", err)
