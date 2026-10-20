@@ -15,15 +15,17 @@ const diffDivider = "───────────────────�
 var diffKey = fmt.Sprintf("Key: %s changed, %s added, %s removed",
 	opChar(format.DiffChanged), opChar(format.DiffAdded), opChar(format.DiffRemoved))
 
+var diffKeyUsage = diffKey + ", * usage cost"
+
 const (
-	incompleteMark = " *"
-	incompleteNote = "* part of this change depends on usage that only one side has, so the amount is not the whole change"
+	usageNote      = "* usage costs are based on assumed usage. Set usage values for accurate costs."
+	incompleteNote = "* usage costs are based on assumed usage, and some usage is known on only one side, so this change is partial."
 )
 
-// incomplete marks a total that is partly guesswork.
-func incomplete(b bool) string {
+// usageMark flags a cost that rests on assumed usage, as the v1 CLI did.
+func usageMark(b bool) string {
 	if b {
-		return ui.Dim(incompleteMark)
+		return ui.Dim(" *")
 	}
 	return ""
 }
@@ -33,8 +35,12 @@ func incomplete(b bool) string {
 func WriteDiff(w io.Writer, d *format.DiffOutput) error {
 	var b strings.Builder
 
+	key := diffKey
+	if d.HasUsageCosts {
+		key = diffKeyUsage
+	}
 	if d.HasChanges() {
-		b.WriteString(diffKey + "\n\n")
+		b.WriteString(key + "\n\n")
 	}
 	b.WriteString(diffDivider + "\n")
 
@@ -57,7 +63,7 @@ func WriteDiff(w io.Writer, d *format.DiffOutput) error {
 			ui.Dim(fmt.Sprintf("(%s → %s)",
 				humanMoney(p.PastTotalMonthlyCost, d.Currency),
 				humanMoney(p.TotalMonthlyCost, d.Currency))),
-			incomplete(p.CostChangeIncomplete),
+			usageMark(p.HasUsageCosts),
 		)
 		if pct := percentChange(p.PastTotalMonthlyCost, p.TotalMonthlyCost); pct != "" {
 			fmt.Fprintf(&b, "Percent: %s\n", pct)
@@ -73,7 +79,7 @@ func WriteDiff(w io.Writer, d *format.DiffOutput) error {
 		return err
 	}
 
-	b.WriteString(diffKey + "\n")
+	b.WriteString(key + "\n")
 
 	if unchanged := d.UnchangedProjects(); len(unchanged) > 0 {
 		word := "projects"
@@ -84,9 +90,13 @@ func WriteDiff(w io.Writer, d *format.DiffOutput) error {
 			len(unchanged), word, strings.Join(unchanged, ", "))
 	}
 
-	fmt.Fprintf(&b, "\nInfracost estimate: %s%s\n", changeSentence(d), incomplete(d.CostChangeIncomplete))
-	if d.CostChangeIncomplete {
-		fmt.Fprintf(&b, "%s\n", ui.Dim(incompleteNote))
+	fmt.Fprintf(&b, "\nInfracost estimate: %s%s\n", changeSentence(d), usageMark(d.HasUsageCosts))
+	if d.HasUsageCosts {
+		note := usageNote
+		if d.CostChangeIncomplete {
+			note = incompleteNote
+		}
+		fmt.Fprintf(&b, "%s\n", ui.Dim(note))
 	}
 	b.WriteString("\n")
 	writeDiffTable(&b, d)
@@ -114,7 +124,7 @@ func diffResource(currency string, r format.DiffResource, topLevel bool) string 
 			ui.Dim(fmt.Sprintf("(%s → %s)",
 				humanMoney(r.PastMonthlyCost, currency),
 				humanMoney(r.MonthlyCost, currency))),
-			incomplete(r.CostChangeIncomplete))
+			usageMark(r.HasUsageCosts))
 	}
 
 	for _, c := range r.CostComponents {
@@ -142,11 +152,12 @@ func diffCostComponent(currency string, c format.DiffCostComponent) string {
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "  %s %s\n",
+	fmt.Fprintf(&b, "  %s %s%s\n",
 		costChange(currency, c.DiffMonthlyCost),
 		ui.Dim(fmt.Sprintf("(%s → %s)",
 			humanMoney(c.PastMonthlyCost, currency),
-			humanMoney(c.MonthlyCost, currency))))
+			humanMoney(c.MonthlyCost, currency))),
+		usageMark(c.UsageBased))
 
 	return b.String()
 }
@@ -168,7 +179,7 @@ func writeDiffTable(w io.Writer, d *format.DiffOutput) {
 			p.ProjectName,
 			humanMoney(p.PastTotalMonthlyCost, d.Currency),
 			humanMoney(p.TotalMonthlyCost, d.Currency),
-			costChange(d.Currency, p.DiffTotalMonthlyCost) + incomplete(p.CostChangeIncomplete),
+			costChange(d.Currency, p.DiffTotalMonthlyCost) + usageMark(p.HasUsageCosts),
 		})
 	}
 

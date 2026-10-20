@@ -29,6 +29,8 @@ type DiffOutput struct {
 	// CostChangeIncomplete is true when part of the change comes from usage
 	// that only one side knows, so the total understates or overstates it.
 	CostChangeIncomplete bool `json:"cost_change_incomplete,omitempty"`
+	// HasUsageCosts is true when any cost here is priced per unit of usage.
+	HasUsageCosts bool `json:"has_usage_costs,omitempty"`
 }
 
 type DiffProject struct {
@@ -44,6 +46,8 @@ type DiffProject struct {
 	// CostChangeIncomplete is true when any resource's change is partly
 	// usage-driven, so this total is not the whole story.
 	CostChangeIncomplete bool `json:"cost_change_incomplete,omitempty"`
+	// HasUsageCosts is true when any cost here is priced per unit of usage.
+	HasUsageCosts bool `json:"has_usage_costs,omitempty"`
 }
 
 type DiffResource struct {
@@ -62,6 +66,8 @@ type DiffResource struct {
 	// part of its change is usage-driven, e.g. a fixed charge beside a
 	// component that lost its usage.
 	CostChangeIncomplete bool `json:"cost_change_incomplete,omitempty"`
+	// HasUsageCosts is true when any cost here is priced per unit of usage.
+	HasUsageCosts bool `json:"has_usage_costs,omitempty"`
 }
 
 type DiffCostComponent struct {
@@ -139,6 +145,9 @@ func Diff(past, current *Output) *DiffOutput {
 		out.TotalMonthlyCost = out.TotalMonthlyCost.Add(orZero(p.TotalMonthlyCost))
 		if p.CostChangeIncomplete {
 			out.CostChangeIncomplete = true
+		}
+		if p.HasUsageCosts {
+			out.HasUsageCosts = true
 		}
 	}
 	out.DiffTotalMonthlyCost = out.TotalMonthlyCost.Sub(out.PastTotalMonthlyCost)
@@ -230,7 +239,9 @@ func diffProject(op DiffOp, past, current *ProjectOutput) DiffProject {
 	for _, r := range p.Resources {
 		if r.CostDependsOnUsage || r.CostChangeIncomplete {
 			p.CostChangeIncomplete = true
-			break
+		}
+		if r.HasUsageCosts || r.CostDependsOnUsage {
+			p.HasUsageCosts = true
 		}
 	}
 
@@ -302,10 +313,16 @@ func diffResource(past, current *ResourceOutput) (DiffResource, bool) {
 		if c.CostDependsOnUsage && !c.DiffMonthlyCost.IsZero() {
 			d.CostChangeIncomplete = true
 		}
+		if c.UsageBased {
+			d.HasUsageCosts = true
+		}
 	}
 	for _, s := range subresources {
 		if s.CostDependsOnUsage || s.CostChangeIncomplete {
 			d.CostChangeIncomplete = true
+		}
+		if s.HasUsageCosts {
+			d.HasUsageCosts = true
 		}
 	}
 

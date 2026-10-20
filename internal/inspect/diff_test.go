@@ -19,6 +19,14 @@ func diffCC(name string, cost float64) format.CostComponentOutput {
 	}
 }
 
+// usageCC is a component priced per unit of usage, so it carries the marker.
+func usageCC(name, unit string, cost float64) format.CostComponentOutput {
+	c := diffCC(name, cost)
+	c.Unit = unit
+	c.UsageBased = true
+	return c
+}
+
 func diffOutput(projectName string, resources ...format.ResourceOutput) *format.Output {
 	return &format.Output{
 		Currency: "USD",
@@ -34,6 +42,9 @@ func TestWriteDiff(t *testing.T) {
 		format.ResourceOutput{Name: "aws_db_instance.old", CostComponents: []format.CostComponentOutput{
 			diffCC("Database instance (on-demand, db.t3.micro)", 120),
 		}},
+		format.ResourceOutput{Name: "aws_s3_bucket.data", CostComponents: []format.CostComponentOutput{
+			usageCC("Standard storage", "GB", 23),
+		}},
 	)
 
 	current := diffOutput("main",
@@ -45,6 +56,9 @@ func TestWriteDiff(t *testing.T) {
 				CostComponents: []format.CostComponentOutput{diffCC("Storage (general purpose SSD, gp2)", 5)},
 			}},
 		},
+		format.ResourceOutput{Name: "aws_s3_bucket.data", CostComponents: []format.CostComponentOutput{
+			usageCC("Standard storage", "GB", 46),
+		}},
 		format.ResourceOutput{Name: "aws_lambda_function.hello", CostComponents: []format.CostComponentOutput{
 			{Name: "Requests", Unit: "1M requests", Price: rat.New(0.2)},
 		}},
