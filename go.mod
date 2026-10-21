@@ -1,6 +1,6 @@
 module github.com/infracost/cli
 
-go 1.26.6
+go 1.26.10
 
 require (
 	github.com/BourgeoisBear/rasterm v1.1.2
