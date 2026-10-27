@@ -164,9 +164,9 @@ type ListFindingsParams struct {
 }
 
 // ActionType is the discriminator for GenerateAction / CreateAction. The
-// generate endpoint only accepts the automatable types (open_pr,
-// create_ticket); manual is creatable directly but the LLM can't draft
-// it for you.
+// generate and create endpoints only accept the automatable types
+// (open_pr, create_ticket); manual is only a task's suggested_action, and
+// a manual fix is recorded by confirming the task.
 type ActionType string
 
 const (
@@ -232,8 +232,8 @@ type UpdateFindingStatusRequest struct {
 }
 
 // ReportType discriminates the two intent-shaped task verbs surfaced by
-// POST /findings/tasks/:taskId/report. Confirmation advances any linked
-// open manual actions to "done" so the observation cascade can verify;
+// POST /findings/tasks/:taskId/report. Confirmation marks the task done,
+// the same as Mark as done in the app, and the next scan verifies it;
 // correction dismisses the task, dismisses linked draft/open actions, and
 // emits an AgentLearning with source "correction".
 type ReportType string
