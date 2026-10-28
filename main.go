@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -16,6 +17,7 @@ import (
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/internal/update"
 	"github.com/infracost/cli/pkg/config/process"
+	"github.com/infracost/cli/pkg/scanner"
 	"github.com/infracost/cli/pkg/stacktrace"
 	"github.com/infracost/cli/version"
 	"github.com/infracost/go-proto/pkg/diagnostic"
@@ -56,6 +58,16 @@ func hasBoundedErrors() bool {
 		}
 	}
 	return false
+}
+
+// reportedError strips the scan wrapping from a run-quota failure so the
+// pricing API's message, which names the contact address, is what the user sees.
+func reportedError(err error) error {
+	var quotaErr *scanner.RunQuotaExceededError
+	if errors.As(err, &quotaErr) {
+		return quotaErr
+	}
+	return err
 }
 
 // agentNagSkipCommands lists leaf commands where the outdated-agent-skill
@@ -273,7 +285,7 @@ func run() (exitCode int) {
 
 	err := cmd.Execute()
 	if err != nil {
-		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_FAILED_OPERATION, err))
+		diags = diags.Add(diagnostic.FromError(parserpb.DiagnosticType_DIAGNOSTIC_TYPE_FAILED_OPERATION, reportedError(err)))
 	}
 
 	// Fire a lightweight infracost-command event for commands that don't

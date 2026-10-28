@@ -32,12 +32,51 @@ import (
 	treepb "github.com/infracost/proto/gen/go/infracost/tree"
 	"github.com/infracost/proto/gen/go/infracost/usage"
 	"golang.org/x/oauth2"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // PluginOpts holds arbitrary plugin-specific parse options, keyed by plugin
 // name then option key (nested when the option key is dotted). The schema of
 // the inner map is owned by the plugin that matches the outer key.
 type PluginOpts map[string]map[string]any
+
+// RunQuotaExceededError reports that the organization exceeded its monthly run
+// limit. Message is the pricing API's text, which names the contact address.
+type RunQuotaExceededError struct {
+	Message string
+}
+
+func (e *RunQuotaExceededError) Error() string {
+	return e.Message
+}
+
+// runQuotaReason and runQuotaDomain are the ErrorInfo tag a provider plugin
+// puts on its run-limit status. gRPC also returns ResourceExhausted when a
+// plugin's output exceeds the max message size, so the code alone is not
+// enough to tell them apart, and the domain keeps an untagged plugin from
+// putting its own text in front of the user as a billing message.
+const (
+	runQuotaReason = "ABOVE_QUOTA"
+	runQuotaDomain = "pricing.api.infracost.io"
+)
+
+// wrapProviderError converts a provider plugin failure into a scan error. The
+// typed run-quota error does not survive the plugin boundary, so it is
+// reconstructed from the gRPC status.
+func wrapProviderError(name string, err error) error {
+	st, ok := status.FromError(err)
+	if ok && st.Code() == codes.ResourceExhausted {
+		for _, detail := range st.Details() {
+			info, ok := detail.(*errdetails.ErrorInfo)
+			if ok && info.GetReason() == runQuotaReason && info.GetDomain() == runQuotaDomain {
+				return &RunQuotaExceededError{Message: st.Message()}
+			}
+		}
+	}
+	return fmt.Errorf("failed to execute provider %s: %w", name, err)
+}
 
 // ProjectResult holds the outputs for a single project scan.
 type ProjectResult struct {
@@ -287,7 +326,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	for _, p := range providerPlugins {
 		resp, err := p.Process(ctx, &pluginpb.ProcessRequest{Input: input})
 		if err != nil {
-			return nil, fmt.Errorf("failed to execute provider %s: %w", p.Info.GetName(), err)
+			return nil, wrapProviderError(p.Info.GetName(), err)
 		}
 		output := resp.GetOutput()
 		if output == nil {
