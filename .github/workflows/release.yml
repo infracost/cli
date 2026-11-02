@@ -1,31 +1,61 @@
 name: release
+# Started by `ic release cli`, which works out the version and changelog.
+# Releases run on main and the published release creates the tag, rather than
+# starting from a pushed tag, so the prod environment (main only) guarantees
+# every release is a commit on main.
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to be released (e.g., 1.0.0)"
+      tag:
+        description: "Version to release, e.g. v1.2.3 or v1.2.3-beta.1"
         type: string
         required: true
+      sha:
+        description: "Commit ic built the changelog from; the run fails if main has moved since"
+        type: string
+        required: true
+      message:
+        description: "Release notes (the changelog)"
+        type: string
+        required: false
 
 permissions: {}
+
+# One release at a time, so a second run's tag check sees the first run's tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   version:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.VERSION }}
     steps:
       - id: version
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ inputs.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_VERSION="${{ github.event.inputs.version }}"
-          else
-            RAW_VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases run on main, not $GITHUB_REF"; exit 1
           fi
-          echo "VERSION=${RAW_VERSION#v}" >> $GITHUB_OUTPUT
+          if [ "$SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::main moved from $SHA to $GITHUB_SHA since the changelog was built. Run ic release cli again."; exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$TAG is not vX.Y.Z or vX.Y.Z-pre"; exit 1
+          fi
+          # Only a 404 means the tag is free; any other error stops the release.
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>&1); then
+            echo "::error::$TAG already exists"; exit 1
+          elif ! grep -q "HTTP 404" <<<"$out"; then
+            echo "::error::Couldn't check whether $TAG exists: $out"; exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
 
   draft-release:
     runs-on: ubuntu-24.04
@@ -45,15 +75,19 @@ jobs:
             echo "EXISTS=false" >> $GITHUB_OUTPUT
           fi
 
+      # Publishing the release creates the tag, on the dispatched commit.
       - name: Create draft release
         if: steps.check-release.outputs.EXISTS == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: v${{ needs.version.outputs.version }}
+          NOTES: ${{ inputs.message }}
         run: |
           gh release create "$VERSION" \
             --repo "${{ github.repository }}" \
             --title "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --notes "$NOTES" \
             --draft
 
       - name: Reset to draft
@@ -61,14 +95,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: v${{ needs.version.outputs.version }}
+          NOTES: ${{ inputs.message }}
         run: |
           gh release edit "$VERSION" \
             --repo "${{ github.repository }}" \
+            --target "$GITHUB_SHA" \
+            --notes "$NOTES" \
             --draft
 
   build-and-release:
     runs-on: ${{ matrix.runner }}
     needs: [version, draft-release]
+    environment: prod
     permissions:
       contents: write
       id-token: write
@@ -197,6 +235,7 @@ jobs:
   invalidate-cloudfront:
     runs-on: ubuntu-24.04
     needs: [version, build-and-release]
+    environment: prod
     permissions:
       id-token: write
     steps:
@@ -225,6 +264,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: v${{ needs.version.outputs.version }}
         run: |
+          # Publishing onto an existing tag would attach these binaries to
+          # whatever commit it points at. Only "not found" means it's free.
+          if tagged=$(gh api "repos/${{ github.repository }}/commits/$VERSION" --jq .sha 2>"$RUNNER_TEMP/err"); then
+            if [ "$tagged" != "$GITHUB_SHA" ]; then
+              echo "::error::$VERSION was tagged on $tagged since the release started, not $GITHUB_SHA"; exit 1
+            fi
+          elif ! grep -qE "HTTP (404|422)" "$RUNNER_TEMP/err"; then
+            echo "::error::Couldn't check $VERSION: $(cat "$RUNNER_TEMP/err")"; exit 1
+          fi
           gh release edit "$VERSION" \
             --repo "${{ github.repository }}" \
             --draft=false
