@@ -15,6 +15,8 @@ import (
 
 	"github.com/infracost/cli/internal/cache"
 	"github.com/infracost/cli/pkg/logging"
+	"github.com/infracost/go-proto/pkg/diagnostic"
+	"github.com/infracost/proto/gen/go/infracost/parser"
 	"github.com/infracost/proto/gen/go/infracost/parser/options"
 	pluginpb "github.com/infracost/proto/gen/go/infracost/plugin"
 	"google.golang.org/protobuf/proto"
@@ -196,6 +198,23 @@ func projectCacheFilename(absProjectPath string) string {
 	return hex.EncodeToString(h[:]) + ".pb"
 }
 
+// --- Parser response eligibility helper. ---
+
+// hasTransientParserDiagnostics prevents an upstream failure from surviving
+// recovery just because the local source fingerprint has not changed.
+func hasTransientParserDiagnostics(resp *pluginpb.ParseResponse) bool {
+	for _, d := range resp.GetDiagnostics() {
+		// Check individually: FromProto caps non-critical diagnostics for display,
+		// but a transient warning beyond that cap must still prevent caching.
+		if d != nil && diagnostic.FromProto([]*parser.Diagnostic{d}).Transient().Len() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// --- End parser response eligibility helper. ---
+
 // loadParsedResponse returns a previously-cached Parse response for
 // absProjectPath whose stored fingerprint matches the supplied one.
 // Returns nil for any failure (cache miss, fingerprint mismatch,
@@ -227,6 +246,9 @@ func loadParsedResponse(pluginName, pluginVersion, absProjectPath, fingerprint s
 		logging.Debugf("parser cache unmarshal failed for %q: %s", path, err)
 		return nil
 	}
+	if hasTransientParserDiagnostics(&resp) {
+		return nil
+	}
 	return &resp
 }
 
@@ -237,6 +259,9 @@ func loadParsedResponse(pluginName, pluginVersion, absProjectPath, fingerprint s
 // write failures are logged and swallowed so a flaky cache write never
 // aborts a scan.
 func saveParsedResponse(pluginName, pluginVersion, absProjectPath, fingerprint string, resp *pluginpb.ParseResponse) {
+	if hasTransientParserDiagnostics(resp) {
+		return
+	}
 	dir := parserCacheDir(pluginName, pluginVersion)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		logging.Warnf("failed to create parser results cache dir %q: %s", dir, err)
