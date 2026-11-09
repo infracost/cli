@@ -285,9 +285,11 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: infracost/lib/.github/actions/sts-token@main
+      - uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
         id: app-token
         with:
+          domain: sts.infracost.io
+          scope: infracost
           identity: cli-release-dispatch
 
       - name: Dispatch chocolatey build
@@ -305,9 +307,11 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: infracost/lib/.github/actions/sts-token@main
+      - uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
         id: app-token
         with:
+          domain: sts.infracost.io
+          scope: infracost
           identity: cli-release-dispatch
 
       - name: Dispatch docs releases.json bump
