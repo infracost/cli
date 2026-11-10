@@ -127,6 +127,11 @@ type ScanProjectOptions struct {
 	// FetchAuth carries transport-level auth for remote fetches (the developer's
 	// on-disk SSH keys), passed to the plugin's in-process getter.
 	FetchAuth *options.FetchAuth
+	// PrivateSourceAllowlist lists hosts, IPs and CIDR ranges the parser may fetch
+	// modules from even though they are private; its SSRF guard stays on for
+	// everything else. Set it only from the caller's own environment, never from
+	// repo content, and not for untrusted runs.
+	PrivateSourceAllowlist []string
 }
 
 // ScanProject scans a single project and returns its resources, costs, and policy results.
@@ -386,6 +391,9 @@ func buildGenericOptions(opts *ScanProjectOptions) *options.GenericOptions {
 		RequiredAttributes: protoAttributeRequirements(namingPolicyAttributeRequirements(opts.FinopsPolicies)),
 		Workspace:          opts.Project.Terraform.Workspace,
 		FetchAuth:          opts.FetchAuth,
+		// Caller-sourced, like FetchAuth: it comes from the process environment, not
+		// from the repo's config, so a pull request cannot widen it.
+		PrivateSourceAllowlist: opts.PrivateSourceAllowlist,
 	}
 
 	if c := opts.Project.Terraform.Cloud; c.Org != "" || c.Workspace != "" || c.Host != "" {
