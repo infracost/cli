@@ -3,6 +3,7 @@ package cmds
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/inspect"
 	"github.com/infracost/cli/internal/ui"
+	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 )
@@ -82,7 +84,10 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 			defer func() { pushRunError(cfg, outputFormat, startTime, runErr) }()
 
 			// Before scanning: a missing baseline should fail fast.
-			baseline, err := resolveBaseline(cfg, compareTo, in.Path)
+			baseline, err := resolveBaseline(cmd.Context(), cfg, compareTo, in.Path, pluginOptionMap)
+			if errors.Is(err, errBaselineSaved) {
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -233,7 +238,7 @@ func sameCurrency(past, current *format.Output) error {
 
 // resolveBaseline loads --compare-to, else the cached result for this path.
 // Age and source changes are ignored: compare against the run before the edit.
-func resolveBaseline(cfg *config.Config, compareTo, path string) (*format.Output, error) {
+func resolveBaseline(ctx context.Context, cfg *config.Config, compareTo, path string, pluginOpts pkgscanner.PluginOpts) (*format.Output, error) {
 	if compareTo != "" {
 		return loadBaselineFile(compareTo)
 	}
@@ -249,6 +254,18 @@ func resolveBaseline(cfg *config.Config, compareTo, path string) (*format.Output
 
 	cached, err := cfg.Cache.ForPathAny(absolutePath)
 	if err != nil {
+		// A cache that cannot be read is not a missing baseline, and scanning
+		// writes back to the same place.
+		if !errors.Is(err, cache.ErrMiss) {
+			return nil, fmt.Errorf("failed to read the cached baseline: %w", err)
+		}
+		saved, scanErr := offerBaselineScan(ctx, cfg, absolutePath, target, pluginOpts)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		if saved {
+			return nil, errBaselineSaved
+		}
 		return nil, fmt.Errorf("no baseline to compare against (%v): pass --compare-to, or run `infracost scan` first.\n\n%s", err, baselineHint)
 	}
 	return cached, nil

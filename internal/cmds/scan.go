@@ -72,7 +72,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 
 	if info, err := os.Stat(absolutePath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("target directory does not exist")
+			return nil, targetNotExistError(absolutePath)
 		}
 		return nil, fmt.Errorf("failed to get info for target directory: %w", err)
 	} else if !info.IsDir() {
@@ -121,6 +121,11 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 
 	events.RegisterMetadata("orgId", cfg.OrgID)
 	events.RegisterMetadata("repoId", repositoryURL)
+	// The join key between `ci setup` and the runs that follow it; repoId is
+	// the raw remote URL, which differs between SSH and HTTPS clones.
+	if repo, repoErr := parseRemoteURL(repositoryURL); repoErr == nil {
+		events.RegisterMetadata("repoSlug", repo.eventSlug())
+	}
 	events.RegisterMetadata("branchId", branchName)
 
 	s := &scanner.Scanner{

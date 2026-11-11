@@ -123,6 +123,11 @@ func PressEnter(msg string) bool {
 // non-interactive (e.g. in tests), the browser is not opened.
 func OpenOrContinue(url string) {
 	_, _ = fmt.Fprintf(logging.Output(), "  %s\n", Code(url))
+	// A pipeline has no browser and may hold stdin open forever, so the read
+	// below would hang rather than return EOF.
+	if !IsInteractive() {
+		return
+	}
 	if !PressEnter("\nPress Enter to open in your browser...") {
 		return
 	}
