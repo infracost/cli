@@ -40,6 +40,30 @@ func (r repoInfo) hostSlug() string {
 	return r.host + "/" + r.slug()
 }
 
+// Azure Repos serves SSH and HTTPS from different hosts, so one maps onto the
+// other for the join key below.
+const (
+	azureSSHHost   = "ssh.dev.azure.com"
+	azureHTTPSHost = "dev.azure.com"
+)
+
+// eventSlug is hostSlug with a lower-cased host, the form the scanner
+// registers as repoSlug. Both sides derive it from whatever URL they hold, so
+// a setup run from an SSH remote joins to pipeline runs that only ever see the
+// HTTPS one. The host is lower-cased because only it is case-insensitive; the
+// path is left alone, since an Azure project name is not.
+//
+// Azure Repos serves SSH from ssh.dev.azure.com and HTTPS from dev.azure.com,
+// so the prefix goes too. The retired vs-ssh.visualstudio.com host has no such
+// pair — its HTTPS form is named after the organization — and does not join.
+func (r repoInfo) eventSlug() string {
+	host := strings.ToLower(r.host)
+	if host == azureSSHHost {
+		host = azureHTTPSHost
+	}
+	return host + "/" + r.slug()
+}
+
 func parseRemoteURL(remoteURL string) (repoInfo, error) {
 	remoteURL = normalizeSSHURL(remoteURL)
 
@@ -177,7 +201,15 @@ func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source 
 	}
 
 	if len(user.Organizations) == 0 {
-		return dashboard.Organization{}, fmt.Errorf("%w for this account — create one at https://dashboard.infracost.io or verify your login with 'infracost auth login'", errCINoOrganizations)
+		org, created, err := ensurePersonalOrg(ctx, cfg, source, user.Name, user.Email, orgCreateTriggerCISetup)
+		if err != nil {
+			return dashboard.Organization{}, err
+		}
+		if created {
+			return org, nil
+		}
+		// Only an interactive user who declined the offer reaches this.
+		return dashboard.Organization{}, fmt.Errorf("%w for this account — create one with 'infracost org create' or at https://dashboard.infracost.io", errCINoOrganizations)
 	}
 
 	if cfg.OrgID != "" {
@@ -446,18 +478,25 @@ func RunCISetup(ctx context.Context, cfg *config.Config, opts CISetupOptions) (r
 
 	repoRoot := vcs.GetRepoRoot(cwd)
 	if repoRoot == "" {
-		return result, fmt.Errorf("%w — run this command from within a git repo", errCINotGitRepo)
+		return result, fmt.Errorf("%w: %s is not inside one.\n"+
+			"  cd into your repository, or start one here with:\n    git init", errCINotGitRepo, cwd)
 	}
 
 	remoteURL := vcs.GetRemoteURL(repoRoot)
 	if remoteURL == "" {
-		return result, fmt.Errorf("%w — run this from a repository with an origin remote", errCINoGitRemote)
+		return result, fmt.Errorf("%w: %s has no 'origin' remote, and the pipeline is written for the repository it points at.\n"+
+			"  Add one with:\n    git remote add origin <your repository URL>", errCINoGitRemote, repoRoot)
 	}
 
 	repo, err := parseRemoteURL(remoteURL)
 	if err != nil {
 		return result, err
 	}
+
+	// Registered here rather than in the outcome extras: it is the join key
+	// between a setup and the pipeline runs that follow, and the scanner
+	// registers the same slug.
+	events.RegisterMetadata("repoSlug", repo.eventSlug())
 
 	defaultBranch := vcs.GetDefaultBranch(repoRoot)
 
@@ -614,17 +653,57 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	result.stage = ciStageAPIKey
 	setter, canSetSecret := platform.writer.(ciSecretSetter)
 	canSetSecret = canSetSecret && setter.CanSetSecret()
+	// A key we took at the prompt is removed from the environment once the
+	// secret is written, so the subprocesses that follow do not inherit it.
+	keyFromPrompt := false
+	defer func() {
+		if keyFromPrompt {
+			_ = os.Unsetenv(ciAPIKeySecret)
+		}
+	}()
+
 	if canSetSecret {
-		if os.Getenv(ciAPIKeySecret) == "" {
-			result.Outcome = "api-key-missing"
-			ui.Fail("Infracost API key   not found")
-			fmt.Println()
-			fmt.Println("To get an API key, visit your organization's CLI tokens page:")
-			ui.OpenOrContinue(cliTokensURL(org.Slug))
-			fmt.Println()
-			fmt.Println("Once you have a key, set it as an environment variable and retry:")
-			fmt.Printf("  export %s=<your-key>\n", ciAPIKeySecret)
-			return false, fmt.Errorf("%s: %w", ciAPIKeySecret, errCIAPIKeyMissing)
+		// A key that was typed here can be typed again; one that came from the
+		// environment is wrong in a file the user has to go and edit.
+		for attempt := 1; ; attempt++ {
+			fromPrompt := false
+			if os.Getenv(ciAPIKeySecret) == "" {
+				entered, err := promptForAPIKey(org.Slug)
+				if err != nil {
+					return false, err
+				}
+				if !entered {
+					result.Outcome = "api-key-missing"
+					fmt.Println()
+					fmt.Println("Once you have a key, set it as an environment variable and retry:")
+					fmt.Printf("  export %s=<your-key>\n", ciAPIKeySecret)
+					return false, fmt.Errorf("%s: %w", ciAPIKeySecret, errCIAPIKeyMissing)
+				}
+				fromPrompt = true
+				keyFromPrompt = true
+			}
+
+			err := validateCIAPIKey(os.Getenv(ciAPIKeySecret))
+			if err == nil {
+				break
+			}
+
+			result.Outcome = "api-key-invalid"
+			if !fromPrompt || attempt >= maxAPIKeyAttempts {
+				// Before the browser launches, which would inherit it.
+				if fromPrompt {
+					_ = os.Unsetenv(ciAPIKeySecret)
+					keyFromPrompt = false
+				}
+				fmt.Println()
+				ui.OpenOrContinue(cliTokensURL(org.Slug))
+				return false, err
+			}
+
+			ui.Fail(err.Error())
+			if unsetErr := os.Unsetenv(ciAPIKeySecret); unsetErr != nil {
+				return false, err
+			}
 		}
 		ui.Successf("Infracost API key   ready (from %s)", ciAPIKeySecret)
 	}
@@ -639,7 +718,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	// A file we wrote is an update, not an overwrite, so the prompt is only for
 	// one the user or an older composite-action setup left behind.
 	if platform.ownsFiles && anyConfigExists(repoRoot, paths) && !ciFilesAreManaged(repoRoot, paths) {
-		overwrite, err := promptExistingWorkflows(opts.Yes)
+		overwrite, err := promptExistingWorkflows(opts.Yes, repoRoot, paths)
 		if err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				result.Outcome = "declined"
@@ -865,13 +944,72 @@ func cliTokensURL(orgSlug string) string {
 	return fmt.Sprintf("https://dashboard.infracost.io/org/%s/settings/cli-tokens", orgSlug)
 }
 
-func promptExistingWorkflows(yes bool) (bool, error) {
+// promptForAPIKey opens the page that issues a key and takes one in the
+// terminal, reporting whether it got one.
+//
+// Seven of the 52 people who ran `ci setup` stopped at this step, because it
+// told them to export an environment variable and run the whole command again.
+// Taking the key here finishes the setup they already started.
+//
+// The value is put in the environment rather than carried in ciJobOpts:
+// SetSecret deliberately reads it from there, so it never reaches argv, which
+// every other user on the machine can read. The caller removes it again once
+// the secret is written.
+func promptForAPIKey(orgSlug string) (bool, error) {
+	ui.Fail("Infracost API key   not found")
+	fmt.Println()
+	fmt.Println("To get an API key, visit your organization's CLI tokens page:")
+	ui.OpenOrContinue(cliTokensURL(orgSlug))
+	fmt.Println()
+
+	if !ui.IsInteractive() {
+		return false, nil
+	}
+
+	var key string
+	err := huh.NewInput().
+		Title("Paste your Infracost API key").
+		Description("It is stored as the " + ciAPIKeySecret + " secret on your repository, not written to disk here.").
+		EchoMode(huh.EchoModePassword).
+		Value(&key).
+		WithTheme(ui.BrandTheme()).
+		Run()
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false, nil
+	}
+	if err := os.Setenv(ciAPIKeySecret, key); err != nil {
+		return false, fmt.Errorf("storing the API key for this run: %w", err)
+	}
+	return true, nil
+}
+
+// promptExistingWorkflows asks before touching workflow files that are already
+// there. The paths are listed first: this is the only question asked before
+// the "This will:" summary, so without them the choice is made blind, and
+// declining is the second largest way a setup ends.
+func promptExistingWorkflows(yes bool, repoRoot string, paths []string) (bool, error) {
 	if yes {
 		return true, nil
 	}
 
 	if !ui.IsInteractive() {
 		return false, fmt.Errorf("infracost workflow files already exist and this is a %w, so overwriting cannot be confirmed — re-run with --yes to overwrite, or remove the existing files first", errCINotInteractive)
+	}
+
+	fmt.Println()
+	ui.Heading("These files already exist:")
+	for _, p := range paths {
+		if fileExists(filepath.Join(repoRoot, filepath.FromSlash(p))) {
+			ui.Stepf("%s", p)
+		}
 	}
 
 	const (

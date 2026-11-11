@@ -99,6 +99,59 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	return errNoOrgSelected(uc.Organizations)
 }
 
+// ensurePersonalOrg creates an organization for someone who belongs to none.
+// It reports the organization and whether it created one; a declined offer
+// returns neither and no error.
+//
+// Leaving a user here is what produces "User has no associated organization"
+// from the dashboard API several commands later, which names no fix. An
+// interactive terminal is offered a name to accept or edit, so the org is
+// theirs; a non-interactive or agent run creates nothing, because there is
+// nobody to agree to it.
+func ensurePersonalOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, userName, userEmail, trigger string) (dashboard.Organization, bool, error) {
+	// An organization is durable server state, so nobody gets one they were
+	// not asked about: a script or an agent run is told instead.
+	if !ui.IsInteractive() {
+		return dashboard.Organization{}, false, nil
+	}
+
+	name := personalOrgName(userName, userEmail)
+
+	fmt.Println()
+	ui.Warn("You don't belong to an Infracost organization yet.")
+	chosen, err := promptForOrgName(name)
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return dashboard.Organization{}, false, nil
+		}
+		return dashboard.Organization{}, false, err
+	}
+	name = chosen
+
+	org, err := createOrgAndCache(ctx, cfg, source, name)
+	if err != nil {
+		return dashboard.Organization{}, false, err
+	}
+	pushOrgCreated(ctx, cfg, trigger)
+
+	ui.Successf("Created organization %s (%s)", ui.Accent(org.Slug), org.Name)
+	return org, true, nil
+}
+
+// personalOrgName derives a name for an organization created on someone's
+// behalf, from what CurrentUser already returned, so no run has to ask.
+func personalOrgName(userName, userEmail string) string {
+	if name := strings.TrimSpace(userName); name != "" {
+		return name + "'s org"
+	}
+	if local, _, ok := strings.Cut(userEmail, "@"); ok {
+		if local = strings.TrimSpace(local); local != "" {
+			return local + "'s org"
+		}
+	}
+	return "My org"
+}
+
 // applyActiveOrg records the resolved active organization on cfg, including
 // the per-org agentsEnabled flag the Agents commands / MCP tools gate on and
 // the slug used for org-scoped dashboard links.

@@ -197,11 +197,55 @@ func removeExistingPluginPath(binaryPath string) error {
 		return nil
 	}
 	if runtime.GOOS == "windows" {
-		if err := os.Remove(binaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("failed to replace existing plugin binary: %w", err)
-		}
+		return displaceWindowsBinary(binaryPath)
 	}
 	return nil
+}
+
+// displacedSuffix marks a binary moved aside to make room for its
+// replacement. Swept on the next install, since the process holding it has
+// usually exited by then.
+const displacedSuffix = ".old"
+
+// displaceWindowsBinary moves the existing binary aside rather than deleting
+// it. Windows refuses to delete a file that is open, and the IDE extension
+// keeps the plugin running, so deleting was the update failing: 13 people, and
+// around 18 hours to recover, the slowest error of its set. A rename inside
+// the same directory is allowed while the file is open, and the displaced copy
+// is removed on a later run once nothing holds it.
+func displaceWindowsBinary(binaryPath string) error {
+	sweepDisplaced(binaryPath)
+
+	displaced := fmt.Sprintf("%s.%d%s", binaryPath, time.Now().UnixNano(), displacedSuffix)
+	if err := renameWithRetry(binaryPath, displaced); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("failed to replace the existing plugin binary at %s: %w\n"+
+			"Something still has it open — close any editor or IDE running Infracost and try again", binaryPath, err)
+	}
+
+	// The displaced copy is left in place: it is the only working binary until
+	// the replacement is renamed in, and the next install sweeps it.
+	return nil
+}
+
+// sweepDisplaced removes binaries displaced by earlier installs. Failures are
+// expected and ignored: a file still open is swept by a later run.
+// A directory read rather than a glob: a Windows profile path may contain
+// [ or *, which Glob reads as pattern syntax.
+func sweepDisplaced(binaryPath string) {
+	dir, base := filepath.Split(binaryPath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, base+".") && strings.HasSuffix(name, displacedSuffix) {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
 }
 
 func fetchPluginVersion(ctx context.Context, rawURL string) (string, error) {
