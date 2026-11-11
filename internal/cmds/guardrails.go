@@ -79,7 +79,7 @@ func Guardrails(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 	}
 	if info, err := os.Stat(absoluteDirectory); err != nil {
 		if os.IsNotExist(err) {
-			return zero, fmt.Errorf("target directory does not exist")
+			return zero, targetNotExistError(absoluteDirectory)
 		}
 		return zero, fmt.Errorf("failed to get info for target directory: %w", err)
 	} else if !info.IsDir() {

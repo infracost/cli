@@ -1,31 +1,61 @@
 name: release
+# Started by `ic release cli`, which works out the version and changelog.
+# Releases run on main and the published release creates the tag, rather than
+# starting from a pushed tag, so the prod environment (main only) guarantees
+# every release is a commit on main.
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to be released (e.g., 1.0.0)"
+      tag:
+        description: "Version to release, e.g. v1.2.3 or v1.2.3-beta.1"
         type: string
         required: true
+      sha:
+        description: "Commit ic built the changelog from; the run fails if main has moved since"
+        type: string
+        required: true
+      message:
+        description: "Release notes (the changelog)"
+        type: string
+        required: false
 
 permissions: {}
+
+# One release at a time, so a second run's tag check sees the first run's tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   version:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.VERSION }}
     steps:
       - id: version
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ inputs.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_VERSION="${{ github.event.inputs.version }}"
-          else
-            RAW_VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases run on main, not $GITHUB_REF"; exit 1
           fi
-          echo "VERSION=${RAW_VERSION#v}" >> $GITHUB_OUTPUT
+          if [ "$SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::main moved from $SHA to $GITHUB_SHA since the changelog was built. Run ic release cli again."; exit 1
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$TAG is not vX.Y.Z or vX.Y.Z-pre"; exit 1
+          fi
+          # Only a 404 means the tag is free; any other error stops the release.
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>&1); then
+            echo "::error::$TAG already exists"; exit 1
+          elif ! grep -q "HTTP 404" <<<"$out"; then
+            echo "::error::Couldn't check whether $TAG exists: $out"; exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
 
   draft-release:
     runs-on: ubuntu-24.04
@@ -45,15 +75,19 @@ jobs:
             echo "EXISTS=false" >> $GITHUB_OUTPUT
           fi
 
+      # Publishing the release creates the tag, on the dispatched commit.
       - name: Create draft release
         if: steps.check-release.outputs.EXISTS == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: v${{ needs.version.outputs.version }}
+          NOTES: ${{ inputs.message }}
         run: |
           gh release create "$VERSION" \
             --repo "${{ github.repository }}" \
             --title "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --notes "$NOTES" \
             --draft
 
       - name: Reset to draft
@@ -61,19 +95,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: v${{ needs.version.outputs.version }}
+          NOTES: ${{ inputs.message }}
         run: |
           gh release edit "$VERSION" \
             --repo "${{ github.repository }}" \
+            --target "$GITHUB_SHA" \
+            --notes "$NOTES" \
             --draft
 
   build-and-release:
     runs-on: ${{ matrix.runner }}
     needs: [version, draft-release]
+    environment: prod
     permissions:
       contents: write
       id-token: write
     strategy:
       matrix:
+        # promote-latest lists the same targets; keep the two in step.
         include:
           - { goos: linux, goarch: amd64, runner: ubuntu-24.04 }
           - { goos: linux, goarch: arm64, runner: ubuntu-24.04 }
@@ -178,7 +217,6 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           VERSION: v${{ needs.version.outputs.version }}
-          VERSION_NO_V: ${{ needs.version.outputs.version }}
         run: |
           if [ "$GOOS" = "windows" ]; then
             EXT="zip"
@@ -187,16 +225,43 @@ jobs:
             EXT="tar.gz"
             SRC="dist/infracost-${GOOS}-${GOARCH}.tar.gz"
           fi
-          printf "%s\n" "$VERSION_NO_V" > version.txt
           aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}"
-          aws s3 cp "$SRC" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}"
           aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/${VERSION}/data.${EXT}.sha256"
-          aws s3 cp "${SRC}.sha256" "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/data.${EXT}.sha256"
-          aws s3 cp version.txt "s3://${BUCKET}/cli/${GOOS}/${GOARCH}/latest/version"
+
+  # latest moves once every build is uploaded and the release is published.
+  promote-latest:
+    runs-on: ubuntu-24.04
+    needs: [version, publish-release]
+    environment: prod
+    permissions:
+      id-token: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSET_PUBLICATION_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Copy each build to latest
+        env:
+          BUCKET: ${{ secrets.AWS_ASSET_BUCKET }}
+          VERSION: v${{ needs.version.outputs.version }}
+          VERSION_NO_V: ${{ needs.version.outputs.version }}
+        run: |
+          printf "%s\n" "$VERSION_NO_V" > version.txt
+          # The build-and-release matrix's targets; keep the two in step.
+          for T in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            EXT="tar.gz"; [ "${T%/*}" = "windows" ] && EXT="zip"
+            BASE="s3://${BUCKET}/cli/${T}"
+            aws s3 cp "${BASE}/${VERSION}/data.${EXT}" "${BASE}/latest/data.${EXT}"
+            aws s3 cp "${BASE}/${VERSION}/data.${EXT}.sha256" "${BASE}/latest/data.${EXT}.sha256"
+            aws s3 cp version.txt "${BASE}/latest/version"
+          done
 
   invalidate-cloudfront:
     runs-on: ubuntu-24.04
-    needs: [version, build-and-release]
+    needs: [version, promote-latest]
+    environment: prod
     permissions:
       id-token: write
     steps:
@@ -225,6 +290,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: v${{ needs.version.outputs.version }}
         run: |
+          # Publishing onto an existing tag would attach these binaries to
+          # whatever commit it points at. Only "not found" means it's free.
+          if tagged=$(gh api "repos/${{ github.repository }}/commits/$VERSION" --jq .sha 2>"$RUNNER_TEMP/err"); then
+            if [ "$tagged" != "$GITHUB_SHA" ]; then
+              echo "::error::$VERSION was tagged on $tagged since the release started, not $GITHUB_SHA"; exit 1
+            fi
+          elif ! grep -qE "HTTP (404|422)" "$RUNNER_TEMP/err"; then
+            echo "::error::Couldn't check $VERSION: $(cat "$RUNNER_TEMP/err")"; exit 1
+          fi
           gh release edit "$VERSION" \
             --repo "${{ github.repository }}" \
             --draft=false
@@ -234,15 +308,15 @@ jobs:
     name: Trigger Chocolatey publish
     runs-on: ubuntu-24.04
     needs: [version, publish-release]
+    permissions:
+      id-token: write
     steps:
-      - uses: infracost/create-github-app-token@v1
+      - uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
         id: app-token
         with:
-          app-id: ${{ secrets.INFRACOST_CI_APP_ID }}
-          private-key: ${{ secrets.INFRACOST_CI_APP_PRIVATE_KEY }}
-          owner: infracost
-          repositories: chocolatey-packages
-          permission-contents: write
+          domain: sts.infracost.io
+          scope: infracost
+          identity: cli-release-dispatch
 
       - name: Dispatch chocolatey build
         env:
@@ -256,15 +330,15 @@ jobs:
     name: Update Infracost Docs to reference latest CLI version
     runs-on: ubuntu-24.04
     needs: [version, publish-release]
+    permissions:
+      id-token: write
     steps:
-      - uses: infracost/create-github-app-token@v1
+      - uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
         id: app-token
         with:
-          app-id: ${{ secrets.INFRACOST_CI_APP_ID }}
-          private-key: ${{ secrets.INFRACOST_CI_APP_PRIVATE_KEY }}
-          owner: infracost
-          repositories: docs
-          permission-contents: write
+          domain: sts.infracost.io
+          scope: infracost
+          identity: cli-release-dispatch
 
       - name: Dispatch docs releases.json bump
         env:

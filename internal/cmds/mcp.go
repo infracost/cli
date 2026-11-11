@@ -470,8 +470,8 @@ func registerAgentsMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.T
 				"(possibly edited by the user). Omit type unless the user asked for a specific one: it then follows the " +
 				"task's own suggested_action, which is what Agents decided is safe for that task — many fixes (tagging " +
 				"violations on resources that aren't managed by Terraform, for example) can only be a ticket, and asking " +
-				"for open_pr anyway fails. type accepts open_pr or create_ticket only — manual actions aren't draftable by " +
-				"the LLM and must go through create_fix directly.",
+				"for open_pr anyway fails. type accepts open_pr or create_ticket only. For a manual fix there is nothing " +
+				"to draft or create: make the change, then call update_task_status with status='confirm'.",
 			OutputSchema: previewFixSchema,
 			Annotations: &mcp.ToolAnnotations{
 				ReadOnlyHint: true,
@@ -498,11 +498,11 @@ func registerAgentsMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.T
 	mcp.AddTool(srv,
 		&mcp.Tool{
 			Name: "create_fix",
-			Description: "Submit a previously-drafted fix to Agents, actually creating the PR / ticket / manual action. This is " +
+			Description: "Submit a previously-drafted fix to Agents, actually creating the PR / ticket. This is " +
 				"destructive — it opens a real PR or creates a real ticket against the connected integration. The expected " +
 				"flow is: call preview_fix, show the {type, config} draft to the user, get explicit confirmation (and any " +
-				"edits to the config blob), then call create_fix with finding_id, task_id, type (open_pr | create_ticket | " +
-				"manual), and config. Returns the new action_id.",
+				"edits to the config blob), then call create_fix with finding_id, task_id, type (open_pr | create_ticket), " +
+				"and config. Returns the new action_id.",
 			InputSchema:  createFixInputSchema,
 			OutputSchema: createFixSchema,
 			Annotations: &mcp.ToolAnnotations{
@@ -553,7 +553,8 @@ func registerAgentsMCPTools(srv *mcp.Server, cfg *config.Config, source oauth2.T
 		&mcp.Tool{
 			Name: "update_task_status",
 			Description: "Update a task's resolution. status='confirm' says \"I did Agents' suggested change\" — " +
-				"advances every linked open manual action to 'done' so the verification cascade can pick them up. " +
+				"call it once the change is made. It marks the task done, the same as Mark as done in the app, " +
+				"and the next scan verifies it; no create_fix call is needed first. " +
 				"status='correct' says \"I solved the problem a different way\" — dismisses the task with reason as " +
 				"the dismissed_reason, cascade-dismisses any draft/open actions linked to it, and emits an " +
 				"AgentLearning(source=correction). status='dismiss' says \"we're not going to do this task\" — " +

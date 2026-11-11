@@ -335,7 +335,7 @@ func TestPreviewFix_RejectsManual(t *testing.T) {
 		Type:      "manual",
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not support type=manual")
+	assert.Contains(t, err.Error(), "tasks update t-1 --status confirm")
 }
 
 func TestPreviewFix_InvalidType(t *testing.T) {
@@ -372,26 +372,19 @@ func TestCreateFix(t *testing.T) {
 	assert.Equal(t, "a-1", result.ActionID)
 }
 
-func TestCreateFix_ManualAllowed(t *testing.T) {
+func TestCreateFix_RejectsManual(t *testing.T) {
 	mockClient := agentsmocks.NewMockClient(t)
-	configBlob := json.RawMessage(`{"instructions":"do the thing"}`)
-	mockClient.EXPECT().
-		CreateAction(mock.Anything, "org-1", "f-1", agents.CreateActionRequest{
-			Type:    agents.ActionTypeManual,
-			Config:  configBlob,
-			TaskIDs: []string{"t-1"},
-		}).
-		Return(agents.CreateActionResponse{OK: true, ActionID: "a-2"}, nil)
-
 	cfg := agentsConfig(mockClient)
-	result, err := cmds.CreateFix(context.Background(), cfg, nil, cmds.CreateFixInput{
+
+	_, err := cmds.CreateFix(context.Background(), cfg, nil, cmds.CreateFixInput{
 		FindingID:  "f-1",
 		TaskID:     "t-1",
 		Type:       "manual",
-		ConfigJSON: configBlob,
+		ConfigJSON: json.RawMessage(`{"instructions":"do the thing"}`),
 	})
-	require.NoError(t, err)
-	assert.Equal(t, "a-2", result.ActionID)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tasks update t-1 --status confirm")
 }
 
 func TestCreateFix_EmptyConfig(t *testing.T) {

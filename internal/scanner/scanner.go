@@ -223,12 +223,12 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 		var filtered []*repoconfig.Project
 		for _, candidate := range repoConfig.Projects {
 			candidatePath := filepath.Join(absoluteDirectory, candidate.Path)
-			if absolutePath == candidatePath {
+			if samePath(absolutePath, candidatePath) {
 				filtered = append(filtered, candidate)
 			}
 		}
 		if len(filtered) == 0 {
-			return nil, fmt.Errorf("file at %q is not a recognized scannable type", absolutePath)
+			return nil, unscannableFileError(absolutePath)
 		}
 		repoConfig.Projects = filtered
 	}

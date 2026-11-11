@@ -226,6 +226,7 @@ func writeTestProject(t *testing.T, configContent ...string) string {
 projects:
   - path: .
     name: test-project
+    type: terraform
 `
 	if len(configContent) > 0 {
 		content = configContent[0]
@@ -420,8 +421,10 @@ func TestScan(t *testing.T) {
 projects:
   - path: p1
     name: project-one
+    type: terraform
   - path: p2
     name: project-two
+    type: terraform
 `)
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "p1"), 0755))
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "p2"), 0755))
@@ -488,6 +491,7 @@ usage_file: usage.yml
 projects:
   - path: .
     name: test-project
+    type: terraform
 `)
 		usageContent := `version: "0.1"
 resource_type_default_usage:
@@ -523,6 +527,7 @@ currency: GBP
 projects:
   - path: .
     name: test-project
+    type: terraform
 `)
 		s := newTestScanner(t, testScannerOpts{
 			parseResponse: awsTerraformParseResponse("aws_instance"),
@@ -719,9 +724,6 @@ projects:
 			projectType  string
 			expectedType string
 		}{
-			// An untyped project is resolved by probing the directory, which
-			// holds only main.tf here.
-			{"untyped project resolves to terraform", "", "terraform"},
 			{"explicit type passes through", "terragrunt", "terragrunt"},
 			// CDK is preprocessed into CloudFormation templates, so it reports
 			// as cloudformation.
@@ -734,10 +736,7 @@ projects:
 projects:
   - path: .
     name: test-project
-`
-				if tt.projectType != "" {
-					config += "    type: " + tt.projectType + "\n"
-				}
+    type: ` + tt.projectType + "\n"
 				dir := writeTestProject(t, config)
 
 				s := newTestScanner(t, testScannerOpts{

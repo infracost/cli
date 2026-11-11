@@ -15,7 +15,6 @@ import (
 // then runs `scan` so existing scripts keep working.
 func Deprecated(cfg *config.Config) []*cobra.Command {
 	removed := []struct{ name, replacement string }{
-		{"diff", "Use `infracost scan` instead."},
 		{"generate", "Use `infracost setup` instead."},
 		{"comment", "Configure an official CI/CD integration with `infracost ci setup` instead."},
 		{"configure", "This command has been removed."},

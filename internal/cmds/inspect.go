@@ -1,7 +1,7 @@
 package cmds
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -82,20 +82,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			startTime := time.Now()
 
-			defer func() {
-				if runErr != nil {
-					msg := runErr.Error()
-					if len(msg) > 200 {
-						msg = msg[:200]
-					}
-					eventsClient := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
-					eventsClient.Push(context.Background(), "infracost-error",
-						"error", msg,
-						"runSeconds", time.Since(startTime).Seconds(),
-						"outputFormat", "inspect",
-					)
-				}
-			}()
+			defer func() { pushRunError(cfg, "inspect", startTime, runErr) }()
 
 			var data *format.Output
 			var err error
@@ -113,12 +100,25 @@ func Inspect(cfg *config.Config) *cobra.Command {
 				}
 				data, err = cfg.Cache.ForPath(absPath)
 				if err != nil {
-					return fmt.Errorf("no cached results found, run 'infracost scan %s' first", args[0])
+					// Only a miss is worth offering a scan for; an unreadable
+					// cache would fail again on the way back in.
+					if !errors.Is(err, cache.ErrMiss) {
+						return err
+					}
+					data, err = scanForInspect(cmd.Context(), cfg, absPath, args[0], nil)
+					if err != nil {
+						return err
+					}
 				}
 			default:
+				// No scan is offered here: Latest is not scoped to the working
+				// directory, so scanning it would answer a different question.
 				data, err = cfg.Cache.Latest(false)
 				if err != nil {
-					return fmt.Errorf("no cached results found, run 'infracost scan <path>' first")
+					if !errors.Is(err, cache.ErrMiss) {
+						return err
+					}
+					return noCachedResultsError("<path>")
 				}
 			}
 

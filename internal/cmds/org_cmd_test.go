@@ -104,3 +104,28 @@ func TestCurrentOrgSlug(t *testing.T) {
 		})
 	}
 }
+
+// TestPersonalOrgName covers the name used when an organization is created for
+// someone who has none, including the non-interactive path where nobody is
+// asked.
+func TestPersonalOrgName(t *testing.T) {
+	tests := []struct {
+		name      string
+		userName  string
+		userEmail string
+		want      string
+	}{
+		{name: "profile name wins", userName: "Owen Rumney", userEmail: "owen@infracost.io", want: "Owen Rumney's org"},
+		{name: "falls back to the email local part", userName: "", userEmail: "owen@infracost.io", want: "owen's org"},
+		{name: "whitespace-only name is not a name", userName: "   ", userEmail: "owen@infracost.io", want: "owen's org"},
+		{name: "no name and no email", userName: "", userEmail: "", want: "My org"},
+		{name: "email without a local part", userName: "", userEmail: "@infracost.io", want: "My org"},
+		{name: "email that is not an address", userName: "", userEmail: "owen", want: "My org"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, personalOrgName(tt.userName, tt.userEmail))
+		})
+	}
+}

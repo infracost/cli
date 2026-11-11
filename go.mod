@@ -1,6 +1,6 @@
 module github.com/infracost/cli
 
-go 1.26.6
+go 1.26.10
 
 require (
 	github.com/BourgeoisBear/rasterm v1.1.2
@@ -15,9 +15,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
-	github.com/infracost/config v0.18.0
+	github.com/infracost/config v0.20.0
 	github.com/infracost/go-proto v1.30.0
-	github.com/infracost/proto v1.167.0
+	github.com/infracost/proto v1.182.0
 	github.com/liamg/tml v0.7.1
 	github.com/maruel/panicparse/v2 v2.5.0
 	github.com/mattn/go-runewidth v0.0.16
@@ -32,6 +32,7 @@ require (
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.41.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -93,5 +94,4 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 )

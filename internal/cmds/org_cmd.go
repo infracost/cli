@@ -75,6 +75,7 @@ func orgCreate(cfg *config.Config) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			pushOrgCreated(ctx, cfg, orgCreateTriggerCommand)
 
 			ui.Successf("Created organization %s (%s)", ui.Accent(org.Slug), org.Name)
 			return nil

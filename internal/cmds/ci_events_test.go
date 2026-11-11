@@ -262,3 +262,30 @@ func TestSetStage(t *testing.T) {
 	stage, _ := recorder.events[0].field("stage")
 	assert.Equal(t, ciStageConfirm, stage)
 }
+
+// TestRepoEventSlug pins the join key between a setup and the pipeline runs
+// that follow. The scanner derives the same string from the HTTPS URL its
+// platform hands it, so an SSH remote here must land on the same value.
+func TestRepoEventSlug(t *testing.T) {
+	tests := []struct {
+		name      string
+		remoteURL string
+		want      string
+	}{
+		{name: "https", remoteURL: "https://github.com/infracost/actions.git", want: "github.com/infracost/actions"},
+		{name: "ssh matches https", remoteURL: "git@github.com:infracost/actions.git", want: "github.com/infracost/actions"},
+		{name: "host case is normalized", remoteURL: "https://GitHub.com/infracost/actions", want: "github.com/infracost/actions"},
+		{name: "gitlab subgroups keep every level", remoteURL: "https://gitlab.com/group/sub/repo.git", want: "gitlab.com/group/sub/repo"},
+		{name: "azure drops the _git segment", remoteURL: "https://dev.azure.com/org/project/_git/repo", want: "dev.azure.com/org/project/repo"},
+		{name: "azure ssh matches https", remoteURL: "git@ssh.dev.azure.com:v3/org/project/repo", want: "dev.azure.com/org/project/repo"},
+		{name: "ssh prefix is kept on other hosts", remoteURL: "git@ssh.git.corp.example:team/repo.git", want: "ssh.git.corp.example/team/repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, err := parseRemoteURL(tt.remoteURL)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, repo.eventSlug())
+		})
+	}
+}

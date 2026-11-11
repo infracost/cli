@@ -168,9 +168,11 @@ func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) 
 		var errs []string
 		for _, e := range r.Errors {
 			// The dashboard API returns this message when the authenticated
-			// user hasn't been added to any organization yet.
+			// user hasn't been added to any organization yet. Logging in now
+			// creates one, so this is reachable only by a token issued before
+			// that, or by a user who declined the offer.
 			if strings.Contains(e.Message, "no associated organization") {
-				errs = append(errs, e.Message+" (create an organization at https://dashboard.infracost.io or ask a teammate to invite you)")
+				errs = append(errs, e.Message+" (run 'infracost org create' to make one, or ask a teammate to invite you)")
 			} else {
 				errs = append(errs, e.Message)
 			}

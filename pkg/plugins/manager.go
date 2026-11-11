@@ -452,7 +452,12 @@ func (m *Manager) Close() {
 }
 
 func isPluginSidecar(name string) bool {
-	return strings.HasSuffix(name, ".sha256") || strings.HasSuffix(name, ".version")
+	// .old is a binary displaced by a Windows update, waiting for whatever
+	// held it open to let go. Loading one would run the version just replaced.
+	return strings.HasSuffix(name, ".sha256") ||
+		strings.HasSuffix(name, ".version") ||
+		strings.HasSuffix(name, displacedSuffix) ||
+		strings.HasSuffix(name, ".tmp")
 }
 
 // ParserPlugin is a connected parser plugin subprocess.

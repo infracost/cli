@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,6 +13,11 @@ import (
 
 	"github.com/infracost/cli/internal/format"
 )
+
+// ErrMiss reports that nothing usable is cached for a path — no entry, an
+// expired one, or one whose sources have changed. A caller tells it apart from
+// a cache that could not be read at all, which scanning again does not fix.
+var ErrMiss = errors.New("no cached results found")
 
 // SkipDirs lists directory names that walkers (source-freshness check,
 // parser-cache fingerprinting) should ignore — they don't contribute to
@@ -82,12 +88,12 @@ func (c *Config) ForPath(absPath string) (*format.Output, error) {
 
 	e, ok := m.Entries[key]
 	if !ok || c.TTL <= 0 || time.Since(e.CreatedAt) > c.TTL {
-		return nil, fmt.Errorf("no cached results found")
+		return nil, ErrMiss
 	}
 
 	if e.SourcePath != "" {
 		if changed := newerFile(e.SourcePath, e.CreatedAt); changed != "" {
-			return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
+			return nil, fmt.Errorf("%w: cached results stale (source file changed: %s)", ErrMiss, changed)
 		}
 	}
 
@@ -107,7 +113,24 @@ func (c *Config) ForPathAllowStale(absPath string) (*format.Output, error) {
 
 	e, ok := m.Entries[key]
 	if !ok || c.TTL <= 0 || time.Since(e.CreatedAt) > c.TTL {
-		return nil, fmt.Errorf("no cached results found")
+		return nil, ErrMiss
+	}
+
+	return readDataFile(c.Cache, key)
+}
+
+// ForPathAny returns cached results for a path regardless of age or source
+// changes. Used for the `diff` baseline; [Prune] bounds the age.
+func (c *Config) ForPathAny(absPath string) (*format.Output, error) {
+	m, err := c.LoadManifest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	key := Key(absPath)
+
+	if _, ok := m.Entries[key]; !ok {
+		return nil, ErrMiss
 	}
 
 	return readDataFile(c.Cache, key)
@@ -137,14 +160,14 @@ func (c *Config) Latest(allowStale bool) (*format.Output, error) {
 	}
 
 	if newestKey == "" {
-		return nil, fmt.Errorf("no cached results found")
+		return nil, ErrMiss
 	}
 
 	if !allowStale {
 		best := m.Entries[newestKey]
 		if best.SourcePath != "" {
 			if changed := newerFile(best.SourcePath, best.CreatedAt); changed != "" {
-				return nil, fmt.Errorf("cached results stale (source file changed: %s)", changed)
+				return nil, fmt.Errorf("%w: cached results stale (source file changed: %s)", ErrMiss, changed)
 			}
 		}
 	}

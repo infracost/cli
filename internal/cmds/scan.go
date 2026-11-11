@@ -72,7 +72,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 
 	if info, err := os.Stat(absolutePath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("target directory does not exist")
+			return nil, targetNotExistError(absolutePath)
 		}
 		return nil, fmt.Errorf("failed to get info for target directory: %w", err)
 	} else if !info.IsDir() {
@@ -121,6 +121,11 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 
 	events.RegisterMetadata("orgId", cfg.OrgID)
 	events.RegisterMetadata("repoId", repositoryURL)
+	// The join key between `ci setup` and the runs that follow it; repoId is
+	// the raw remote URL, which differs between SSH and HTTPS clones.
+	if repo, repoErr := parseRemoteURL(repositoryURL); repoErr == nil {
+		events.RegisterMetadata("repoSlug", repo.eventSlug())
+	}
 	events.RegisterMetadata("branchId", branchName)
 
 	s := &scanner.Scanner{
@@ -217,20 +222,7 @@ func ScanCmd(cfg *config.Config) *cobra.Command {
 				outputFormat = "json"
 			}
 
-			defer func() {
-				if runErr != nil {
-					msg := runErr.Error()
-					if len(msg) > 200 {
-						msg = msg[:200]
-					}
-					eventsClient := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
-					eventsClient.Push(context.Background(), "infracost-error",
-						"error", msg,
-						"runSeconds", time.Since(startTime).Seconds(),
-						"outputFormat", outputFormat,
-					)
-				}
-			}()
+			defer func() { pushRunError(cfg, outputFormat, startTime, runErr) }()
 
 			// Self-hosted pricing mode needs no login or org: the static
 			// pricing API key is the only credential used, and no Infracost

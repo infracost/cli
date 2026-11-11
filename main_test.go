@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/infracost/cli/internal/api/events"
+	"github.com/infracost/cli/pkg/scanner"
 	"github.com/infracost/go-proto/pkg/diagnostic"
 	parserpb "github.com/infracost/proto/gen/go/infracost/parser"
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,25 @@ func TestHasBoundedErrorsBeforePreRun(t *testing.T) {
 			assert.Equal(t, tt.want, hasBoundedErrors())
 		})
 	}
+}
+
+// TestReportedError covers what the user reads when an org hits its run
+// limit: the pricing API's message alone, not the scan wrapping around it.
+func TestReportedError(t *testing.T) {
+	quotaMsg := "Infracost free monthly run limit exceeded. Please contact hello@infracost.io to purchase usage pack."
+
+	t.Run("run-quota error is reported on its own", func(t *testing.T) {
+		err := fmt.Errorf("failed to scan target: %w",
+			fmt.Errorf("failed to scan project %q: %w", "prod", &scanner.RunQuotaExceededError{Message: quotaMsg}))
+
+		assert.Equal(t, quotaMsg, reportedError(err).Error())
+	})
+
+	t.Run("other errors are reported unchanged", func(t *testing.T) {
+		err := errors.New("failed to scan target: boom")
+
+		assert.Equal(t, err, reportedError(err))
+	})
 }
 
 // TestSetupErrorNeverReachesInfracostError pins the other telemetry exit from

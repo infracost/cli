@@ -15,6 +15,10 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// ciSetupDocsURL is the CI 2.x setup guide, named when a pipeline run reaches
+// the interactive login it can never complete.
+const ciSetupDocsURL = "https://www.infracost.io/docs/integrations/cicd/"
+
 var (
 	_ process.Processor = (*Config)(nil)
 
@@ -217,6 +221,12 @@ func (c *Config) login(ctx context.Context) (oauth2.TokenSource, error) {
 	if !isInteractive() {
 		caller, _ := events.GetMetadata[string]("caller")
 		switch {
+		// A pipeline has no browser and no terminal to run 'auth login' in,
+		// so telling it to log in interactively is a dead end.
+		case events.NormalizedCIPlatform() != "":
+			return nil, fmt.Errorf("not logged in, and this is a CI pipeline where interactive login is not possible.\n"+
+				"  Infracost CI is built for pipelines: %s\n"+
+				"  To keep using the CLI here instead, set INFRACOST_CLI_AUTHENTICATION_TOKEN to a CLI token from your Infracost Cloud org settings", ciSetupDocsURL)
 		case caller != "":
 			return nil, fmt.Errorf("not logged in — run 'infracost auth login' in your terminal first, then retry")
 		default:
