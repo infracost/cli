@@ -20,10 +20,28 @@ func TestSamePath(t *testing.T) {
 		assert.False(t, samePath("/work/plan.json", "/work/other.json"))
 	})
 
+	// The volume under t.TempDir() decides this, not the OS: a case-sensitive
+	// APFS volume on macOS must answer false here, a case-insensitive Linux
+	// mount true.
 	t.Run("case follows the filesystem", func(t *testing.T) {
-		got := samePath("/Work/Plan.json", "/work/plan.json")
-		caseInsensitive := runtime.GOOS == "windows" || runtime.GOOS == "darwin"
-		assert.Equal(t, caseInsensitive, got)
+		dir := t.TempDir()
+		lower := filepath.Join(dir, "plan.json")
+		require.NoError(t, os.WriteFile(lower, []byte("{}"), 0600))
+		flipped := filepath.Join(dir, "Plan.json")
+
+		var caseInsensitive bool
+		if fi, err := os.Stat(flipped); err == nil {
+			li, lerr := os.Stat(lower)
+			require.NoError(t, lerr)
+			caseInsensitive = os.SameFile(fi, li)
+		}
+
+		assert.Equal(t, caseInsensitive, samePath(flipped, lower))
+	})
+
+	t.Run("unreadable paths fall back to the OS", func(t *testing.T) {
+		got := samePath("/Work/absent-Plan.json", "/work/absent-plan.json")
+		assert.Equal(t, runtime.GOOS == "windows" || runtime.GOOS == "darwin", got)
 	})
 }
 

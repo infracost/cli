@@ -61,6 +61,7 @@ func RunLogin(ctx context.Context, cfg *config.Config) (err error) {
 
 	if uc != nil {
 		outcome.orgCount = len(uc.Organizations)
+		outcome.userFetched = true
 
 		// A user who belongs to no organization is the single largest blocker
 		// between signing up and a first scan: every later call fails inside

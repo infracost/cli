@@ -15,6 +15,7 @@ import (
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/inspect"
 	"github.com/infracost/cli/internal/ui"
+	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 )
@@ -83,7 +84,7 @@ func DiffCmd(cfg *config.Config) *cobra.Command {
 			defer func() { pushRunError(cfg, outputFormat, startTime, runErr) }()
 
 			// Before scanning: a missing baseline should fail fast.
-			baseline, err := resolveBaseline(cmd.Context(), cfg, compareTo, in.Path)
+			baseline, err := resolveBaseline(cmd.Context(), cfg, compareTo, in.Path, pluginOptionMap)
 			if errors.Is(err, errBaselineSaved) {
 				return nil
 			}
@@ -237,7 +238,7 @@ func sameCurrency(past, current *format.Output) error {
 
 // resolveBaseline loads --compare-to, else the cached result for this path.
 // Age and source changes are ignored: compare against the run before the edit.
-func resolveBaseline(ctx context.Context, cfg *config.Config, compareTo, path string) (*format.Output, error) {
+func resolveBaseline(ctx context.Context, cfg *config.Config, compareTo, path string, pluginOpts pkgscanner.PluginOpts) (*format.Output, error) {
 	if compareTo != "" {
 		return loadBaselineFile(compareTo)
 	}
@@ -258,7 +259,7 @@ func resolveBaseline(ctx context.Context, cfg *config.Config, compareTo, path st
 		if !errors.Is(err, cache.ErrMiss) {
 			return nil, fmt.Errorf("failed to read the cached baseline: %w", err)
 		}
-		saved, scanErr := offerBaselineScan(ctx, cfg, absolutePath, target)
+		saved, scanErr := offerBaselineScan(ctx, cfg, absolutePath, target, pluginOpts)
 		if scanErr != nil {
 			return nil, scanErr
 		}

@@ -53,8 +53,12 @@ func pushOrgCreated(ctx context.Context, cfg *config.Config, trigger string) {
 // already carries.
 type loginOutcome struct {
 	// orgCount is how many organizations the user belongs to after the login,
-	// so a zero-org signup is countable and the fix for it is measurable.
+	// so a zero-org signup is countable and the fix for it is measurable. It
+	// is only sent when userFetched is true, since an unread user looks the
+	// same as a user in no org.
 	orgCount int
+	// userFetched records that the org count was read, not assumed.
+	userFetched bool
 	// createdOrg records that this login made one.
 	createdOrg bool
 }
@@ -74,13 +78,17 @@ func pushLoginOutcome(ctx context.Context, cfg *config.Config, outcome *loginOut
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginEventTimeout)
 	defer cancel()
 
-	eventsClient := cfg.Events.Client(api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID))
-	eventsClient.Push(ctx, "infracost-auth-login",
+	fields := []any{
 		"outcome", result,
-		"orgCount", outcome.orgCount,
 		"createdOrg", outcome.createdOrg,
 		"durationSeconds", time.Since(startTime).Seconds(),
-	)
+	}
+	if outcome.userFetched {
+		fields = append(fields, "orgCount", outcome.orgCount)
+	}
+
+	eventsClient := cfg.Events.Client(api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID))
+	eventsClient.Push(ctx, "infracost-auth-login", fields...)
 }
 
 // loginEventTimeout bounds the outcome event on the way out of a command that

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/ui"
+	pkgscanner "github.com/infracost/cli/pkg/scanner"
 )
 
 // errBaselineSaved ends a `diff` that had no baseline and made one. It is not
@@ -20,7 +21,7 @@ var errBaselineSaved = errors.New("baseline saved")
 // the scan would be of the same code, so the diff would be empty. What it can
 // do is leave them with the baseline they were missing, which is the step the
 // old error only described. Non-interactive runs keep that error.
-func offerBaselineScan(ctx context.Context, cfg *config.Config, absPath, displayPath string) (bool, error) {
+func offerBaselineScan(ctx context.Context, cfg *config.Config, absPath, displayPath string, pluginOpts pkgscanner.PluginOpts) (bool, error) {
 	if !ui.IsInteractive() {
 		return false, nil
 	}
@@ -42,7 +43,9 @@ func offerBaselineScan(ctx context.Context, cfg *config.Config, absPath, display
 		return false, nil
 	}
 
-	if _, err := scanNow(ctx, cfg, absPath, "diff"); err != nil {
+	// Labeled apart from a real diff: this run produces a baseline, and
+	// counting it as a diff would inflate diff adoption.
+	if _, err := scanNow(ctx, cfg, absPath, "diff-baseline", pluginOpts); err != nil {
 		return false, err
 	}
 

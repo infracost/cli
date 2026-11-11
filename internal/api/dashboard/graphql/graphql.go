@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"unicode"
 )
@@ -118,11 +119,20 @@ func Query[T any](ctx context.Context, client *http.Client, endpoint string, que
 		return Response[T]{}, err
 	}
 
-	if authErr := authError(response.Errors); authErr != nil {
+	// Partial data beats a login error: GraphQL answers a per-field rejection
+	// with the fields it could resolve, and the caller reads its own errors.
+	if authErr := authError(response.Errors); authErr != nil && isZero(response.Data) {
 		return Response[T]{}, authErr
 	}
 
 	return response, nil
+}
+
+// isZero reports a decoded payload that carries nothing, which is what a
+// whole-response rejection produces.
+func isZero[T any](data T) bool {
+	v := reflect.ValueOf(data)
+	return !v.IsValid() || v.IsZero()
 }
 
 // authError reports the UNAUTHENTICATED entry in a GraphQL error list, which

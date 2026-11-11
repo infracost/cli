@@ -208,7 +208,7 @@ func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source 
 		if created {
 			return org, nil
 		}
-		// Only an interactive user who declined the offer reaches this.
+		// A non-interactive run, or a user who declined the offer.
 		return dashboard.Organization{}, fmt.Errorf("%w for this account — create one with 'infracost org create' or at https://dashboard.infracost.io", errCINoOrganizations)
 	}
 
@@ -668,7 +668,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		for attempt := 1; ; attempt++ {
 			fromPrompt := false
 			if os.Getenv(ciAPIKeySecret) == "" {
-				entered, err := promptForAPIKey(org.Slug)
+				entered, err := promptForAPIKey(org.Slug, attempt > 1)
 				if err != nil {
 					return false, err
 				}
@@ -955,12 +955,16 @@ func cliTokensURL(orgSlug string) string {
 // SetSecret deliberately reads it from there, so it never reaches argv, which
 // every other user on the machine can read. The caller removes it again once
 // the secret is written.
-func promptForAPIKey(orgSlug string) (bool, error) {
-	ui.Fail("Infracost API key   not found")
-	fmt.Println()
-	fmt.Println("To get an API key, visit your organization's CLI tokens page:")
-	ui.OpenOrContinue(cliTokensURL(orgSlug))
-	fmt.Println()
+func promptForAPIKey(orgSlug string, retry bool) (bool, error) {
+	// On a retry the key was found and rejected, and the page is already open:
+	// only the input is worth showing again.
+	if !retry {
+		ui.Fail("Infracost API key   not found")
+		fmt.Println()
+		fmt.Println("To get an API key, visit your organization's CLI tokens page:")
+		ui.OpenOrContinue(cliTokensURL(orgSlug))
+		fmt.Println()
+	}
 
 	if !ui.IsInteractive() {
 		return false, nil

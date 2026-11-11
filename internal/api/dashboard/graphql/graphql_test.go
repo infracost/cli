@@ -107,3 +107,17 @@ func TestSanitizeBody(t *testing.T) {
 
 	assert.Equal(t, "[2J [1;1HLogin at https://evil.example", got)
 }
+
+// TestQuery_PartialDataSurvivesFieldRejection keeps a response that resolved
+// something usable, even when another field was rejected: the caller reads its
+// own errors rather than being told to log in again.
+func TestQuery_PartialDataSurvivesFieldRejection(t *testing.T) {
+	srv := queryTestServer(t, http.StatusOK,
+		`{"data":{"currentUser":{"id":"user-1"}},"errors":[{"message":"Unauthorized","extensions":{"code":"UNAUTHENTICATED"}}]}`)
+
+	r, err := Query[payload](context.Background(), srv.Client(), srv.URL, "{currentUser{id}}", nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "user-1", r.Data.CurrentUser.ID)
+	require.Len(t, r.Errors, 1)
+}

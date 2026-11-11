@@ -9,6 +9,7 @@ import (
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/format"
 	"github.com/infracost/cli/internal/ui"
+	pkgscanner "github.com/infracost/cli/pkg/scanner"
 	"golang.org/x/oauth2"
 )
 
@@ -20,7 +21,7 @@ import (
 // is given the exact command for this path instead of running it: a scan
 // contacts the pricing API and uploads a run, and an agent loop should not
 // start that on a command that only reads.
-func scanForInspect(ctx context.Context, cfg *config.Config, absPath, displayPath string) (*format.Output, error) {
+func scanForInspect(ctx context.Context, cfg *config.Config, absPath, displayPath string, pluginOpts pkgscanner.PluginOpts) (*format.Output, error) {
 	if !ui.IsInteractive() {
 		return nil, noCachedResultsError(displayPath)
 	}
@@ -42,12 +43,12 @@ func scanForInspect(ctx context.Context, cfg *config.Config, absPath, displayPat
 		return nil, noCachedResultsError(displayPath)
 	}
 
-	return scanNow(ctx, cfg, absPath, "inspect")
+	return scanNow(ctx, cfg, absPath, "inspect", pluginOpts)
 }
 
 // scanNow runs a scan the way `scan` would, caching the result, for a command
 // that found nothing cached and was told to go and get it.
-func scanNow(ctx context.Context, cfg *config.Config, absPath, outputFormat string) (*format.Output, error) {
+func scanNow(ctx context.Context, cfg *config.Config, absPath, outputFormat string, pluginOpts pkgscanner.PluginOpts) (*format.Output, error) {
 	// Self-hosted pricing mode needs no login or org: the static pricing API
 	// key is the only credential used. Same condition as ScanCmd.
 	var source oauth2.TokenSource
@@ -73,7 +74,7 @@ func scanNow(ctx context.Context, cfg *config.Config, absPath, outputFormat stri
 	var result ScanResult
 	if err := ui.RunWithSpinnerErr(ctx, "Scanning...", "Scan complete", func(ctx context.Context) error {
 		var scanErr error
-		result, scanErr = Scan(ctx, cfg, source, &cfg.Cache, in, outputFormat, nil)
+		result, scanErr = Scan(ctx, cfg, source, &cfg.Cache, in, outputFormat, pluginOpts)
 		return scanErr
 	}); err != nil {
 		return nil, err

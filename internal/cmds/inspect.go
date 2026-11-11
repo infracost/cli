@@ -105,7 +105,7 @@ func Inspect(cfg *config.Config) *cobra.Command {
 					if !errors.Is(err, cache.ErrMiss) {
 						return err
 					}
-					data, err = scanForInspect(cmd.Context(), cfg, absPath, args[0])
+					data, err = scanForInspect(cmd.Context(), cfg, absPath, args[0], nil)
 					if err != nil {
 						return err
 					}

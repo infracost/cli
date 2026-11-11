@@ -112,6 +112,7 @@ func ensurePersonalOrg(ctx context.Context, cfg *config.Config, source oauth2.To
 	// An organization is durable server state, so nobody gets one they were
 	// not asked about: a script or an agent run is told instead.
 	if !ui.IsInteractive() {
+		ui.Warn("You don't belong to an Infracost organization yet. Run 'infracost org create' to make one, or ask a teammate to invite you.")
 		return dashboard.Organization{}, false, nil
 	}
 

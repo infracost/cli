@@ -29,15 +29,29 @@ var (
 	zipMagic = []byte{'P', 'K', 0x03, 0x04}
 )
 
-// samePath compares two absolute paths the way the filesystem does. Windows
-// and macOS are case-insensitive, so a project discovered as C:\Work\plan.json
-// must match a target typed as c:\work\plan.json — otherwise single-file mode
-// finds the project, discards it, and reports the file as unscannable.
+// samePath compares two absolute paths the way the filesystem does, so a
+// project discovered as C:\Work\plan.json matches a target typed as
+// c:\work\plan.json — otherwise single-file mode finds the project, discards
+// it, and reports the file as unscannable.
+//
+// It asks the filesystem rather than runtime.GOOS: macOS mounts case-sensitive
+// APFS volumes and Linux mounts case-insensitive exFAT and NTFS, so the OS is
+// the wrong signal either way. GOOS is only the fallback for a path that
+// cannot be stat'ed.
 func samePath(a, b string) bool {
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		return strings.EqualFold(a, b)
+	if a == b {
+		return true
 	}
-	return a == b
+	if !strings.EqualFold(a, b) {
+		return false
+	}
+
+	ai, aerr := os.Stat(a)
+	bi, berr := os.Stat(b)
+	if aerr != nil || berr != nil {
+		return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+	}
+	return os.SameFile(ai, bi)
 }
 
 // unscannableFileError explains why a single file produced no project. The
