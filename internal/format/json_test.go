@@ -63,6 +63,98 @@ func TestToOutput_NoBudgets(t *testing.T) {
 	assert.Empty(t, output.BudgetResults)
 }
 
+func TestToOutput_SourceFormats(t *testing.T) {
+	// Every project here is typed "arm" — that is the point. Bicep compiles to
+	// ARM, so projectType alone cannot tell a compiled Bicep project from
+	// hand-written ARM JSON, and the whole reason sourceFormats exists is to
+	// carry the distinction the type erases. The list is positional, so a
+	// project with no source format still has to occupy its slot.
+	result := &Result{
+		Config: &repoconfig.Config{Currency: "USD"},
+		Projects: []*ProjectResult{
+			{Config: armProjectConfig("infra/main.bicep", map[string]any{"source_format": "bicep"})},
+			{Config: armProjectConfig("infra/azuredeploy.json", map[string]any{"source_format": "json"})},
+			{Config: armProjectConfig("gen/main.json", map[string]any{"source_format": "bicep-generated-json"})},
+			{Config: &repoconfig.Project{Path: "tf", Type: "terraform"}},
+		},
+	}
+
+	output := ToOutput(result)
+
+	assert.Equal(t, []string{"arm", "arm", "arm", "terraform"}, output.projectTypes)
+	assert.Equal(t, []string{"bicep", "json", "bicep-generated-json", ""}, output.sourceFormats)
+}
+
+func TestProjectSourceFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		project *repoconfig.Project
+		want    string
+	}{
+		{
+			name:    "reads the arm plugin's stamp",
+			project: armProjectConfig("main.bicep", map[string]any{"source_format": "bicep"}),
+			want:    "bicep",
+		},
+		{
+			// Plugin identities carry an optional vendor prefix depending on
+			// whether the key came from a generated config or the plugin's own
+			// GetPluginInfo name.
+			name: "matches the vendor-prefixed plugin name",
+			project: &repoconfig.Project{Plugins: map[string]map[string]any{
+				"infracost/arm": {"source_format": "bicep"},
+			}},
+			want: "bicep",
+		},
+		{
+			// An allowlist rather than a scan: another plugin using the same
+			// option key for its own purposes must not be read as a source
+			// format.
+			name: "ignores the option under an unlisted plugin",
+			project: &repoconfig.Project{Plugins: map[string]map[string]any{
+				"terraform": {"source_format": "hcl"},
+			}},
+			want: "",
+		},
+		{
+			name:    "empty when the plugin stamped nothing",
+			project: armProjectConfig("azuredeploy.json", map[string]any{"parameter_files": nil}),
+			want:    "",
+		},
+		{
+			name: "empty when the value is not a string",
+			project: &repoconfig.Project{Plugins: map[string]map[string]any{
+				"arm": {"source_format": 3},
+			}},
+			want: "",
+		},
+		{
+			name:    "empty for a project with no plugin options",
+			project: &repoconfig.Project{Path: "tf", Type: "terraform"},
+			want:    "",
+		},
+		{
+			name:    "empty for a nil project",
+			project: nil,
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, projectSourceFormat(tt.project))
+		})
+	}
+}
+
+func armProjectConfig(path string, options map[string]any) *repoconfig.Project {
+	return &repoconfig.Project{
+		Path:    path,
+		Type:    "arm",
+		Plugins: map[string]map[string]any{"arm": options},
+	}
+}
+
 func TestComputeSummary(t *testing.T) {
 	// Hand-built Output exercising every counter the summary block tracks:
 	// 2 projects, mix of free vs costed resources, finops + tagging
