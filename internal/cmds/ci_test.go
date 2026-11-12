@@ -278,7 +278,7 @@ func TestCISetup_PipelineGitLab(t *testing.T) {
 	assert.Contains(t, output, "  git add .gitlab-ci.yml")
 
 	content := requireYAMLFile(t, filepath.Join(dir, ".gitlab-ci.yml"))
-	assert.Contains(t, content, "image: ghcr.io/infracost/ci:0.1")
+	assert.Contains(t, content, "image: ghcr.io/infracost/ci:2")
 	assert.Contains(t, content, "infracost-ci diff --base-path base --head-path head")
 	assert.Contains(t, content, "infracost-ci scan --path .")
 	assert.Contains(t, content, "INFRACOST_CLI_AUTHENTICATION_TOKEN: $INFRACOST_API_KEY")
@@ -506,7 +506,7 @@ Done. Push this commit to see Infracost on your next PR:
 	diffContent, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "infracost-diff.yml"))
 	require.NoError(t, err)
 	diffWorkflow := string(diffContent)
-	assert.Contains(t, diffWorkflow, "container: ghcr.io/infracost/ci:0.1")
+	assert.Contains(t, diffWorkflow, "container: ghcr.io/infracost/ci:2")
 	assert.Contains(t, diffWorkflow, "infracost-ci diff --base-path base --head-path head")
 	assert.Contains(t, diffWorkflow, "INFRACOST_CLI_AUTHENTICATION_TOKEN: ${{ secrets.INFRACOST_API_KEY }}")
 	assert.Contains(t, diffWorkflow, "infracost-ci status --status \"$PR_STATUS\"")
@@ -521,7 +521,7 @@ Done. Push this commit to see Infracost on your next PR:
 
 	scanContent, err := os.ReadFile(filepath.Join(dir, ".github", "workflows", "infracost-scan.yml"))
 	require.NoError(t, err)
-	assert.Contains(t, string(scanContent), "container: ghcr.io/infracost/ci:0.1")
+	assert.Contains(t, string(scanContent), "container: ghcr.io/infracost/ci:2")
 	assert.Contains(t, string(scanContent), "infracost-ci scan --path .")
 	assert.Contains(t, string(scanContent), "INFRACOST_CLI_AUTHENTICATION_TOKEN: ${{ secrets.INFRACOST_API_KEY }}")
 	assert.NotContains(t, string(scanContent), "infracost/actions/")
@@ -685,7 +685,7 @@ func TestCISetup_PipelineMigratesCompositeActions(t *testing.T) {
 		content, err := os.ReadFile(filepath.Join(workflowDir, name))
 		require.NoError(t, err)
 		assert.NotContains(t, string(content), "infracost/actions/")
-		assert.Contains(t, string(content), "container: ghcr.io/infracost/ci:0.1")
+		assert.Contains(t, string(content), "container: ghcr.io/infracost/ci:2")
 
 		// Committed files keep their mode.
 		info, err := os.Stat(filepath.Join(workflowDir, name))
@@ -740,7 +740,7 @@ func TestCISetup_PipelineExistingWorkflows(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(workflowDir, "infracost-diff.yml"))
 	require.NoError(t, err)
 	assert.NotEqual(t, "old", string(content))
-	assert.Contains(t, string(content), "container: ghcr.io/infracost/ci:0.1")
+	assert.Contains(t, string(content), "container: ghcr.io/infracost/ci:2")
 }
 
 func TestCISetup_PipelineMultipleOrgs(t *testing.T) {
@@ -957,7 +957,7 @@ func TestCISetup_PipelineAzureCreatesFile(t *testing.T) {
 	assert.Contains(t, output, "Azure Repos ignores a pr: trigger")
 
 	content := requireYAMLFile(t, filepath.Join(dir, "azure-pipelines.yml"))
-	assert.Contains(t, content, "container: ghcr.io/infracost/ci:0.1")
+	assert.Contains(t, content, "container: ghcr.io/infracost/ci:2")
 	assert.Contains(t, content, "SYSTEM_ACCESSTOKEN: $(System.AccessToken)")
 	assert.NotContains(t, content, "GITHUB_TOKEN")
 	// The trigger is the user's, so it sits outside the sentinels.
@@ -1122,7 +1122,7 @@ Infracost has a Generic CI/CD recipe to follow by hand:
   https://www.infracost.io/docs/integrations/cicd/
 
 Every platform runs the same container:
-  →  image  ghcr.io/infracost/ci:0.1
+  →  image  ghcr.io/infracost/ci:2
   →  on a pull request  infracost-ci diff --base-path base --head-path head
   →  on the default branch  infracost-ci scan --path .
 
