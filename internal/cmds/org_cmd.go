@@ -71,11 +71,10 @@ func orgCreate(cfg *config.Config) *cobra.Command {
 				}
 			}
 
-			org, err := createOrgAndCache(ctx, cfg, source, name)
+			org, err := createOrgAndCache(ctx, cfg, source, name, dashboard.OrgCreateTriggerOrgCreate)
 			if err != nil {
 				return err
 			}
-			pushOrgCreated(ctx, cfg, orgCreateTriggerCommand)
 
 			ui.Successf("Created organization %s (%s)", ui.Accent(org.Slug), org.Name)
 			return nil
@@ -110,10 +109,10 @@ func promptForOrgName(suggestion string) (string, error) {
 // refreshes the local user cache and pins the new org as the selected
 // one so subsequent CLI calls in this session use it without further
 // prompting.
-func createOrgAndCache(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, name string) (dashboard.Organization, error) {
+func createOrgAndCache(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, name string, trigger dashboard.OrgCreateTrigger) (dashboard.Organization, error) {
 	client := cfg.Dashboard.Client(api.Client(ctx, source, ""))
 
-	org, err := client.CreateOrganization(ctx, name)
+	org, err := client.CreateOrganization(ctx, name, trigger)
 	if err != nil {
 		return dashboard.Organization{}, fmt.Errorf("creating organization: %w", err)
 	}

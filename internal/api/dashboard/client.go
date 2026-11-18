@@ -46,9 +46,18 @@ type RunParameters struct {
 	ConfigTemplate    string            `json:"configTemplate"`
 }
 
+type OrgCreateTrigger string
+
+const (
+	OrgCreateTriggerLogin     OrgCreateTrigger = "Login"
+	OrgCreateTriggerCISetup   OrgCreateTrigger = "CiSetup"
+	OrgCreateTriggerOrgCreate OrgCreateTrigger = "OrgCreate"
+	OrgCreateTriggerSetup     OrgCreateTrigger = "Setup"
+)
+
 type Client interface {
 	CurrentUser(ctx context.Context) (CurrentUser, error)
-	CreateOrganization(ctx context.Context, name string) (Organization, error)
+	CreateOrganization(ctx context.Context, name string, trigger OrgCreateTrigger) (Organization, error)
 	RunParameters(ctx context.Context, repoURL, branchName string) (RunParameters, error)
 	HasRepo(ctx context.Context, orgID, repoName string) (bool, error)
 }
@@ -97,7 +106,7 @@ func (c *client) CurrentUser(ctx context.Context) (CurrentUser, error) {
 	return r.Data.CurrentUser, nil
 }
 
-func (c *client) CreateOrganization(ctx context.Context, name string) (Organization, error) {
+func (c *client) CreateOrganization(ctx context.Context, name string, trigger OrgCreateTrigger) (Organization, error) {
 	const query = `mutation CreateOrganization($organization: CreateOrganizationInput!) {
   createOrganization(organization: $organization) {
     id
@@ -114,7 +123,7 @@ func (c *client) CreateOrganization(ctx context.Context, name string) (Organizat
 	}
 
 	variables := map[string]interface{}{
-		"organization": map[string]interface{}{"name": name},
+		"organization": map[string]interface{}{"name": name, "source": "Cli", "trigger": trigger},
 	}
 
 	r, err := graphql.Query[response](ctx, c.client, fmt.Sprintf("%s/graphql", c.config.Endpoint), query, variables)

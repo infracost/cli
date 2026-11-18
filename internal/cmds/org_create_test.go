@@ -47,7 +47,7 @@ func TestOrgCreate_NonInteractiveWithName(t *testing.T) {
 	mockClient := mocks.NewMockClient(t)
 
 	mockClient.EXPECT().
-		CreateOrganization(mock.Anything, "Acme Corp").
+		CreateOrganization(mock.Anything, "Acme Corp", dashboard.OrgCreateTriggerOrgCreate).
 		Return(dashboard.Organization{ID: "org-1", Name: "Acme Corp", Slug: "acme-corp"}, nil)
 
 	// createOrgAndCache refreshes the user cache so subsequent runs see

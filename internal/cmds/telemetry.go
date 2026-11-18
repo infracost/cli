@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	analytics "github.com/infracost/analytics-go"
+
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/config"
 )
@@ -21,32 +23,15 @@ func pushRunError(cfg *config.Config, outputFormat string, startTime time.Time, 
 		msg = strings.ToValidUTF8(msg[:200], "")
 	}
 
+	runSeconds := time.Since(startTime).Seconds()
+
 	ctx := context.Background()
-	eventsClient := cfg.Events.Client(api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID))
-	eventsClient.Push(ctx, "infracost-error",
-		"error", msg,
-		"runSeconds", time.Since(startTime).Seconds(),
-		"outputFormat", outputFormat,
-	)
-}
-
-// Where an organization was created from. Bounded labels: the event is counted
-// by trigger, never read as free text.
-const (
-	orgCreateTriggerCommand = "org-create"
-	orgCreateTriggerLogin   = "login"
-	orgCreateTriggerCISetup = "ci-setup"
-)
-
-// pushOrgCreated reports an organization created from the CLI. Orgs are
-// otherwise only made in the dashboard, so without this the fix for a CLI
-// signup with no org is invisible in the funnel it is meant to move.
-func pushOrgCreated(ctx context.Context, cfg *config.Config, trigger string) {
-	eventsClient := cfg.Events.Client(api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID))
-	eventsClient.Push(ctx, "cloud-org-create",
-		"source", "cli",
-		"trigger", trigger,
-	)
+	tracker := cfg.Events.Tracker(api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID))
+	_ = analytics.TrackInfracostError(ctx, tracker, analytics.InfracostErrorProperties{
+		Error:        &msg,
+		RunSeconds:   &runSeconds,
+		OutputFormat: &outputFormat,
+	})
 }
 
 // loginOutcome is what a login reports, beyond the installId every event
@@ -68,9 +53,9 @@ type loginOutcome struct {
 // the login that follows on the same install — they carry no user identity,
 // and until now there was no login event to join them to.
 func pushLoginOutcome(ctx context.Context, cfg *config.Config, outcome *loginOutcome, startTime time.Time, loginErr error) {
-	result := "success"
+	result := analytics.InfracostAuthLoginOutcome_Success
 	if loginErr != nil {
-		result = "error"
+		result = analytics.InfracostAuthLoginOutcome_Error
 	}
 
 	// Detached from the caller's context, which is already cancelled when a
@@ -78,17 +63,17 @@ func pushLoginOutcome(ctx context.Context, cfg *config.Config, outcome *loginOut
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginEventTimeout)
 	defer cancel()
 
-	fields := []any{
-		"outcome", result,
-		"createdOrg", outcome.createdOrg,
-		"durationSeconds", time.Since(startTime).Seconds(),
+	props := analytics.InfracostAuthLoginProperties{
+		Outcome:         result,
+		CreatedOrg:      outcome.createdOrg,
+		DurationSeconds: time.Since(startTime).Seconds(),
 	}
 	if outcome.userFetched {
-		fields = append(fields, "orgCount", outcome.orgCount)
+		props.OrgCount = &outcome.orgCount
 	}
 
-	eventsClient := cfg.Events.Client(api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID))
-	eventsClient.Push(ctx, "infracost-auth-login", fields...)
+	tracker := cfg.Events.Tracker(api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID))
+	_ = analytics.TrackInfracostAuthLogin(ctx, tracker, props)
 }
 
 // loginEventTimeout bounds the outcome event on the way out of a command that

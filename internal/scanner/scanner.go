@@ -282,12 +282,16 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 	var finopsPolicies []*event.FinopsPolicySettings
 	if os.Getenv("INFRACOST_CLI_USE_ALL_LOCAL_POLICIES") == "" {
 		finopsPolicies = make([]*event.FinopsPolicySettings, 0, len(runParameters.FinopsPolicies))
+		result.CloudSecurityPolicySlugs = make(map[string]struct{})
 		for _, p := range runParameters.FinopsPolicies {
 			policy := new(event.FinopsPolicySettings)
 			if err := pj.Unmarshal(p, policy); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal FinOps policy: %w", err)
 			}
 			finopsPolicies = append(finopsPolicies, policy)
+			if policy.GetGroup() == event.FinopsPolicySettings_CLOUD_SECURITY {
+				result.CloudSecurityPolicySlugs[policy.GetSlug()] = struct{}{}
+			}
 		}
 	}
 

@@ -29,9 +29,10 @@ type Output struct {
 
 	// Fields below are not serialized to JSON but carried through for event
 	// metadata.
-	projectTypes           []string
-	estimatedUsageCounts   map[string]int // nil means no usage file was loaded
-	unestimatedUsageCounts map[string]int
+	projectTypes             []string
+	estimatedUsageCounts     map[string]int // nil means no usage file was loaded
+	unestimatedUsageCounts   map[string]int
+	cloudSecurityPolicySlugs map[string]struct{}
 }
 
 // OutputSummary is the pre-computed aggregate block on Output. Every
@@ -254,13 +255,14 @@ func ToOutput(result *Result) Output {
 	}
 
 	out := Output{
-		Currency:               result.Config.Currency,
-		Projects:               projects,
-		GuardrailResults:       guardrailResults,
-		BudgetResults:          budgetResults,
-		projectTypes:           projectTypes,
-		estimatedUsageCounts:   result.EstimatedUsageCounts,
-		unestimatedUsageCounts: result.UnestimatedUsageCounts,
+		Currency:                 result.Config.Currency,
+		Projects:                 projects,
+		GuardrailResults:         guardrailResults,
+		BudgetResults:            budgetResults,
+		projectTypes:             projectTypes,
+		estimatedUsageCounts:     result.EstimatedUsageCounts,
+		unestimatedUsageCounts:   result.UnestimatedUsageCounts,
+		cloudSecurityPolicySlugs: result.CloudSecurityPolicySlugs,
 	}
 	out.Summary = computeSummary(&out)
 	return out

@@ -20,7 +20,8 @@ type Result struct {
 	// UnestimatedUsageCounts tracks usage parameters with zero/empty values,
 	// keyed by "resourceType.attribute". Nil/non-nil semantics match
 	// EstimatedUsageCounts.
-	UnestimatedUsageCounts map[string]int
+	UnestimatedUsageCounts   map[string]int
+	CloudSecurityPolicySlugs map[string]struct{}
 }
 
 type ProjectResult struct {

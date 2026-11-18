@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	analytics "github.com/infracost/analytics-go"
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/events"
 	"github.com/infracost/cli/internal/cmds"
@@ -152,14 +153,18 @@ func run() (exitCode int) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+			tracker := cfg.Events.Tracker(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
 			// A panic value from a bounded command can carry the path or
 			// config that panicked, so only its type is reported.
-			panicValue := any(fmt.Sprintf("%T", r))
+			panicValue := fmt.Sprintf("%T", r)
 			if !hasBoundedErrors() {
-				panicValue = r
+				panicValue = fmt.Sprint(r)
 			}
-			client.Push(context.Background(), "infracost-error", "error", panicValue, "stacktrace", stacktrace.Sanitize(debug.Stack(), "github.com/infracost/cli/"))
+			stack := stacktrace.Sanitize(debug.Stack(), "github.com/infracost/cli/")
+			_ = analytics.TrackInfracostError(context.Background(), tracker, analytics.InfracostErrorProperties{
+				Error:      &panicValue,
+				Stacktrace: &stack,
+			})
 			_, _ = fmt.Fprintf(os.Stderr, "An unexpected error occurred. This is a bug in Infracost, please report it at https://github.com/infracost/infracost/issues\n\n")
 			_, _ = fmt.Fprintf(os.Stderr, "panic: %v\n\n%s\n", r, debug.Stack())
 			os.Exit(1)
@@ -276,9 +281,10 @@ func run() (exitCode int) {
 	diags.Merge(process.PreProcess(cfg, cmd.PersistentFlags()))
 	if diags.Critical().Len() > 0 {
 		format.Diagnostics(diags)
-		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+		tracker := cfg.Events.Tracker(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
 		for _, diag := range diags.Critical().Unwrap() {
-			client.Push(context.Background(), "infracost-error", "error", diag.String())
+			message := diag.String()
+			_ = analytics.TrackInfracostError(context.Background(), tracker, analytics.InfracostErrorProperties{Error: &message})
 		}
 		return 1
 	}
@@ -291,25 +297,30 @@ func run() (exitCode int) {
 	// Fire a lightweight infracost-command event for commands that don't
 	// already emit their own infracost-run event.
 	if command, ok := events.GetMetadata[string]("command"); ok && !runTrackedCommands[command] && !isLocalCommandPath() {
-		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
-		extra := []interface{}{
-			"success", err == nil,
-			"durationSeconds", time.Since(startTime).Seconds(),
+		tracker := cfg.Events.Tracker(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+		props := analytics.InfracostCommandProperties{
+			Command:         command,
+			Success:         err == nil,
+			DurationSeconds: time.Since(startTime).Seconds(),
+		}
+		if path, ok := events.GetMetadata[string]("commandPath"); ok {
+			props.CommandPath = &path
 		}
 		if err != nil {
 			// Classify rather than drop, so a failure before a command's own
 			// outcome event still says something.
 			if hasBoundedErrors() {
-				extra = append(extra, "errorKind", cmds.CISetupErrorKind(err))
+				kind := analytics.InfracostCommandErrorKind(cmds.CISetupErrorKind(err))
+				props.ErrorKind = &kind
 			} else {
 				msg := err.Error()
 				if len(msg) > 200 {
 					msg = msg[:200]
 				}
-				extra = append(extra, "errorMessage", msg)
+				props.ErrorMessage = &msg
 			}
 		}
-		client.Push(context.Background(), "infracost-command", extra...)
+		_ = analytics.TrackInfracostCommand(context.Background(), tracker, props)
 	}
 
 	format.Diagnostics(diags)
@@ -346,9 +357,10 @@ func run() (exitCode int) {
 	}
 
 	if diags.Critical().Len() > 0 {
-		client := cfg.Events.Client(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
+		tracker := cfg.Events.Tracker(api.Client(context.Background(), cfg.Auth.TokenFromCache(context.Background()), cfg.OrgID))
 		for _, diag := range diags.Critical().Unwrap() {
-			client.Push(context.Background(), "infracost-error", "error", diag.String())
+			message := diag.String()
+			_ = analytics.TrackInfracostError(context.Background(), tracker, analytics.InfracostErrorProperties{Error: &message})
 		}
 		return 1
 	}

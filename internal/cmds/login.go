@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/infracost/cli/internal/api"
+	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/pkg/auth"
@@ -67,7 +68,7 @@ func RunLogin(ctx context.Context, cfg *config.Config) (err error) {
 		// between signing up and a first scan: every later call fails inside
 		// the dashboard API instead, which says nothing about how to fix it.
 		if len(uc.Organizations) == 0 {
-			_, created, orgErr := ensurePersonalOrg(ctx, cfg, source, uc.Name, uc.Email, orgCreateTriggerLogin)
+			_, created, orgErr := ensurePersonalOrg(ctx, cfg, source, uc.Name, uc.Email, dashboard.OrgCreateTriggerLogin)
 			if orgErr != nil {
 				return orgErr
 			}
