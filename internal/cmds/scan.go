@@ -146,7 +146,7 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 
 	output := format.ToOutput(result)
 
-	eventsClient := cfg.Events.Client(api.Client(ctx, source, cfg.OrgID))
+	tracker := cfg.Events.Tracker(api.Client(ctx, source, cfg.OrgID))
 
 	// Load previous result for this directory (stale allowed) for run diff counts.
 	var prevForDir *format.Output
@@ -162,14 +162,14 @@ func Scan(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, st
 		logging.Infof("could not load previous run data: %v", err)
 	} else {
 		logging.Infof("found previous run data in cache")
-		output.TrackDiff(ctx, eventsClient, prev)
+		output.TrackDiff(ctx, tracker, prev)
 	}
 
 	if err := store.Write(absolutePath, &output); err != nil {
 		logging.Warn("failed to cache results: " + err.Error())
 	}
 
-	output.TrackRun(ctx, eventsClient, runSeconds, outputFormat, prevForDir)
+	output.TrackRun(ctx, tracker, runSeconds, outputFormat, prevForDir)
 
 	return &output, nil
 }

@@ -3,6 +3,8 @@ package events
 import (
 	"net/http"
 	"sync"
+
+	analytics "github.com/infracost/analytics-go"
 )
 
 var (
@@ -46,4 +48,8 @@ func (c *Config) Client(httpClient *http.Client) Client {
 		}
 	}
 	return c.ClientFn(httpClient)
+}
+
+func (c *Config) Tracker(httpClient *http.Client) analytics.AnalyticsClient {
+	return NewTracker(c.Client(httpClient))
 }

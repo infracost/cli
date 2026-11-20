@@ -3,6 +3,8 @@ package format
 import (
 	"context"
 
+	analytics "github.com/infracost/analytics-go"
+
 	"github.com/infracost/cli/internal/api/events"
 )
 
@@ -26,14 +28,14 @@ import (
 //     the --sync-usage-file flow which doesn't exist in v2.
 //   - remediationAttempts, remediationErrors, remediationOpportunities: not yet
 //     implemented.
-func (o *Output) TrackRun(ctx context.Context, client events.Client, runSeconds float64, outputFormat string, prev *Output) {
+func (o *Output) TrackRun(ctx context.Context, tracker analytics.AnalyticsClient, runSeconds float64, outputFormat string, prev *Output) {
 	var totalResources int
 	var totalSupported int
 	var totalNoPrice int
 	var totalUnsupported int
 
-	supportedCounts := make(map[string]int)
-	unsupportedCounts := make(map[string]int)
+	supportedTypeCounts := make(map[string]int)
+	unsupportedTypeCounts := make(map[string]int)
 
 	var supportedList []string
 	var unsupportedList []string
@@ -45,34 +47,41 @@ func (o *Output) TrackRun(ctx context.Context, client events.Client, runSeconds 
 			switch {
 			case !r.IsSupported:
 				totalUnsupported++
-				unsupportedCounts[r.Type]++
+				unsupportedTypeCounts[r.Type]++
 				unsupportedList = append(unsupportedList, r.Type)
 			case r.IsFree:
 				totalNoPrice++
 			default:
 				totalSupported++
-				supportedCounts[r.Type]++
+				supportedTypeCounts[r.Type]++
 				supportedList = append(supportedList, r.Type)
 			}
 		}
 	}
 
-	extra := []interface{}{
-		"runSeconds", runSeconds,
-		"outputFormat", outputFormat,
-		"projectType", o.projectTypes,
-		"totalResources", totalResources,
-		"totalSupportedResources", totalSupported,
-		"totalNoPriceResources", totalNoPrice,
-		"totalUnsupportedResources", totalUnsupported,
-		"supportedResourceCounts", supportedCounts,
-		"supportedResourcesList", supportedList,
-		"unsupportedResourceCounts", unsupportedCounts,
-		"unsupportedResourcesList", unsupportedList,
+	projectTypes := make([]analytics.InfracostRunProjectType, 0, len(o.projectTypes))
+	for _, projectType := range o.projectTypes {
+		projectTypes = append(projectTypes, analytics.InfracostRunProjectType(projectType))
+	}
+	supportedCounts := countsAsAny(supportedTypeCounts)
+	unsupportedCounts := countsAsAny(unsupportedTypeCounts)
+	hasUsageFile := o.estimatedUsageCounts != nil
+
+	props := analytics.InfracostRunProperties{
+		RunSeconds:                &runSeconds,
+		OutputFormat:              &outputFormat,
+		ProjectType:               &projectTypes,
+		TotalResources:            &totalResources,
+		TotalSupportedResources:   &totalSupported,
+		TotalNoPriceResources:     &totalNoPrice,
+		TotalUnsupportedResources: &totalUnsupported,
+		SupportedResourceCounts:   &supportedCounts,
+		SupportedResourcesList:    &supportedList,
+		UnsupportedResourceCounts: &unsupportedCounts,
+		UnsupportedResourcesList:  &unsupportedList,
+		HasUsageFile:              &hasUsageFile,
 	}
 
-	hasUsageFile := o.estimatedUsageCounts != nil
-	extra = append(extra, "hasUsageFile", hasUsageFile)
 	if hasUsageFile {
 		var totalEstimated int
 		var totalUnestimated int
@@ -92,33 +101,31 @@ func (o *Output) TrackRun(ctx context.Context, client events.Client, runSeconds 
 			}
 		}
 
-		extra = append(extra,
-			"totalEstimatedUsages", totalEstimated,
-			"totalUnestimatedUsages", totalUnestimated,
-			"estimatedUsageCounts", o.estimatedUsageCounts,
-			"estimatedUsageList", estimatedList,
-			"unestimatedUsageCounts", o.unestimatedUsageCounts,
-			"unestimatedUsageList", unestimatedList,
-		)
+		estimatedCounts := countsAsAny(o.estimatedUsageCounts)
+		unestimatedCounts := countsAsAny(o.unestimatedUsageCounts)
+		props.TotalEstimatedUsages = &totalEstimated
+		props.TotalUnestimatedUsages = &totalUnestimated
+		props.EstimatedUsageCounts = &estimatedCounts
+		props.EstimatedUsageList = &estimatedList
+		props.UnestimatedUsageCounts = &unestimatedCounts
+		props.UnestimatedUsageList = &unestimatedList
 	}
 
 	if prev != nil {
 		diff := computeRunDiff(o, prev)
-		extra = append(extra,
-			"newResourceCount", diff.newResources,
-			"changedResourceCount", diff.changedResources,
-			"newIssueCount", diff.newIssues,
-			"existingIssueCount", diff.existingIssues,
-		)
+		props.NewResourceCount = &diff.newResources
+		props.ChangedResourceCount = &diff.changedResources
+		props.NewIssueCount = &diff.newIssues
+		props.ExistingIssueCount = &diff.existingIssues
 	}
 
-	client.Push(ctx, "infracost-run", extra...)
+	_ = analytics.TrackInfracostRun(ctx, tracker, props)
 }
 
 // TrackDiff compares this output against a previous output and fires a
 // "cloud-issue-fixed" event for every policy violation that was present in
 // other but is no longer present in this output. Projects are matched by name.
-func (o *Output) TrackDiff(ctx context.Context, client events.Client, other *Output) {
+func (o *Output) TrackDiff(ctx context.Context, tracker analytics.AnalyticsClient, other *Output) {
 	if other == nil {
 		return
 	}
@@ -135,8 +142,8 @@ func (o *Output) TrackDiff(ctx context.Context, client events.Client, other *Out
 		if !ok {
 			continue
 		}
-		trackFinopsDiff(ctx, client, p, old.FinopsResults)
-		trackTaggingDiff(ctx, client, p, old.TaggingResults)
+		o.trackFinopsDiff(ctx, tracker, p, old.FinopsResults)
+		trackTaggingDiff(ctx, tracker, p, old.TaggingResults)
 	}
 }
 
@@ -245,7 +252,7 @@ func countIssues(p ProjectOutput) int {
 	return total
 }
 
-func trackFinopsDiff(ctx context.Context, client events.Client, p *ProjectOutput, other []FinopsOutput) {
+func (o *Output) trackFinopsDiff(ctx context.Context, tracker analytics.AnalyticsClient, p *ProjectOutput, other []FinopsOutput) {
 	// Build a set of currently failing (policySlug, resourceName) pairs.
 	current := make(map[string]map[string]struct{})
 	for _, r := range p.FinopsResults {
@@ -256,38 +263,29 @@ func trackFinopsDiff(ctx context.Context, client events.Client, p *ProjectOutput
 		current[r.PolicySlug] = addrs
 	}
 
-	repoID, _ := events.GetMetadata[string]("repoId")
-	branchID, _ := events.GetMetadata[string]("branchId")
-	caller, _ := events.GetMetadata[string]("caller")
-	ciPlatform, _ := events.GetMetadata[string]("ciPlatform")
-	cliPlatform, _ := events.GetMetadata[string]("cliPlatform")
-
 	for _, prev := range other {
+		policyType := analytics.CloudIssueFixedType_FinopsPolicy
+		if _, ok := o.cloudSecurityPolicySlugs[prev.PolicySlug]; ok {
+			policyType = analytics.CloudIssueFixedType_CloudSecurityPolicy
+		}
 		for _, fr := range prev.FailingResources {
 			if cur, ok := current[prev.PolicySlug]; ok {
 				if _, still := cur[fr.Name]; still {
 					continue
 				}
 			}
-			client.Push(ctx, "cloud-issue-fixed",
-				"policyId", prev.PolicyID,
-				"policySlug", prev.PolicySlug,
-				"type", "finops-policy",
-				"projectName", p.ProjectName,
-				"resourceAddress", fr.Name,
-				"pullRequestId", "",
-				"autoFixPullRequest", false,
-				"repoId", repoID,
-				"branchId", branchID,
-				"caller", caller,
-				"ciPlatform", ciPlatform,
-				"cliPlatform", cliPlatform,
-			)
+			trackIssueFixed(ctx, tracker, analytics.CloudIssueFixedProperties{
+				PolicyId:        prev.PolicyID,
+				PolicySlug:      &prev.PolicySlug,
+				Type:            policyType,
+				ProjectName:     p.ProjectName,
+				ResourceAddress: fr.Name,
+			})
 		}
 	}
 }
 
-func trackTaggingDiff(ctx context.Context, client events.Client, p *ProjectOutput, other []TaggingOutput) {
+func trackTaggingDiff(ctx context.Context, tracker analytics.AnalyticsClient, p *ProjectOutput, other []TaggingOutput) {
 	// Build a set of currently failing (policyId, resourceAddress) pairs.
 	current := make(map[string]map[string]struct{})
 	for _, r := range p.TaggingResults {
@@ -298,12 +296,6 @@ func trackTaggingDiff(ctx context.Context, client events.Client, p *ProjectOutpu
 		current[r.PolicyID] = addrs
 	}
 
-	repoID, _ := events.GetMetadata[string]("repoId")
-	branchID, _ := events.GetMetadata[string]("branchId")
-	caller, _ := events.GetMetadata[string]("caller")
-	ciPlatform, _ := events.GetMetadata[string]("ciPlatform")
-	cliPlatform, _ := events.GetMetadata[string]("cliPlatform")
-
 	for _, prev := range other {
 		for _, fr := range prev.FailingResources {
 			if cur, ok := current[prev.PolicyID]; ok {
@@ -311,19 +303,34 @@ func trackTaggingDiff(ctx context.Context, client events.Client, p *ProjectOutpu
 					continue
 				}
 			}
-			client.Push(ctx, "cloud-issue-fixed",
-				"policyId", prev.PolicyID,
-				"type", "tag-policy",
-				"projectName", p.ProjectName,
-				"resourceAddress", fr.Address,
-				"pullRequestId", "",
-				"autoFixPullRequest", false,
-				"repoId", repoID,
-				"branchId", branchID,
-				"caller", caller,
-				"ciPlatform", ciPlatform,
-				"cliPlatform", cliPlatform,
-			)
+			trackIssueFixed(ctx, tracker, analytics.CloudIssueFixedProperties{
+				PolicyId:        prev.PolicyID,
+				Type:            analytics.CloudIssueFixedType_TagPolicy,
+				ProjectName:     p.ProjectName,
+				ResourceAddress: fr.Address,
+			})
 		}
 	}
+}
+
+func trackIssueFixed(ctx context.Context, tracker analytics.AnalyticsClient, props analytics.CloudIssueFixedProperties) {
+	props.OrgId, _ = events.GetMetadata[string]("orgId")
+	props.RepoId, _ = events.GetMetadata[string]("repoId")
+	if branchID, _ := events.GetMetadata[string]("branchId"); branchID != "" {
+		props.BranchId = &branchID
+	}
+	source := analytics.CloudIssueFixedSource_Cli
+	props.Source = &source
+	_ = analytics.TrackCloudIssueFixed(ctx, tracker, props)
+}
+
+func countsAsAny(counts map[string]int) map[string]any {
+	if counts == nil {
+		return nil
+	}
+	result := make(map[string]any, len(counts))
+	for key, count := range counts {
+		result[key] = count
+	}
+	return result
 }

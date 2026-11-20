@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/charmbracelet/huh"
+	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/config"
 	"github.com/infracost/cli/internal/ui"
 	"github.com/infracost/cli/version"
@@ -82,7 +83,7 @@ func ensureOrgExists(ctx context.Context, cfg *config.Config, source oauth2.Toke
 		return err
 	}
 
-	org, err := createOrgAndCache(ctx, cfg, source, name)
+	org, err := createOrgAndCache(ctx, cfg, source, name, dashboard.OrgCreateTriggerSetup)
 	if err != nil {
 		return err
 	}

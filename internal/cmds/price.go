@@ -115,21 +115,21 @@ func Price(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, s
 
 	output := format.ToOutput(result)
 
-	eventsClient := cfg.Events.Client(api.Client(ctx, source, cfg.OrgID))
+	tracker := cfg.Events.Tracker(api.Client(ctx, source, cfg.OrgID))
 
 	// Diff against the previous cached result to detect fixed policy violations.
 	if prev, err := store.Latest(true); err != nil {
 		logging.Infof("could not load previous run data: %v", err)
 	} else {
 		logging.Infof("found previous run data in cache")
-		output.TrackDiff(ctx, eventsClient, prev)
+		output.TrackDiff(ctx, tracker, prev)
 	}
 
 	if err := store.Write(dir, &output); err != nil {
 		logging.Warn("failed to cache results: " + err.Error())
 	}
 
-	output.TrackRun(ctx, eventsClient, runSeconds, outputFormat, nil)
+	output.TrackRun(ctx, tracker, runSeconds, outputFormat, nil)
 
 	return &output, nil
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	analytics "github.com/infracost/analytics-go"
 	"github.com/infracost/cli/internal/api"
 	"github.com/infracost/cli/internal/api/dashboard"
 	"github.com/infracost/cli/internal/api/events"
@@ -201,7 +202,7 @@ func resolveSetupOrgWithSpinner(ctx context.Context, cfg *config.Config, source 
 	}
 
 	if len(user.Organizations) == 0 {
-		org, created, err := ensurePersonalOrg(ctx, cfg, source, user.Name, user.Email, orgCreateTriggerCISetup)
+		org, created, err := ensurePersonalOrg(ctx, cfg, source, user.Name, user.Email, dashboard.OrgCreateTriggerCISetup)
 		if err != nil {
 			return dashboard.Organization{}, err
 		}
@@ -255,31 +256,17 @@ type CISetupOptions struct {
 // CISetupResult reports how a CI setup run ended, for the caller's closing
 // card and for the outcome event.
 type CISetupResult struct {
-	Outcome    string
+	Outcome    analytics.InfracostCiSetupOutcomeOutcome
 	Configured bool
 	Platform   string
 
-	stage          string
-	mode           string
-	vcsProvider    string
+	stage          analytics.InfracostCiSetupOutcomeStage
+	mode           analytics.InfracostCiSetupOutcomeMode
+	vcsProvider    analytics.InfracostCiSetupOutcomeVcsProvider
 	platformPinned bool
 	yes            bool
 	startedAt      time.Time
 }
-
-// The stages a run passes through. The outcome event names the one it was in
-// when it ended, so a failure points at a phase rather than just "error".
-const (
-	ciStagePreflight = "preflight"
-	ciStageAuth      = "auth"
-	ciStageOrg       = "org"
-	ciStageConnected = "app-connection-check"
-	ciStagePlatform  = "platform"
-	ciStageAPIKey    = "api-key"
-	ciStageConfirm   = "confirm"
-	ciStageWrite     = "write"
-	ciStageSecret    = "secret"
-)
 
 // Sentinels for the setup failures worth telling apart in telemetry. Error
 // text carries repo paths and job names, so only these labels are sent.
@@ -299,18 +286,9 @@ var (
 // way out of an interactive command. Losing an event beats stalling the exit.
 const ciSetupEventTimeout = 500 * time.Millisecond
 
-func pushCISetupEvent(ctx context.Context, cfg *config.Config, event string, extra ...interface{}) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ciSetupEventTimeout)
-	defer cancel()
-	// Same attribution as every other events push: without the token and org
-	// the drop-outs being measured arrive unattributed.
-	client := api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID)
-	cfg.Events.Client(client).Push(ctx, event, extra...)
-}
-
 func pushCISetupOutcome(ctx context.Context, cfg *config.Config, result *CISetupResult, err error) {
 	if result.Outcome == "" {
-		result.Outcome = "error"
+		result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_Error
 	}
 	// A run that failed before startedAt was set has no duration to report.
 	var duration float64
@@ -319,33 +297,40 @@ func pushCISetupOutcome(ctx context.Context, cfg *config.Config, result *CISetup
 	}
 	stage := result.stage
 	if stage == "" {
-		stage = ciStagePreflight
+		stage = analytics.InfracostCiSetupOutcomeStage_Preflight
 	}
 	mode := result.mode
 	if mode == "" {
-		mode = "unknown"
+		mode = analytics.InfracostCiSetupOutcomeMode_Unknown
 	}
 	vcsProvider := result.vcsProvider
 	if vcsProvider == "" {
-		vcsProvider = "unknown"
+		vcsProvider = analytics.InfracostCiSetupOutcomeVcsProvider_Unknown
 	}
-	extra := []interface{}{
-		"outcome", result.Outcome,
-		"configured", result.Configured,
-		"stage", stage,
-		"mode", mode,
-		"vcsProvider", vcsProvider,
-		"platformPinned", result.platformPinned,
-		"yes", result.yes,
-		// Not "ciPlatform": that key already carries the CI we are running
-		// in, and an extra of the same name would overwrite it.
-		"targetCIPlatform", result.Platform,
-		"durationSeconds", duration,
+	props := analytics.InfracostCiSetupOutcomeProperties{
+		Outcome:         result.Outcome,
+		Configured:      result.Configured,
+		Stage:           stage,
+		Mode:            mode,
+		VcsProvider:     vcsProvider,
+		PlatformPinned:  result.platformPinned,
+		Yes:             result.yes,
+		DurationSeconds: duration,
+	}
+	if result.Platform != "" {
+		props.TargetCiPlatform = &result.Platform
 	}
 	if err != nil {
-		extra = append(extra, "errorKind", CISetupErrorKind(err))
+		kind := analytics.InfracostCiSetupOutcomeErrorKind(CISetupErrorKind(err))
+		props.ErrorKind = &kind
 	}
-	pushCISetupEvent(ctx, cfg, "infracost-ci-setup-outcome", extra...)
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ciSetupEventTimeout)
+	defer cancel()
+	// Same attribution as every other events push: without the token and org
+	// the drop-outs being measured arrive unattributed.
+	client := api.Client(ctx, cfg.Auth.TokenFromCache(ctx), cfg.OrgID)
+	_ = analytics.TrackInfracostCiSetupOutcome(ctx, cfg.Events.Tracker(client), props)
 }
 
 // CISetupErrorKind buckets an error into a bounded label. Never send
@@ -466,7 +451,7 @@ func RunCISetup(ctx context.Context, cfg *config.Config, opts CISetupOptions) (r
 	// The lifecycle opens before preflight so a run that never gets as far as
 	// a repository still reports why.
 	result.startedAt = time.Now()
-	result.stage = ciStagePreflight
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Preflight
 	defer func() {
 		pushCISetupOutcome(ctx, cfg, &result, err)
 	}()
@@ -511,14 +496,11 @@ func RunCISetup(ctx context.Context, cfg *config.Config, opts CISetupOptions) (r
 		opts.Pipeline = true
 	}
 
-	result.mode = "app"
+	result.mode = analytics.InfracostCiSetupOutcomeMode_App
 	if opts.Pipeline {
-		result.mode = "pipeline"
+		result.mode = analytics.InfracostCiSetupOutcomeMode_Pipeline
 	}
-	result.vcsProvider = vcsHostKind(repo.host)
-	if result.vcsProvider == "" {
-		result.vcsProvider = "unknown"
-	}
+	result.vcsProvider = analytics.InfracostCiSetupOutcomeVcsProvider(vcsHostKind(repo.host))
 	result.platformPinned = opts.Platform != ""
 	result.yes = opts.Yes
 
@@ -540,13 +522,13 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo, resul
 	ui.Successf("Git repository      %s", repo.slug())
 	ui.Successf("VCS provider        %s", detectVCSProvider(repo))
 
-	result.stage = ciStageAuth
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Auth
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
 		return false, fmt.Errorf("authenticating: %w", err)
 	}
 
-	result.stage = ciStageOrg
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Org
 	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
 		return false, err
@@ -554,7 +536,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo, resul
 	events.RegisterMetadata("orgId", org.ID)
 	ui.Successf("Infracost org       %s", org.Slug)
 
-	result.stage = ciStageConnected
+	result.stage = analytics.InfracostCiSetupOutcomeStage_AppConnectionCheck
 	// Check if the repo is already connected via the app integration.
 	orgClient := cfg.Dashboard.Client(api.Client(ctx, source, org.ID))
 	var connected bool
@@ -568,7 +550,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo, resul
 		ui.Warnf("Could not check whether this repository is connected: %v", err)
 	}
 	if connected {
-		result.Outcome = "app-connected"
+		result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_AppConnected
 		ui.Success("App integration already connected")
 		fmt.Println()
 		fmt.Println("This repository is already sending PR cost estimates.")
@@ -600,7 +582,7 @@ func runCIAppSetup(ctx context.Context, cfg *config.Config, repo repoInfo, resul
 	fmt.Println("To use CI pipeline mode instead, run:")
 	fmt.Println("  infracost ci setup --pipeline")
 
-	result.Outcome = "app-pitched"
+	result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_AppPitched
 	return false, nil
 }
 
@@ -609,24 +591,24 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	ui.Heading("Scanning repository")
 	ui.Successf("Git repository      %s", repo.slug())
 
-	result.stage = ciStagePlatform
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Platform
 	platform, err := resolveCIPlatform(repoRoot, repo, opts.Platform)
 	if err != nil {
 		if errors.Is(err, errCIPlatformNotSelected) {
-			result.Outcome = "platform-not-selected"
+			result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_PlatformNotSelected
 		}
 		return false, err
 	}
 	result.Platform = platform.id
 	ui.Successf("CI platform         %s", platform.name)
 
-	result.stage = ciStageAuth
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Auth
 	source, err := cfg.Auth.Token(ctx)
 	if err != nil {
 		return false, fmt.Errorf("authenticating: %w", err)
 	}
 
-	result.stage = ciStageOrg
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Org
 	org, err := resolveSetupOrgWithSpinner(ctx, cfg, source)
 	if err != nil {
 		return false, err
@@ -635,7 +617,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	ui.Successf("Infracost org       %s", org.Slug)
 
 	if platform.writer == nil {
-		result.Outcome = "recipe-printed"
+		result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_RecipePrinted
 		printCIRecipe(platform, org.Slug)
 		return false, nil
 	}
@@ -650,7 +632,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	// Only a run that will set the secret itself needs the key's value — with
 	// gh missing the value is never read, so demanding it would refuse a setup
 	// the manual steps can finish.
-	result.stage = ciStageAPIKey
+	result.stage = analytics.InfracostCiSetupOutcomeStage_ApiKey
 	setter, canSetSecret := platform.writer.(ciSecretSetter)
 	canSetSecret = canSetSecret && setter.CanSetSecret()
 	// A key we took at the prompt is removed from the environment once the
@@ -673,7 +655,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 					return false, err
 				}
 				if !entered {
-					result.Outcome = "api-key-missing"
+					result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_ApiKeyMissing
 					fmt.Println()
 					fmt.Println("Once you have a key, set it as an environment variable and retry:")
 					fmt.Printf("  export %s=<your-key>\n", ciAPIKeySecret)
@@ -688,7 +670,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 				break
 			}
 
-			result.Outcome = "api-key-invalid"
+			result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_ApiKeyInvalid
 			if !fromPrompt || attempt >= maxAPIKeyAttempts {
 				// Before the browser launches, which would inherit it.
 				if fromPrompt {
@@ -713,7 +695,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		return false, err
 	}
 
-	result.stage = ciStageConfirm
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Confirm
 	writeConfigs := true
 	// A file we wrote is an update, not an overwrite, so the prompt is only for
 	// one the user or an older composite-action setup left behind.
@@ -721,7 +703,7 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		overwrite, err := promptExistingWorkflows(opts.Yes, repoRoot, paths)
 		if err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
-				result.Outcome = "declined"
+				result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_Declined
 			}
 			return false, err
 		}
@@ -758,13 +740,13 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		if err != nil || !confirmed {
 			// Answering No and backing out are the same funnel step.
 			if err == nil || errors.Is(err, huh.ErrUserAborted) {
-				result.Outcome = "declined"
+				result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_Declined
 			}
 			return false, err
 		}
 	}
 
-	result.stage = ciStageWrite
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Write
 	var written, notes, warnings []string
 	var changed, replaced bool
 	if writeConfigs {
@@ -803,13 +785,13 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 		}
 	}
 
-	result.stage = ciStageSecret
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Secret
 	secretSet, secretFailed := false, false
 	if canSetSecret {
 		if err := setter.SetSecret(ctx, jobOpts); err != nil {
 			ui.Warnf("Failed to set the %s secret: %v", ciAPIKeySecret, err)
 			secretFailed = true
-			result.Outcome = "secret-failed"
+			result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_SecretFailed
 		} else {
 			ui.Successf("Set %s secret", ciAPIKeySecret)
 			secretSet = true
@@ -857,9 +839,9 @@ func runCIPipelineSetup(ctx context.Context, cfg *config.Config, repo repoInfo, 
 	configured := (len(written) > 0 || secretSet) && !secretFailed
 	if result.Outcome == "" {
 		if configured {
-			result.Outcome = "configured"
+			result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_Configured
 		} else {
-			result.Outcome = "nothing-changed"
+			result.Outcome = analytics.InfracostCiSetupOutcomeOutcome_NothingChanged
 		}
 	}
 	return configured, nil

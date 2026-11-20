@@ -129,8 +129,8 @@ func Inspect(cfg *config.Config) *cobra.Command {
 				return err
 			}
 
-			eventsClient := cfg.Events.Client(api.Client(cmd.Context(), cfg.Auth.TokenFromCache(cmd.Context()), cfg.OrgID))
-			data.TrackRun(cmd.Context(), eventsClient, time.Since(startTime).Seconds(), "inspect", nil)
+			tracker := cfg.Events.Tracker(api.Client(cmd.Context(), cfg.Auth.TokenFromCache(cmd.Context()), cfg.OrgID))
+			data.TrackRun(cmd.Context(), tracker, time.Since(startTime).Seconds(), "inspect", nil)
 
 			return nil
 		},

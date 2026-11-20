@@ -11,72 +11,51 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	analytics "github.com/infracost/analytics-go"
 	"github.com/infracost/cli/internal/api/events"
+	"github.com/infracost/cli/internal/api/events/eventstest"
 	"github.com/infracost/cli/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type ciSetupEvent struct {
-	name  string
-	extra []interface{}
-}
-
-type ciSetupEventRecorder struct {
-	events []ciSetupEvent
-}
-
-func (r *ciSetupEventRecorder) Push(_ context.Context, name string, extra ...interface{}) {
-	r.events = append(r.events, ciSetupEvent{name: name, extra: extra})
-}
-
-// field reads a key's value out of the recorded key-value pairs.
-func (e ciSetupEvent) field(key string) (interface{}, bool) {
-	for i := 0; i+1 < len(e.extra); i += 2 {
-		if e.extra[i] == key {
-			return e.extra[i+1], true
-		}
-	}
-	return nil, false
-}
-
-func ciSetupEventsConfig(recorder *ciSetupEventRecorder) *config.Config {
+func eventsConfig(recorder *eventstest.Recorder) *config.Config {
 	cfg := new(config.Config)
 	cfg.Events.ClientFn = func(*http.Client) events.Client { return recorder }
 	return cfg
 }
 
 func TestPushCISetupOutcome(t *testing.T) {
-	recorder := new(ciSetupEventRecorder)
+	recorder := new(eventstest.Recorder)
 	result := CISetupResult{
-		Outcome:    "configured",
+		Outcome:    analytics.InfracostCiSetupOutcomeOutcome_Configured,
 		Configured: true,
 		Platform:   "github",
 		startedAt:  time.Now().Add(-time.Second),
 	}
 
-	pushCISetupOutcome(context.Background(), ciSetupEventsConfig(recorder), &result, nil)
+	pushCISetupOutcome(context.Background(), eventsConfig(recorder), &result, nil)
 
-	require.Len(t, recorder.events, 1)
-	assert.Equal(t, "infracost-ci-setup-outcome", recorder.events[0].name)
+	require.Len(t, recorder.Events, 1)
+	assert.Equal(t, "infracost-ci-setup-outcome", recorder.Events[0].Name)
 
 	for key, want := range map[string]interface{}{
 		"outcome": "configured", "configured": true, "targetCIPlatform": "github",
-		"stage": ciStagePreflight,
+		"stage": "preflight",
 	} {
-		got, ok := recorder.events[0].field(key)
+		got, ok := recorder.Events[0].Field(key)
 		if assert.True(t, ok, key) {
 			assert.Equal(t, want, got, key)
 		}
 	}
 
-	_, overlaid := recorder.events[0].field("ciPlatform")
+	_, overlaid := recorder.Events[0].Field("ciPlatform")
 	assert.False(t, overlaid, "ciPlatform is the runner we are in, not the setup target")
 
-	_, sentMessage := recorder.events[0].field("errorMessage")
+	_, sentMessage := recorder.Events[0].Field("errorMessage")
 	assert.False(t, sentMessage, "error text must never be sent")
 
-	duration, ok := recorder.events[0].field("durationSeconds")
+	duration, ok := recorder.Events[0].Field("durationSeconds")
 	require.True(t, ok)
 	seconds, ok := duration.(float64)
 	require.True(t, ok, "durationSeconds must be a float64")
@@ -87,24 +66,35 @@ func TestPushCISetupOutcome(t *testing.T) {
 // TestPushCISetupOutcome_UnsetStartedAt guards the case where a result reaches
 // the event without startedAt set, which would report ~1.7e9 seconds.
 func TestPushCISetupOutcome_UnsetStartedAt(t *testing.T) {
-	recorder := new(ciSetupEventRecorder)
-	result := CISetupResult{Outcome: "configured"}
+	recorder := new(eventstest.Recorder)
+	result := CISetupResult{Outcome: analytics.InfracostCiSetupOutcomeOutcome_Configured}
 
-	pushCISetupOutcome(context.Background(), ciSetupEventsConfig(recorder), &result, nil)
+	pushCISetupOutcome(context.Background(), eventsConfig(recorder), &result, nil)
 
-	require.Len(t, recorder.events, 1)
-	duration, _ := recorder.events[0].field("durationSeconds")
+	require.Len(t, recorder.Events, 1)
+	duration, _ := recorder.Events[0].Field("durationSeconds")
 	assert.Equal(t, 0.0, duration, "no duration when startedAt is unset")
 }
 
-// TestPushCISetupEventBounded pins the inline sends: the start event runs
-// ahead of interactive work, so a slow endpoint must not stall the command.
-func TestPushCISetupEventBounded(t *testing.T) {
+func TestPushCISetupOutcomeWithoutPlatform(t *testing.T) {
+	recorder := new(eventstest.Recorder)
+	result := CISetupResult{Outcome: analytics.InfracostCiSetupOutcomeOutcome_PlatformNotSelected, startedAt: time.Now()}
+
+	pushCISetupOutcome(context.Background(), eventsConfig(recorder), &result, errCIPlatformNotSelected)
+
+	require.Len(t, recorder.Events, 1)
+	_, sentPlatform := recorder.Events[0].Field("targetCIPlatform")
+	assert.False(t, sentPlatform, "an unresolved platform must be absent, not empty")
+}
+
+// TestPushCISetupOutcomeBounded pins the send on the way out of the command,
+// so a slow endpoint must not stall the exit.
+func TestPushCISetupOutcomeBounded(t *testing.T) {
 	cfg := new(config.Config)
 	cfg.Events.ClientFn = func(*http.Client) events.Client { return blockingEventClient{} }
 
 	start := time.Now()
-	pushCISetupEvent(context.Background(), cfg, "infracost-ci-setup-start")
+	pushCISetupOutcome(context.Background(), cfg, &CISetupResult{}, nil)
 
 	assert.Less(t, time.Since(start), ciSetupEventTimeout+250*time.Millisecond)
 }
@@ -148,6 +138,29 @@ func TestCISetupErrorKind(t *testing.T) {
 	}
 }
 
+func TestCISetupVCSProvidersAreInCatalog(t *testing.T) {
+	testCases := []string{hostGitHub, hostGitLab, hostAzure, hostBitbucket}
+
+	for _, provider := range testCases {
+		assert.True(t, analytics.InfracostCiSetupOutcomeVcsProvider(provider).Valid(), "vcsProvider %q is not in the catalog", provider)
+	}
+}
+
+func TestCISetupErrorKindsAreInCatalog(t *testing.T) {
+	testCases := []error{
+		errCIPlatformNotSelected, errCIPlatformUnknown, errCINotGitRepo, errCINoGitRemote,
+		errCIRemoteURLUnparsed, errCINoOrganizations, errCIOrgNotFound, errCIAPIKeyMissing,
+		errCINotInteractive, huh.ErrUserAborted, context.Canceled, os.ErrPermission,
+		os.ErrNotExist, os.ErrExist, &net.DNSError{}, errors.New("unclassified"),
+	}
+
+	for _, err := range testCases {
+		kind := CISetupErrorKind(err)
+		assert.True(t, analytics.InfracostCiSetupOutcomeErrorKind(kind).Valid(), "ci setup errorKind %q is not in the catalog", kind)
+		assert.True(t, analytics.InfracostCommandErrorKind(kind).Valid(), "command errorKind %q is not in the catalog", kind)
+	}
+}
+
 // TestCISetupErrorKindLeaksNothing is the guard for the whole scheme: whatever
 // the error says, only a bounded label reaches the event.
 func TestCISetupErrorKindLeaksNothing(t *testing.T) {
@@ -179,9 +192,9 @@ var secretFragments = []string{
 
 // assertNoLeak fails if any value in an event payload carries a fragment of
 // the error that produced it.
-func assertNoLeak(t *testing.T, event ciSetupEvent) {
+func assertNoLeak(t *testing.T, event eventstest.Event) {
 	t.Helper()
-	for _, value := range event.extra {
+	for _, value := range event.Extra {
 		s, ok := value.(string)
 		if !ok {
 			continue
@@ -204,63 +217,63 @@ func TestPushCISetupOutcomeNeverSendsErrorText(t *testing.T) {
 	}
 	for _, err := range errs {
 		t.Run(CISetupErrorKind(err), func(t *testing.T) {
-			recorder := new(ciSetupEventRecorder)
+			recorder := new(eventstest.Recorder)
 			result := CISetupResult{startedAt: time.Now()}
 
-			pushCISetupOutcome(context.Background(), ciSetupEventsConfig(recorder), &result, err)
+			pushCISetupOutcome(context.Background(), eventsConfig(recorder), &result, err)
 
-			require.Len(t, recorder.events, 1)
-			assertNoLeak(t, recorder.events[0])
+			require.Len(t, recorder.Events, 1)
+			assertNoLeak(t, recorder.Events[0])
 		})
 	}
 }
 
 // TestPushCISetupOutcomeError pins the outcome event's shape on the error path.
 func TestPushCISetupOutcomeError(t *testing.T) {
-	recorder := new(ciSetupEventRecorder)
+	recorder := new(eventstest.Recorder)
 	result := CISetupResult{startedAt: time.Now()}
 	err := fmt.Errorf("writing /Users/owen/code/acme/.github/workflows/infracost.yml: %w", os.ErrPermission)
 
-	pushCISetupOutcome(context.Background(), ciSetupEventsConfig(recorder), &result, err)
+	pushCISetupOutcome(context.Background(), eventsConfig(recorder), &result, err)
 
-	require.Len(t, recorder.events, 1)
-	outcome, _ := recorder.events[0].field("outcome")
+	require.Len(t, recorder.Events, 1)
+	outcome, _ := recorder.Events[0].Field("outcome")
 	assert.Equal(t, "error", outcome, "an unset outcome defaults to error")
-	kind, ok := recorder.events[0].field("errorKind")
+	kind, ok := recorder.Events[0].Field("errorKind")
 	require.True(t, ok)
 	assert.Equal(t, "permission-denied", kind)
-	stage, ok := recorder.events[0].field("stage")
+	stage, ok := recorder.Events[0].Field("stage")
 	require.True(t, ok)
-	assert.Equal(t, ciStagePreflight, stage, "an unset stage defaults to preflight")
+	assert.Equal(t, "preflight", stage, "an unset stage defaults to preflight")
 
-	assertNoLeak(t, recorder.events[0])
+	assertNoLeak(t, recorder.Events[0])
 }
 
 // TestPushCISetupOutcomeStage checks the stage a run reached rides along, so a
 // failure names a phase rather than only "error".
 func TestPushCISetupOutcomeStage(t *testing.T) {
-	recorder := new(ciSetupEventRecorder)
-	result := CISetupResult{stage: ciStageWrite, startedAt: time.Now()}
+	recorder := new(eventstest.Recorder)
+	result := CISetupResult{stage: analytics.InfracostCiSetupOutcomeStage_Write, startedAt: time.Now()}
 
-	pushCISetupOutcome(context.Background(), ciSetupEventsConfig(recorder), &result, os.ErrPermission)
+	pushCISetupOutcome(context.Background(), eventsConfig(recorder), &result, os.ErrPermission)
 
-	require.Len(t, recorder.events, 1)
-	stage, _ := recorder.events[0].field("stage")
-	assert.Equal(t, ciStageWrite, stage)
+	require.Len(t, recorder.Events, 1)
+	stage, _ := recorder.Events[0].Field("stage")
+	assert.Equal(t, "write", stage)
 }
 
 // TestSetStage checks a stage change reaches the outcome event, so a failure
 // names the phase it happened in.
 func TestSetStage(t *testing.T) {
-	recorder := new(ciSetupEventRecorder)
+	recorder := new(eventstest.Recorder)
 	result := CISetupResult{startedAt: time.Now()}
 
-	result.stage = ciStageConfirm
-	pushCISetupOutcome(context.Background(), ciSetupEventsConfig(recorder), &result, nil)
+	result.stage = analytics.InfracostCiSetupOutcomeStage_Confirm
+	pushCISetupOutcome(context.Background(), eventsConfig(recorder), &result, nil)
 
-	require.Len(t, recorder.events, 1)
-	stage, _ := recorder.events[0].field("stage")
-	assert.Equal(t, ciStageConfirm, stage)
+	require.Len(t, recorder.Events, 1)
+	stage, _ := recorder.Events[0].Field("stage")
+	assert.Equal(t, "confirm", stage)
 }
 
 // TestRepoEventSlug pins the join key between a setup and the pipeline runs

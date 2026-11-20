@@ -108,7 +108,7 @@ func resolveOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSour
 // interactive terminal is offered a name to accept or edit, so the org is
 // theirs; a non-interactive or agent run creates nothing, because there is
 // nobody to agree to it.
-func ensurePersonalOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, userName, userEmail, trigger string) (dashboard.Organization, bool, error) {
+func ensurePersonalOrg(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, userName, userEmail string, trigger dashboard.OrgCreateTrigger) (dashboard.Organization, bool, error) {
 	// An organization is durable server state, so nobody gets one they were
 	// not asked about: a script or an agent run is told instead.
 	if !ui.IsInteractive() {
@@ -129,11 +129,10 @@ func ensurePersonalOrg(ctx context.Context, cfg *config.Config, source oauth2.To
 	}
 	name = chosen
 
-	org, err := createOrgAndCache(ctx, cfg, source, name)
+	org, err := createOrgAndCache(ctx, cfg, source, name, trigger)
 	if err != nil {
 		return dashboard.Organization{}, false, err
 	}
-	pushOrgCreated(ctx, cfg, trigger)
 
 	ui.Successf("Created organization %s (%s)", ui.Accent(org.Slug), org.Name)
 	return org, true, nil
