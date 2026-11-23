@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	pb "github.com/infracost/proto/gen/go/infracost/plugin"
@@ -521,44 +522,7 @@ func TestEnsureInstalled(t *testing.T) {
 	})
 
 	t.Run("installs plugins into flat directory", func(t *testing.T) {
-		archiveName := pluginArchiveName()
-		archiveData := make(map[string][]byte)
-		archiveSHA := make(map[string]string)
-		archiveDir := t.TempDir()
-		for _, required := range requiredPlugins {
-			archivePath := createPluginArchive(t, archiveDir, archiveName+"-"+required.Name, pluginBinaryName(required.Name), []byte(required.Name))
-			data, err := os.ReadFile(archivePath)
-			require.NoError(t, err)
-			archiveData[required.Name] = data
-			archiveSHA[required.Name] = fileSHA256(t, archivePath)
-		}
-
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
-			if len(parts) != 5 || parts[1] != runtime.GOOS || parts[2] != runtime.GOARCH || parts[3] != "latest" {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			name := parts[0]
-			if _, ok := archiveData[name]; !ok {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			if parts[4] == "version" {
-				_, _ = w.Write([]byte("0.0.1\n"))
-				return
-			}
-			if parts[4] == archiveName+".sha256" {
-				_, _ = w.Write([]byte(archiveSHA[name] + "\n"))
-				return
-			}
-			if parts[4] == archiveName {
-				_, _ = w.Write(archiveData[name])
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
+		srv, requests := newRequiredPluginsServer(t)
 
 		cacheDir := t.TempDir()
 		// Every required plugin is downloaded unconditionally.
@@ -572,7 +536,82 @@ func TestEnsureInstalled(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, []byte(required.Name), data)
 		}
+
+		// A successful install is memoized: the second caller hits neither the
+		// release host nor a plugin subprocess.
+		served := requests.Load()
+		require.Positive(t, served)
+		_, err = c.EnsurePlugins(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, served, requests.Load())
 	})
+
+	t.Run("cancelled install is retried by the next caller", func(t *testing.T) {
+		srv, _ := newRequiredPluginsServer(t)
+
+		cacheDir := t.TempDir()
+		c := &Config{Cache: cacheDir, BaseURL: srv.URL, AutoUpdate: true}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := c.EnsurePlugins(ctx)
+		require.ErrorIs(t, err, context.Canceled)
+
+		_, err = c.EnsurePlugins(context.Background())
+		require.NoError(t, err)
+
+		for _, required := range requiredPlugins {
+			_, err := os.Stat(filepath.Join(cacheDir, pluginBinaryName(required.Name)))
+			require.NoError(t, err)
+		}
+	})
+}
+
+// newRequiredPluginsServer serves a "latest" archive, checksum and version for
+// every required plugin, and counts the requests it has served.
+func newRequiredPluginsServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var requests atomic.Int64
+	archiveName := pluginArchiveName()
+	archiveData := make(map[string][]byte)
+	archiveSHA := make(map[string]string)
+	archiveDir := t.TempDir()
+	for _, required := range requiredPlugins {
+		archivePath := createPluginArchive(t, archiveDir, archiveName+"-"+required.Name, pluginBinaryName(required.Name), []byte(required.Name))
+		data, err := os.ReadFile(archivePath)
+		require.NoError(t, err)
+		archiveData[required.Name] = data
+		archiveSHA[required.Name] = fileSHA256(t, archivePath)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if len(parts) != 5 || parts[1] != runtime.GOOS || parts[2] != runtime.GOARCH || parts[3] != "latest" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		name := parts[0]
+		if _, ok := archiveData[name]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if parts[4] == "version" {
+			_, _ = w.Write([]byte("0.0.1\n"))
+			return
+		}
+		if parts[4] == archiveName+".sha256" {
+			_, _ = w.Write([]byte(archiveSHA[name] + "\n"))
+			return
+		}
+		if parts[4] == archiveName {
+			_, _ = w.Write(archiveData[name])
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &requests
 }
 
 func TestUpdatePlugins(t *testing.T) {
