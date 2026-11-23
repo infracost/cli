@@ -74,9 +74,8 @@ type ManagerOptions struct {
 type Manager struct {
 	opts ManagerOptions
 
-	installMu   sync.Mutex
-	installOnce sync.Once
-	installErr  error
+	installMu sync.Mutex
+	installed bool
 
 	loadMu          sync.Mutex
 	loadOnce        sync.Once
@@ -108,15 +107,20 @@ func (m *Manager) Dir() string { return m.opts.Dir }
 // EnsureInstalled downloads and installs any required plugins that aren't
 // already present in the cache directory. It is a no-op when SkipInstall is
 // set. The context bounds the metadata/archive downloads and lets a caller
-// cancel a slow install.
+// cancel a slow install. Only success is memoized: a failed or cancelled
+// install is retried by the next caller with its own context.
 func (m *Manager) EnsureInstalled(ctx context.Context) error {
 	m.installMu.Lock()
 	defer m.installMu.Unlock()
 
-	m.installOnce.Do(func() {
-		m.installErr = m.ensureInstalled(ctx)
-	})
-	return m.installErr
+	if m.installed {
+		return nil
+	}
+	if err := m.ensureInstalled(ctx); err != nil {
+		return err
+	}
+	m.installed = true
+	return nil
 }
 
 func (m *Manager) ensureInstalled(ctx context.Context) error {

@@ -29,10 +29,8 @@ type Config struct {
 	// available.
 	AutoUpdate bool `env:"INFRACOST_CLI_PLUGIN_AUTO_UPDATE" default:"true"`
 
-	managerMu  sync.Mutex
-	ensureOnce sync.Once
-	ensureErr  error
-	manager    *Manager
+	managerMu sync.Mutex
+	manager   *Manager
 
 	// LoadParserPluginForProject lets tests inject a parser plugin without
 	// running a real subprocess. When non-nil, ParserPluginForProject calls
@@ -63,14 +61,12 @@ func (c *Config) PluginDir() string {
 }
 
 // EnsurePlugins installs any required plugins (when AutoUpdate is enabled and
-// Dir is not set as a developer override), then returns the Manager. The
-// install runs once and is memoized, so only the first caller's context bounds
-// the downloads.
+// Dir is not set as a developer override), then returns the Manager.
 func (c *Config) EnsurePlugins(ctx context.Context) (*Manager, error) {
 	c.managerMu.Lock()
 	defer c.managerMu.Unlock()
 
-	c.ensureOnce.Do(func() {
+	if c.manager == nil {
 		c.manager = NewManager(ManagerOptions{
 			Dir:         c.PluginDir(),
 			Cache:       c.Cache,
@@ -78,9 +74,8 @@ func (c *Config) EnsurePlugins(ctx context.Context) (*Manager, error) {
 			AutoUpdate:  c.AutoUpdate,
 			SkipInstall: c.Dir != "",
 		})
-		c.ensureErr = c.manager.EnsureInstalled(ctx)
-	})
-	return c.manager, c.ensureErr
+	}
+	return c.manager, c.manager.EnsureInstalled(ctx)
 }
 
 // UpdatePlugins forces every required plugin to be re-checked against the
