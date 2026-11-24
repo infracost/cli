@@ -434,10 +434,11 @@ projects:
 			featureFlags string
 			wantParsed   []string
 			wantAIRuns   int
+			wantProjects []string
 		}{
-			"no feature flags": {"", []string{"terraform"}, 0},
-			"AI plugin off":    {`{"enableAiPlugin":false}`, []string{"terraform"}, 0},
-			"AI plugin on":     {`{"enableAiPlugin":true}`, []string{"appcode", "terraform"}, 2},
+			"no feature flags": {"", []string{"terraform"}, 0, []string{"infra"}},
+			"AI plugin off":    {`{"enableAiPlugin":false}`, []string{"terraform"}, 0, []string{"infra"}},
+			"AI plugin on":     {`{"enableAiPlugin":true}`, []string{"appcode", "terraform"}, 2, []string{"app", "infra"}},
 		} {
 			t.Run(name, func(t *testing.T) {
 				s := newTestScanner(t, testScannerOpts{parseResponse: awsTerraformParseResponse("aws_instance")})
@@ -457,7 +458,7 @@ projects:
 					}), err
 				}
 
-				_, err := s.Scan(context.Background(), dashboard.RunParameters{
+				result, err := s.Scan(context.Background(), dashboard.RunParameters{
 					UsageDefaults: emptyUsageDefaults(t),
 					FeatureFlags:  json.RawMessage(tc.featureFlags),
 				}, dir, "main", auth.AuthenticationToken("test-token"), nil)
@@ -466,6 +467,14 @@ projects:
 				sort.Strings(parsed)
 				require.Equal(t, tc.wantParsed, parsed)
 				require.Equal(t, tc.wantAIRuns, aiRuns)
+
+				// A skipped appcode project is left out, not shown as an empty one.
+				var projects []string
+				for _, p := range result.Projects {
+					projects = append(projects, p.Config.Name)
+				}
+				sort.Strings(projects)
+				require.Equal(t, tc.wantProjects, projects)
 			})
 		}
 	})

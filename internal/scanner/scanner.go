@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -343,6 +344,9 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			PluginOptions:     pluginOpts,
 			FetchAuth:         s.FetchAuth,
 		})
+		if errors.Is(err, pkgscanner.ErrProjectSkipped) {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan project %q: %w", project.Name, err)
 		}

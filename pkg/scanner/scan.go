@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -78,6 +79,10 @@ func wrapProviderError(name string, err error) error {
 	}
 	return fmt.Errorf("failed to execute provider %s: %w", name, err)
 }
+
+// ErrProjectSkipped is returned by ScanProject for a project it doesn't scan:
+// an appcode project without AIEnabled. Callers leave it out of their results.
+var ErrProjectSkipped = errors.New("project skipped: app code is only scanned with AI policies enabled")
 
 // aiProviderName is the ai provider's name. It and the appcode parser are only
 // used when ScanProjectOptions.AIEnabled is set.
@@ -187,7 +192,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 
 	projectType := projecttype.Resolve(opts.Project.Type, absoluteProjectPath)
 	if projectType == projecttype.AppCode && !opts.AIEnabled {
-		return &ProjectResult{Name: opts.Project.Name, Config: opts.Project}, nil
+		return nil, ErrProjectSkipped
 	}
 	parserPlugin, err := opts.Plugins.ParserPluginForProject(ctx, string(projectType))
 	if err != nil {
