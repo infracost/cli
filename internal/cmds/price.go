@@ -103,6 +103,7 @@ func Price(ctx context.Context, cfg *config.Config, source oauth2.TokenSource, s
 		Dashboard:       cfg.Dashboard,
 		Currency:        in.Currency,
 		PricingEndpoint: cfg.PricingEndpoint,
+		CostdevEndpoint: cfg.CostdevEndpoint,
 		PricingAPIKey:   cfg.PricingAPIKey,
 		FetchAuth:       scanner.SSHFetchAuthFromValue(cfg.SSHKeyFile),
 	}

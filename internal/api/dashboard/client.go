@@ -44,6 +44,7 @@ type RunParameters struct {
 	Guardrails        []json.RawMessage `json:"guardrails"`
 	Budgets           []json.RawMessage `json:"budgets"`
 	ConfigTemplate    string            `json:"configTemplate"`
+	FeatureFlags      json.RawMessage   `json:"featureFlags"`
 }
 
 type OrgCreateTrigger string
@@ -153,6 +154,7 @@ func (c *client) RunParameters(ctx context.Context, repoURL, branchName string) 
     guardrails
     budgets
     configTemplate
+    featureFlags
   }
 }`
 

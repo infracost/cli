@@ -185,6 +185,7 @@ func Policies(ctx context.Context, cfg *config.Config, source oauth2.TokenSource
 		Dashboard:       cfg.Dashboard,
 		Currency:        cfg.Currency,
 		PricingEndpoint: cfg.PricingEndpoint,
+		CostdevEndpoint: cfg.CostdevEndpoint,
 		FetchAuth:       scanner.SSHFetchAuthFromValue(cfg.SSHKeyFile),
 	}
 	finops, tagging, err := s.ListPolicies(ctx, runParameters, providers)

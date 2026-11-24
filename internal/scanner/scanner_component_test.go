@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/infracost/cli/internal/api/dashboard"
@@ -413,6 +414,89 @@ func TestScan(t *testing.T) {
 		require.Len(t, result.Projects[0].Resources, 1)
 		if result.Projects[0].Resources[0].Name != "aws_instance.web" {
 			t.Errorf("expected resource name %q, got %q", "aws_instance.web", result.Projects[0].Resources[0].Name)
+		}
+	})
+
+	t.Run("runs the appcode parser and ai provider only when the org has the AI plugin", func(t *testing.T) {
+		dir := writeTestProject(t, `version: "0.3"
+projects:
+  - path: infra
+    name: infra
+    type: terraform
+  - path: app
+    name: app
+    type: appcode
+`)
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "infra"), 0755))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "app"), 0755))
+
+		for name, tc := range map[string]struct {
+			featureFlags string
+			wantParsed   []string
+			wantAIRuns   int
+			wantProjects []string
+		}{
+			"no feature flags": {"", []string{"terraform"}, 0, []string{"infra"}},
+			"AI plugin off":    {`{"enableAiPlugin":false}`, []string{"terraform"}, 0, []string{"infra"}},
+			"AI plugin on":     {`{"enableAiPlugin":true}`, []string{"appcode", "terraform"}, 2, []string{"app", "infra"}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				s := newTestScanner(t, testScannerOpts{parseResponse: awsTerraformParseResponse("aws_instance")})
+				loadParser := s.Plugins.LoadParserPluginForProject
+				var parsed []string
+				s.Plugins.LoadParserPluginForProject = func(ctx context.Context, projectType string) (*plugins.ParserPlugin, error) {
+					parsed = append(parsed, projectType)
+					return loadParser(ctx, projectType)
+				}
+				aiRuns := 0
+				loadProviders := s.Plugins.LoadProviderPlugins
+				s.Plugins.LoadProviderPlugins = func(ctx context.Context) ([]*plugins.ProviderPlugin, error) {
+					providers, err := loadProviders(ctx)
+					return append(providers, &plugins.ProviderPlugin{
+						ProviderServiceClient: countingProvider{runs: &aiRuns},
+						Info:                  &pluginpb.GetPluginInfoResponse{Name: "infracost/ai", Type: pluginpb.PluginType_PROVIDER},
+					}), err
+				}
+
+				result, err := s.Scan(context.Background(), dashboard.RunParameters{
+					UsageDefaults: emptyUsageDefaults(t),
+					FeatureFlags:  json.RawMessage(tc.featureFlags),
+				}, dir, "main", auth.AuthenticationToken("test-token"), nil)
+				require.NoError(t, err)
+
+				sort.Strings(parsed)
+				require.Equal(t, tc.wantParsed, parsed)
+				require.Equal(t, tc.wantAIRuns, aiRuns)
+
+				// A skipped appcode project is left out, not shown as an empty one.
+				var projects []string
+				for _, p := range result.Projects {
+					projects = append(projects, p.Config.Name)
+				}
+				sort.Strings(projects)
+				require.Equal(t, tc.wantProjects, projects)
+			})
+		}
+	})
+
+	t.Run("sends the cost.dev endpoint to providers", func(t *testing.T) {
+		dir := writeTestProject(t)
+		var endpoints []string
+		s := newTestScanner(t, testScannerOpts{
+			parseResponse: awsTerraformParseResponse("aws_instance"),
+			processValidator: func(_ *testing.T, input *provider.TreeInput) {
+				endpoints = append(endpoints, input.Infracost.CostdevApiEndpoint)
+			},
+		})
+		s.CostdevEndpoint = "https://api.cost.dev"
+
+		_, err := s.Scan(context.Background(), dashboard.RunParameters{
+			UsageDefaults: emptyUsageDefaults(t),
+		}, dir, "main", auth.AuthenticationToken("test-token"), nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, endpoints)
+		for _, e := range endpoints {
+			require.Equal(t, "https://api.cost.dev", e)
 		}
 	})
 
@@ -1026,4 +1110,15 @@ projects:
 			t.Errorf("expected project name %q, got %q", "test-project", proj.Config.Name)
 		}
 	})
+}
+
+// countingProvider counts Process calls and returns no output.
+type countingProvider struct {
+	pluginpb.ProviderServiceClient
+	runs *int
+}
+
+func (c countingProvider) Process(context.Context, *pluginpb.ProcessRequest, ...grpc.CallOption) (*pluginpb.ProcessResponse, error) {
+	*c.runs++
+	return &pluginpb.ProcessResponse{}, nil
 }
