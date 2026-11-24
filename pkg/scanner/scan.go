@@ -35,6 +35,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // PluginOpts holds arbitrary plugin-specific parse options, keyed by plugin
@@ -78,6 +79,24 @@ func wrapProviderError(name string, err error) error {
 	return fmt.Errorf("failed to execute provider %s: %w", name, err)
 }
 
+// aiProviderName is the ai provider's name. It and the appcode parser are only
+// used when ScanProjectOptions.AIEnabled is set.
+const aiProviderName = "infracost/ai"
+
+// AIEnabled reads the enableAiPlugin flag from run parameters' featureFlags.
+// Missing or unreadable flags leave it off.
+func AIEnabled(featureFlags json.RawMessage) bool {
+	flags := new(event.FeatureFlags)
+	if len(featureFlags) == 0 || (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(featureFlags, flags) != nil {
+		return false
+	}
+	return flags.GetEnableAiPlugin()
+}
+
+// IsAIProvider reports whether a provider plugin is the ai provider, which only
+// runs with AIEnabled.
+func IsAIProvider(name string) bool { return name == aiProviderName }
+
 // ProjectResult holds the outputs for a single project scan.
 type ProjectResult struct {
 	Name              string
@@ -111,8 +130,14 @@ type ScanProjectOptions struct {
 	RepositoryName  string
 	OrgID           string
 	PricingEndpoint string
+	// CostdevEndpoint is cost.dev's API, which AI policies read their model
+	// catalog from. Empty uses the public one.
+	CostdevEndpoint string
 	Currency        string
 	TraceID         string
+	// AIEnabled is the run parameters' enableAiPlugin feature flag. Without it,
+	// appcode projects aren't parsed and the ai provider doesn't run.
+	AIEnabled bool
 
 	ProductionFilters         []*event.ProductionFilter
 	FinopsPolicies            []*event.FinopsPolicySettings
@@ -161,6 +186,9 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	isProduction := EvaluateProductionFilters(opts.ProductionFilters, opts.RepositoryName, opts.BranchName, opts.Project.Name)
 
 	projectType := projecttype.Resolve(opts.Project.Type, absoluteProjectPath)
+	if projectType == projecttype.AppCode && !opts.AIEnabled {
+		return &ProjectResult{Name: opts.Project.Name, Config: opts.Project}, nil
+	}
 	parserPlugin, err := opts.Plugins.ParserPluginForProject(ctx, string(projectType))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load parser plugin for project type %q: %w", projectType, err)
@@ -284,6 +312,7 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 		Infracost: &provider.Infracost{
 			ApiKey:             opts.AccessToken,
 			PricingApiEndpoint: opts.PricingEndpoint,
+			CostdevApiEndpoint: opts.CostdevEndpoint,
 			TraceId:            opts.TraceID,
 			OrgId:              &opts.OrgID,
 		},
@@ -329,6 +358,9 @@ func ScanProject(ctx context.Context, opts *ScanProjectOptions) (*ProjectResult,
 	}
 
 	for _, p := range providerPlugins {
+		if IsAIProvider(p.Info.GetName()) && !opts.AIEnabled {
+			continue
+		}
 		resp, err := p.Process(ctx, &pluginpb.ProcessRequest{Input: input})
 		if err != nil {
 			return nil, wrapProviderError(p.Info.GetName(), err)

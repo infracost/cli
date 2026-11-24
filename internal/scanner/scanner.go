@@ -39,6 +39,7 @@ type Scanner struct {
 	Dashboard       dashboard.Config
 	Currency        string
 	PricingEndpoint string
+	CostdevEndpoint string
 	// PricingAPIKey enables self-hosted pricing mode: the static key is sent to
 	// providers to authenticate pricing calls (instead of an OAuth access
 	// token), and policy evaluation is disabled — providers receive empty
@@ -85,6 +86,7 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 
 		hasRunParameters = true
 	}
+	aiEnabled := runParameters != nil && pkgscanner.AIEnabled(runParameters.FeatureFlags)
 
 	// Bypass the dashboard policy filter so every locally-available policy is
 	// listed — used to develop policies before they're registered upstream.
@@ -105,6 +107,9 @@ func (s *Scanner) ListPolicies(ctx context.Context, runParameters *dashboard.Run
 	var finOpsPolicies []FinOpsPolicy
 	for _, p := range providerPlugins {
 		providerName := p.Info.GetName()
+		if pkgscanner.IsAIProvider(providerName) && !aiEnabled {
+			continue
+		}
 		if len(wantProvider) > 0 {
 			if _, ok := wantProvider[providerName]; !ok {
 				continue
@@ -323,6 +328,8 @@ func (s *Scanner) Scan(ctx context.Context, runParameters dashboard.RunParameter
 			RepositoryName:    repositoryName,
 			OrgID:             runParameters.OrganizationID,
 			PricingEndpoint:   s.PricingEndpoint,
+			CostdevEndpoint:   s.CostdevEndpoint,
+			AIEnabled:         pkgscanner.AIEnabled(runParameters.FeatureFlags),
 			PricingAPIKey:     s.PricingAPIKey,
 			Currency:          result.Config.Currency,
 			TraceID:           trace.ID,

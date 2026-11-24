@@ -40,6 +40,9 @@ type Config struct {
 	// PricingEndpoint is the endpoint to use for prices. Defaults to https://pricing.api.infracost.io.
 	PricingEndpoint string `env:"INFRACOST_CLI_PRICING_ENDPOINT" flag:"pricing-endpoint;hidden" usage:"The pricing endpoint to use for prices" default:"https://pricing.api.infracost.io"`
 
+	// CostdevEndpoint is cost.dev's API, which AI policies read their model catalog from.
+	CostdevEndpoint string `env:"INFRACOST_CLI_COSTDEV_ENDPOINT" flag:"costdev-endpoint;hidden" usage:"The cost.dev endpoint AI policies read models from" default:"https://api.cost.dev"`
+
 	// PricingAPIKey is a static API key for a self-hosted Cloud Pricing API (the
 	// value of its SELF_HOSTED_INFRACOST_API_KEY). Setting it switches the CLI
 	// into self-hosted pricing mode: the key is sent to the pricing API instead

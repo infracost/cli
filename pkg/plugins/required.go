@@ -55,6 +55,9 @@ var requiredPlugins = []requiredPlugin{
 	// and on-disk binaries distinct.
 	{Key: "kubernetes", Name: "infracost-parser-kubernetes", DisplayName: "infracost/kubernetes", Type: pluginTypeParser},
 	{Key: "kubernetes", Name: "infracost-provider-kubernetes", DisplayName: "infracost/kubernetes", Type: pluginTypeProvider},
+	// Installed for everyone, but only used when the org has AI policies (ScanProjectOptions.AIEnabled).
+	{Key: "appcode", Name: "infracost-parser-appcode", DisplayName: "infracost/appcode", Type: pluginTypeParser},
+	{Key: "ai", Name: "infracost-provider-ai", DisplayName: "infracost/ai", Type: pluginTypeProvider},
 }
 
 // requiredPluginVersion returns the user-pinned version for the required
